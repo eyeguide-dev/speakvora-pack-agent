@@ -27,6 +27,8 @@ speakvora-pack-agent run --live         # when the log looks right
 ```
 
 ## What it connects to
+Watch the 3-minute tour: https://youtu.be/Yx5mdYqzXOQ
+
 New here? Start with [docs/integrate-in-10-minutes.md](docs/integrate-in-10-minutes.md): `init`, `doctor`, `events` (copy-paste signed examples for Python, Node, PHP, Ruby, Go, curl). Works in all 12 pack languages; `init --mode open` removes per-person and hourly limits (opt-outs, required notices and the kill switch stay on).
 
 Texts, calls and WhatsApp through Twilio, or any provider's web API (`sms_provider`, `call_provider`); Slack and Microsoft Teams; Google Calendar and Microsoft 365 (ICS link or OAuth); SMTP and IMAP email; any system that sends a webhook (a short mapping, no code); any REST API (`http` action). See [docs/connect-anything.md](docs/connect-anything.md) and [docs/integrate-existing-numbers.md](docs/integrate-existing-numbers.md).
