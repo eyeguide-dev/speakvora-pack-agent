@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "speakvora-pack-agent"
+dynamic = ["version"]
+description = "Turn an offline voice pack into a small agent for your calendar, Slack or Teams, texts, calls, email and any webhook. Runs on your own server. Standard library only."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Speakvora", email = "support@eyeguide.ai" }]
+keywords = ["voice", "twilio", "slack", "teams", "webhook", "automation", "sms", "ivr", "self-hosted", "tts"]
+classifiers = [
+  "Development Status :: 4 - Beta", "Intended Audience :: Developers", "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3", "Programming Language :: Python :: 3.9", "Programming Language :: Python :: 3.10", "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12", "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Telephony", "Topic :: Communications :: Chat", "Topic :: Software Development :: Libraries",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://speakvora.com/offline-pack-agent"
+Documentation = "https://github.com/eyeguide-dev/speakvora-pack-agent/tree/main/docs"
+Source = "https://github.com/eyeguide-dev/speakvora-pack-agent"
+Issues = "https://github.com/eyeguide-dev/speakvora-pack-agent/issues"
+
+[project.scripts]
+speakvora-pack-agent = "speakvora_pack_agent.cli:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["speakvora_pack_agent*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "speakvora_pack_agent.__version__" }
+
+[tool.setuptools.package-data]
+speakvora_pack_agent = ["data/*.json", "data/sources/*.json"]

@@ -1,0 +1,26 @@
+{
+ "name": "pos",
+ "path": "/hook/pos",
+ "auth": {
+  "type": "bearer",
+  "token": "env:POS_WEBHOOK_TOKEN"
+ },
+ "map": {
+  "event": {
+   "from": "payload.type",
+   "values": {
+    "ORDER_READY": "order.ready",
+    "TABLE_AVAILABLE": "table.ready"
+   }
+  },
+  "id": "payload.eventId",
+  "customer.name": "payload.guest.name",
+  "customer.phone": "payload.guest.mobile",
+  "customer.sms_consent": {
+   "from": "payload.guest.optIn",
+   "default": false
+  },
+  "order.number": "payload.ticket",
+  "party": "payload.partySize"
+ }
+}

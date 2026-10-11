@@ -1,0 +1,15 @@
+{
+ "business": "Bella Trattoria",
+ "dry_run": true,
+ "pack": "./pack",
+ "workflows": "./workflows.json",
+ "timezone": "America/New_York",
+ "listen": {"host": "127.0.0.1", "port": 8787},
+ "public_base_url": "https://YOUR-PUBLIC-ADDRESS-FOR-THIS-AGENT",
+ "events": {"secret": "env:SV_EVENT_SECRET"},
+ "facts": {"hours": "Open Tuesday to Sunday, 5 to 10 PM. Closed Mondays.", "address": "12 Main Street, Brooklyn NY 11201", "review_url": "https://g.page/r/YOUR-REVIEW-LINK"},
+ "consent": {"field": "customer.sms_consent", "required": true},
+ "twilio": {"account_sid": "env:TWILIO_ACCOUNT_SID", "auth_token": "env:TWILIO_AUTH_TOKEN", "from_number": "env:TWILIO_FROM"},
+ "slack": {"bot_token": "env:SLACK_BOT_TOKEN", "signing_secret": "env:SLACK_SIGNING_SECRET", "channel": "#front"},
+ "google_calendar": {"mode": "oauth", "client_id": "env:GOOGLE_CLIENT_ID", "client_secret": "env:GOOGLE_CLIENT_SECRET", "refresh_token": "env:GOOGLE_REFRESH_TOKEN", "calendar_id": "primary", "allow_create": true}
+}

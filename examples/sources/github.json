@@ -1,0 +1,36 @@
+{
+ "name": "github",
+ "path": "/hook/github",
+ "auth": {
+  "type": "hmac",
+  "header": "X-Hub-Signature-256",
+  "secret": "env:GITHUB_WEBHOOK_SECRET",
+  "prefix": "sha256=",
+  "encoding": "hex"
+ },
+ "map": {
+  "event": {
+   "template": "{{headers.x-github-event}}.{{payload.action}}.{{payload.workflow_run.conclusion}}",
+   "values": {
+    "workflow_run.completed.failure": "pipeline.failed",
+    "workflow_run.completed.success": "pipeline.succeeded",
+    "pull_request.review_requested": "pull_request.ready",
+    "pull_request.ready_for_review": "pull_request.ready",
+    "release.published": "release.published",
+    "issues.opened": "issue.opened",
+    "code_scanning_alert.created": "security.alert",
+    "dependabot_alert.created": "security.alert",
+    "secret_scanning_alert.created": "security.alert"
+   }
+  },
+  "id": "headers.x-github-delivery",
+  "repo": "payload.repository.full_name",
+  "branch": "payload.workflow_run.head_branch",
+  "author": "payload.sender.login",
+  "url": {
+   "from": "payload.workflow_run.html_url",
+   "default": "payload.pull_request.html_url"
+  },
+  "title": "payload.pull_request.title"
+ }
+}

@@ -1,0 +1,31 @@
+{
+ "name": "shopify",
+ "path": "/hook/shopify",
+ "auth": {
+  "type": "hmac",
+  "header": "X-Shopify-Hmac-Sha256",
+  "secret": "env:SHOPIFY_WEBHOOK_SECRET",
+  "encoding": "base64"
+ },
+ "map": {
+  "event": {
+   "from": "headers.x-shopify-topic",
+   "values": {
+    "orders/fulfilled": "order.ready",
+    "orders/create": "order.received",
+    "orders/cancelled": "order.cancelled"
+   }
+  },
+  "id": "headers.x-shopify-webhook-id",
+  "customer.name": "payload.customer.first_name",
+  "customer.phone": "payload.customer.phone",
+  "customer.sms_consent": {
+   "from": "payload.customer.sms_marketing_consent.state",
+   "values": {
+    "subscribed": true
+   },
+   "default": false
+  },
+  "order.number": "payload.order_number"
+ }
+}

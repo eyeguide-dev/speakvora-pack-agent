@@ -1,0 +1,30 @@
+{
+ "name": "gitlab",
+ "path": "/hook/gitlab",
+ "auth": {
+  "type": "token_header",
+  "header": "X-Gitlab-Token",
+  "secret": "env:GITLAB_WEBHOOK_TOKEN"
+ },
+ "map": {
+  "event": {
+   "template": "{{headers.x-gitlab-event}}.{{payload.object_attributes.status}}",
+   "values": {
+    "Pipeline Hook.failed": "pipeline.failed",
+    "Pipeline Hook.success": "pipeline.succeeded",
+    "Merge Request Hook.opened": "pull_request.ready",
+    "Release Hook.": "release.published",
+    "Deployment Hook.failed": "deploy.failed",
+    "Deployment Hook.success": "deploy.succeeded"
+   }
+  },
+  "id": "headers.x-gitlab-event-uuid",
+  "repo": {
+   "from": "payload.project.path_with_namespace"
+  },
+  "branch": "payload.object_attributes.ref",
+  "author": "payload.user.username",
+  "url": "payload.object_attributes.url",
+  "title": "payload.object_attributes.title"
+ }
+}

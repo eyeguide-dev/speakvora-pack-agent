@@ -1,0 +1,188 @@
+{
+ "food": {
+  "title": "Restaurants and food",
+  "connect": [
+   "Your POS or ordering system (Toast, Square, Clover, Shopify, your own app) for order and table events",
+   "Google Calendar or OpenTable-style booking exports for reservations",
+   "Slack or Teams for the host stand and kitchen"
+  ],
+  "cautions": [
+   "Hours and menu facts come from agent.json, never from the generic pack lines.",
+   "Mention allergens only with the exact text you provide."
+  ]
+ },
+ "clinic": {
+  "title": "Clinics and healthcare",
+  "connect": [
+   "Your practice-management or scheduling system (through its webhooks or API) for appointment events",
+   "Google or Outlook calendar for reminders",
+   "Slack or Teams for the front desk"
+  ],
+  "cautions": [
+   "Texts and calls must not contain diagnoses, results or other health details. The agent's reminder lines are deliberately generic.",
+   "This is not a HIPAA-ready service from Speakvora. If you handle protected health information, you are responsible for your own agreements with Twilio, Slack, Microsoft and Google, and for what you put in messages.",
+   "It gives no medical advice and says to call emergency services in an emergency."
+  ]
+ },
+ "pharmacy": {
+  "title": "Pharmacy and dispensary",
+  "connect": [
+   "Your pharmacy system's order-ready event or status API",
+   "Twilio for ready/refill texts",
+   "Slack or Teams for the counter"
+  ],
+  "cautions": [
+   "Keep medication names and conditions out of texts. Use the generic ready/refill lines.",
+   "Dispensaries: only message adults who agreed to texts, and follow your state's rules.",
+   "No medical advice; emergency line is said before the phone menu."
+  ]
+ },
+ "lodging": {
+  "title": "Hotels, travel and airports",
+  "connect": [
+   "Your property-management or booking system for booking, check-in and room-ready events",
+   "Google or Outlook calendar for arrivals",
+   "Slack or Teams for the front desk"
+  ],
+  "cautions": [
+   "Do not text full payment or passport details.",
+   "Check-in times and policies come from agent.json."
+  ]
+ },
+ "retail": {
+  "title": "Retail, ecommerce and returns",
+  "connect": [
+   "Shopify, WooCommerce, Square or your own store (webhooks) for order, shipping and return events",
+   "Helpdesk for customer emails",
+   "Slack or Teams for the support team"
+  ],
+  "cautions": [
+   "Only text customers who opted in (map your store's marketing-consent field).",
+   "Refund amounts and dates should come from your system, not the pack lines."
+  ]
+ },
+ "beauty": {
+  "title": "Salons, spas, fitness and laundry",
+  "connect": [
+   "Your booking tool (Square, Vagaro, Mindbody, Calendly...) by webhook or calendar",
+   "Google or Outlook calendar for reminders",
+   "Slack or Teams for the front desk"
+  ],
+  "cautions": [
+   "Take consent at booking and put it in the calendar notes or webhook field."
+  ]
+ },
+ "trades": {
+  "title": "Home and trade services",
+  "connect": [
+   "Your scheduling or dispatch software (webhook) for arrival windows and technician-on-the-way events",
+   "Google or Outlook calendar",
+   "Slack or Teams for the office"
+  ],
+  "cautions": [
+   "Estimates and prices come from your system, not from the pack lines."
+  ]
+ },
+ "auto": {
+  "title": "Automotive and roadside",
+  "connect": [
+   "Your shop-management or dealer system for vehicle-ready and service-due events",
+   "Calendar for appointments",
+   "Slack or Teams for the service desk"
+  ],
+  "cautions": [
+   "Roadside and towing: the agent is not a dispatcher; do not rely on it for emergencies."
+  ]
+ },
+ "education": {
+  "title": "Schools, courses and community",
+  "connect": [
+   "Your student or course system by webhook or calendar for class reminders and enrolment events",
+   "Slack or Teams for staff"
+  ],
+  "cautions": [
+   "Messages to minors or about students need your school's consent rules; do not include grades or personal records."
+  ]
+ },
+ "public": {
+  "title": "Government, utilities and insurance",
+  "connect": [
+   "Your case or account system by webhook for application and outage updates",
+   "Slack or Teams for the service desk"
+  ],
+  "cautions": [
+   "Keep account numbers and personal data out of texts; point people to their secure account instead."
+  ]
+ },
+ "legal": {
+  "title": "Law firms and legal services",
+  "connect": [
+   "Your practice-management system for consultation and case-update events",
+   "Calendar for consultations",
+   "Slack or Teams for the intake team"
+  ],
+  "cautions": [
+   "A confidentiality notice is added to texts and calls. Do not include case details in messages.",
+   "Not legal advice; your own counsel should review the wording."
+  ]
+ },
+ "finance": {
+  "title": "Banking, billing and payments",
+  "connect": [
+   "Your billing system (Stripe, your ledger) by webhook for payment-due and payment-failed events",
+   "Helpdesk for customer emails",
+   "Slack or Teams for the billing team"
+  ],
+  "cautions": [
+   "Never put balances, card or account numbers in texts.",
+   "Payment-failed messages should point people to your secure payment page."
+  ]
+ },
+ "collections": {
+  "title": "Lending and collections",
+  "connect": [
+   "Your collections or loan-servicing system by webhook for payment events",
+   "Twilio for texts and calls",
+   "Slack or Teams for the team"
+  ],
+  "cautions": [
+   "Debt-collection communications are heavily regulated (for example the FDCPA, Regulation F and state laws in the US, and similar rules elsewhere). The required debt-collector notice is added automatically, but you must set contact hours, frequency, validation notices and consent with your own counsel.",
+   "Use `strict` mode unless your counsel says otherwise."
+  ]
+ },
+ "corrections": {
+  "title": "Jails, corrections and bail",
+  "connect": [
+   "Your facility, visitation or inmate-accounts system by webhook for visit, funding and lockdown events",
+   "Twilio for notices to families",
+   "Slack or Teams for facility staff"
+  ],
+  "cautions": [
+   "The agent sends notices, reminders, rules and balance alerts. It is NOT an inmate calling platform and does not connect inmate calls.",
+   "Facility call notices (call from an inmate, recorded and monitored) are always said on calls; confirm the exact wording and consent flow with the facility and counsel.",
+   "Do not include inmate identifying details in texts."
+  ]
+ },
+ "support": {
+  "title": "Customer service, IT help desks and phone menus",
+  "connect": [
+   "Your helpdesk (Zendesk, Freshdesk, Help Scout, Jira Service Management) with the http action and webhooks",
+   "Inbound support email (inbox)",
+   "Slack or Teams for escalations; phone menu and texts with Twilio"
+  ],
+  "cautions": [
+   "Customers who email you can be answered; marketing needs consent."
+  ]
+ },
+ "generic": {
+  "title": "Your industry",
+  "connect": [
+   "Any system that sends a webhook (map it in `sources`)",
+   "Any web API (http action)",
+   "Calendar, Slack or Teams, Twilio, email"
+  ],
+  "cautions": [
+   "Add the notices your industry needs in `compliance.extra_required`."
+  ]
+ }
+}

@@ -1,0 +1,25 @@
+{
+ "name": "stripe",
+ "path": "/hook/stripe",
+ "auth": {
+  "type": "stripe_style",
+  "header": "Stripe-Signature",
+  "secret": "env:STRIPE_WEBHOOK_SECRET"
+ },
+ "map": {
+  "event": {
+   "from": "payload.type",
+   "values": {
+    "invoice.payment_failed": "payment.failed",
+    "invoice.upcoming": "payment.due",
+    "charge.refunded": "payment.refunded",
+    "checkout.session.completed": "payment.received"
+   }
+  },
+  "id": "payload.id",
+  "customer.email": "payload.data.object.customer_email",
+  "customer.sms_consent": {
+   "const": false
+  }
+ }
+}

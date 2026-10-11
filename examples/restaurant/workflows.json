@@ -1,0 +1,49 @@
+{
+ "workflows": [
+  {"name": "order_ready", "on": {"event": "order.ready"}, "do": [
+    {"action": "sms", "to": "{{customer.phone}}", "text": "{{business}}: order {{order.number}} is ready. {{slot:order_ready}} {{slot:pickup_instructions}}"},
+    {"action": "call", "to": "{{customer.phone}}", "play": ["order_ready", "pickup_instructions"], "if": {"customer.prefers_call": "*"}},
+    {"action": "slack", "channel": "#front", "text": "Order {{order.number}} is ready. Text to {{customer.name}}: {{last.sms}}."}]},
+  {"name": "order_delayed", "on": {"event": "order.delayed"}, "do": [
+    {"action": "sms", "to": "{{customer.phone}}", "text": "{{business}}: {{slot:order_delayed}} (about {{order.extra_minutes}} more minutes)"},
+    {"action": "slack", "channel": "#kitchen", "text": "Order {{order.number}} delayed {{order.extra_minutes}} min. Text to customer: {{last.sms}}."}]},
+  {"name": "table_ready", "on": {"event": "table.ready"}, "do": [
+    {"action": "sms", "to": "{{customer.phone}}", "text": "{{business}}: {{slot:table_ready}}"},
+    {"action": "slack", "channel": "#host", "text": "Table ready: {{customer.name}}, party of {{party}}. Text: {{last.sms}}."}]},
+  {"name": "reservation_created", "on": {"event": "reservation.created"}, "do": [
+    {"action": "sms", "to": "{{customer.phone}}", "text": "{{business}}: {{slot:reservation_confirmed}} {{start_text}}, party of {{party}}."},
+    {"action": "calendar_create", "title": "Reservation: {{customer.name}} party of {{party}}", "start": "{{start_epoch}}", "minutes": 90, "description": "Name: {{customer.name}}\nPhone: {{customer.phone}}\nSMS OK: {{customer.sms_consent}}"},
+    {"action": "slack", "channel": "#host", "text": "New reservation: {{customer.name}}, party of {{party}}, {{start_text}}."}]},
+  {"name": "reservation_reminder_24h", "on": {"calendar": {"starts_in_minutes": 1440, "window_minutes": 30, "title_contains": "Reservation"}}, "do": [
+    {"action": "sms", "to": "{{customer.phone}}", "text": "{{business}}: {{slot:reservation_reminder}} {{start_local}}. Reply C to cancel or just come by."}]},
+  {"name": "reservation_reminder_2h", "on": {"calendar": {"starts_in_minutes": 120, "window_minutes": 15, "title_contains": "Reservation"}}, "do": [
+    {"action": "sms", "to": "{{customer.phone}}", "text": "{{business}}: {{slot:reservation_reminder_today}} {{start_local}}."}]},
+  {"name": "no_show_followup", "on": {"event": "reservation.no_show"}, "do": [
+    {"action": "sms", "to": "{{customer.phone}}", "text": "{{business}}: {{slot:no_show_followup}}"}]},
+  {"name": "thanks_review", "on": {"event": "visit.completed"}, "do": [
+    {"action": "sms", "to": "{{customer.phone}}", "text": "{{business}}: {{slot:thanks_review}} {{fact:review_url}}"}]},
+  {"name": "sms_hours", "on": {"sms": {"keywords": ["hours", "open", "close", "closing"]}}, "do": [
+    {"action": "reply", "text": "{{slot:hours_intro}} {{fact:hours}}"}]},
+  {"name": "sms_directions", "on": {"sms": {"keywords": ["address", "where", "directions", "parking"]}}, "do": [
+    {"action": "reply", "text": "{{slot:directions_intro}} {{fact:address}}"}]},
+  {"name": "sms_reservation", "on": {"sms": {"keywords": ["reserve", "reservation", "book", "table"]}}, "do": [
+    {"action": "reply", "text": "{{slot:reservation_help}}"},
+    {"action": "slack", "channel": "#host", "text": "Reservation request by text from {{sms.from}}: {{sms.body}}"}]},
+  {"name": "sms_order", "on": {"sms": {"keywords": ["order", "status", "pickup"]}}, "do": [
+    {"action": "reply", "text": "{{slot:order_status_help}}"},
+    {"action": "slack", "channel": "#front", "text": "Order question by text from {{sms.from}}: {{sms.body}}"}]},
+  {"name": "sms_person", "on": {"sms": {"keywords": ["person", "human", "manager", "staff"]}}, "do": [
+    {"action": "reply", "text": "{{slot:handoff_received}}"},
+    {"action": "slack", "channel": "#front", "text": "Someone needs a person: {{sms.from}} says \"{{sms.body}}\""}]},
+  {"name": "phone_menu", "on": {"call": {"menu": {"prompt": "menu_prompt", "fallback_say": "Press 1 for opening hours, 2 for reservations, 3 for an order, or 0 for a person.", "options": {
+      "1": [{"action": "play", "audio": ["hours_intro"]}, {"action": "reply", "text": "{{fact:hours}}"}],
+      "2": [{"action": "play", "audio": ["reservation_help"]}, {"action": "slack", "channel": "#host", "text": "Caller {{call.from}} asked about a reservation."}],
+      "3": [{"action": "play", "audio": ["order_status_help"]}, {"action": "slack", "channel": "#front", "text": "Caller {{call.from}} asked about an order."}],
+      "0": [{"action": "play", "audio": ["handoff_person"]}, {"action": "slack", "channel": "#front", "text": "Caller {{call.from}} wants a person."}]}}}}, "do": []},
+  {"name": "daily_briefing", "on": {"schedule": {"at": "09:30"}}, "do": [
+    {"action": "slack", "channel": "#host", "text": "Today's reservations:\n{{today_text}}"}]},
+  {"name": "slack_say", "on": {"slack_command": "/say"}, "do": [
+    {"action": "sms", "to": "{{command.arg2}}", "text": "{{business}}: {{slotvar:command.arg1}}"},
+    {"action": "reply", "text": "Texted {{command.arg2}}: {{slotvar:command.arg1}}"}]}
+ ]
+}

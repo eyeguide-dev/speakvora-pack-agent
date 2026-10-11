@@ -1,0 +1,23 @@
+{
+ "name": "pagerduty",
+ "path": "/hook/pagerduty",
+ "auth": {
+  "type": "hmac",
+  "header": "X-PagerDuty-Signature",
+  "secret": "env:PAGERDUTY_WEBHOOK_SECRET",
+  "prefix": "v1=",
+  "encoding": "hex"
+ },
+ "map": {
+  "event": {
+   "from": "payload.event.event_type",
+   "values": {
+    "incident.triggered": "incident.triggered",
+    "incident.resolved": "incident.resolved"
+   }
+  },
+  "id": "payload.event.id",
+  "incident.title": "payload.event.data.title",
+  "url": "payload.event.data.html_url"
+ }
+}

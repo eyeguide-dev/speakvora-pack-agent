@@ -1,0 +1,25 @@
+{
+ "name": "calendly",
+ "path": "/hook/calendly",
+ "auth": {
+  "type": "stripe_style",
+  "header": "Calendly-Webhook-Signature",
+  "secret": "env:CALENDLY_SIGNING_KEY"
+ },
+ "map": {
+  "event": {
+   "from": "payload.event",
+   "values": {
+    "invitee.created": "appointment.created",
+    "invitee.canceled": "appointment.cancelled"
+   }
+  },
+  "id": "payload.payload.uri",
+  "customer.name": "payload.payload.name",
+  "customer.phone": "payload.payload.text_reminder_number",
+  "customer.sms_consent": {
+   "const": false
+  },
+  "start_text": "payload.payload.scheduled_event.start_time"
+ }
+}
