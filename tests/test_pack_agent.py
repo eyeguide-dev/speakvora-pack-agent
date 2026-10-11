@@ -424,6 +424,15 @@ class Doctor(unittest.TestCase):
         self.assertIsNone(c["limits"]["per_hour"]); self.assertIsNone(c["limits"]["per_recipient_per_day"])
 
 
+class SlotCoverage(unittest.TestCase):
+    def test_every_slot_a_workflow_plays_exists_in_its_industry_registry(self):
+        import re
+        from speakvora_pack_agent import recipes, slots as SL
+        for prof in sorted(set(SL.PROFILE_OF.values()) | set(SL.PROFILES)):
+            used = set(re.findall(r"slot:([a-z_0-9]+)", json.dumps(recipes.workflows_for(prof, "en"))))
+            self.assertFalse(used - set(SL.registry(prof)), (prof, used - set(SL.registry(prof))))
+
+
 class Required(unittest.TestCase):
     """Lines that MUST be said or texted are added automatically, and never skipped; limits are the customer's to loosen, safety floors are not."""
     def rig(self, profile=None, **extra):

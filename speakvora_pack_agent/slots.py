@@ -41,7 +41,7 @@ ORDER = {
     "order_cancelled": ("Confirm an order was cancelled.", "Your order has been cancelled."),
 }
 PROFILES = {   # profile -> (word for a booking, families used, extra slots)
-    "food": ("reservation", ("order",), {
+    "food": ("reservation", ("order", "appt"), {
         "table_ready": ("Table is ready.", "Your table is ready. Please check in with the host."), "waitlist_added": ("Added to a waitlist.", "You are on our waitlist. We will message you as soon as a table opens up."),
         "reservation_confirmed": ("Confirm a table booking.", "Your reservation is confirmed. We look forward to seeing you."), "reservation_reminder": ("Reminder a day before.", "This is a friendly reminder about your reservation with us."),
         "reservation_reminder_today": ("Reminder a few hours before.", "Just a reminder that your reservation is coming up soon today."), "reservation_changed": ("Confirm a change.", "Your reservation has been updated."),
@@ -57,7 +57,7 @@ PROFILES = {   # profile -> (word for a booking, families used, extra slots)
                                          "insurance_issue": ("Insurance needs attention.", "We need to check something with your insurance. Please call the pharmacy."), "pickup_deadline": ("Pickup deadline.", "Please pick up your order soon. We can only hold it for a few days.")}),
     "lodging": ("booking", ("appt",), {"booking_confirmed": ("Confirm a stay.", "Your booking is confirmed. We look forward to welcoming you."), "checkin_info": ("Check-in details.", "Check-in is available from the afternoon. Please bring a photo ID."),
                                        "room_ready": ("Room is ready.", "Your room is ready. Please stop by the front desk for your key."), "checkout_reminder": ("Checkout reminder.", "A friendly reminder that checkout is this morning. Thank you for staying with us.")}),
-    "retail": ("order", ("order",), {"back_in_stock": ("Item back in stock.", "Good news, the item you asked about is back in stock."), "return_received": ("Return received.", "We have received your return and it is being processed."),
+    "retail": ("pickup appointment", ("order", "appt"), {"back_in_stock": ("Item back in stock.", "Good news, the item you asked about is back in stock."), "return_received": ("Return received.", "We have received your return and it is being processed."),
                                       "refund_issued": ("Refund issued.", "Your refund has been issued. It can take a few days to appear.")}),
     "beauty": ("appointment", ("appt",), {"aftercare_tip": ("Aftercare reminder.", "Thank you for visiting. Please follow the aftercare tips we discussed."), "membership_renewal": ("Membership renewal.", "Your membership renews soon. Reply if you would like to make a change.")}),
     "trades": ("visit", ("appt",), {"arrival_window": ("Arrival window reminder.", "Our technician will arrive during your scheduled window. We will message you when they are on the way."), "on_the_way": ("Technician on the way.", "Our technician is on the way to you now."),
@@ -87,7 +87,7 @@ PROFILES = {   # profile -> (word for a booking, families used, extra slots)
         "debt_collector_notice": ("REQUIRED statement identifying a debt collection communication.", "This communication is from a debt collector. This is an attempt to collect a debt, and any information obtained will be used for that purpose."),
         "payment_due": ("Payment due soon.", "A payment is due soon on your account."), "payment_failed": ("Payment failed.", "Your payment could not be processed. Please update your payment details."),
         "hardship_help": ("Offer help with hardship.", "If you are having trouble paying, please contact us. We have options that may help."), "payment_plan_offer": ("Offer a payment plan.", "We can set up a payment plan that fits your budget. Reply to learn more.")}),
-    "devops": ("ticket", (), {
+    "devops": ("meeting", ("appt",), {
         "pipeline_failed": ("A build or deploy pipeline failed.", "A build has failed. Please check your team chat."), "pipeline_succeeded": ("A pipeline passed.", "The build passed."),
         "deploy_succeeded": ("A deployment finished.", "The deployment finished successfully."), "deploy_failed": ("A deployment failed.", "A deployment has failed and may need attention."),
         "incident_opened": ("A production incident was opened.", "A production incident has been opened and needs attention."), "incident_resolved": ("An incident was resolved.", "The incident has been resolved."),
