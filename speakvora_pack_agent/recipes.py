@@ -10,7 +10,25 @@ def _sms(to, text):
     return {"action": "sms", "to": "{{customer.phone}}" if to is None else to, "text": text}
 
 
-def workflows_for(profile):
+def workflows_for(profile, lang="en"):
+    return localize(_workflows_for(profile), lang)
+
+
+def localize(doc, lang):
+    """Non-English packs: the few English glue words inside message texts become the pack language's own (staff Slack/Teams alerts stay English)."""
+    from . import i18n
+    if i18n.lang_of(lang) == "en":
+        return doc
+    swaps = [("order {{order.number}} is ready. ", "{{t:order}} {{order.number}}: "), ("(about {{order.extra_minutes}} more minutes)", "({{order.extra_minutes}} {{t:min}})"), (", party of {{party}}.", " · {{party}}."), (" Reply C to cancel or just come by.", ""),
+             ("(This reply was sent by an automated assistant.)", "{{t:auto_footer}}"), ("(This reply was sent by an automated assistant. Reply to reach a person.)", "{{t:auto_footer}}")]
+    import json as _j
+    txt = _j.dumps(doc, ensure_ascii=False)
+    for a, b in swaps:
+        txt = txt.replace(_j.dumps(a, ensure_ascii=False)[1:-1], _j.dumps(b, ensure_ascii=False)[1:-1])
+    return _j.loads(txt)
+
+
+def _workflows_for(profile):
     reg = SL.registry(profile)
     if profile == "food":
         return json.load(open(os.path.join(HERE, "data", "food.workflows.json"), encoding="utf-8"))
@@ -35,14 +53,14 @@ def workflows_for(profile):
               {"name": "appointment_reminder_24h", "on": {"calendar": {"starts_in_minutes": 1440, "window_minutes": 30, "title_contains": "Appointment"}}, "do": [_sms(None, "{{business}}: {{slot:appointment_reminder}} {{start_local}}.")]},
               {"name": "appointment_reminder_2h", "on": {"calendar": {"starts_in_minutes": 120, "window_minutes": 15, "title_contains": "Appointment"}}, "do": [_sms(None, "{{business}}: {{slot:appointment_reminder_today}} {{start_local}}.")]},
               {"name": "no_show_followup", "on": {"event": "appointment.no_show"}, "do": [_sms(None, "{{business}}: {{slot:no_show_followup}}")]},
-              {"name": "sms_reschedule", "on": {"sms": {"keywords": ["reschedule", "change", "cancel", "move", "book", "booking"]}}, "do": [
+              {"name": "sms_reschedule", "on": {"sms": {"topic": "reschedule"}}, "do": [
                   {"action": "reply", "text": "{{slot:reschedule_help}}"}, {"action": "notify", "text": "Booking request by text from {{sms.from}}: {{sms.body}}"}]},
               {"name": "ready_for_you", "on": {"event": "appointment.ready"}, "do": [_sms(None, "{{business}}: {{slot:ready_for_you}}")]}]
     w += [{"name": "thanks_review", "on": {"event": "visit.completed"}, "do": [_sms(None, "{{business}}: {{slot:thanks_review}} {{fact:review_url}}")]},
-          {"name": "sms_hours", "on": {"sms": {"keywords": ["hours", "open", "close", "closing"]}}, "do": [{"action": "reply", "text": "{{slot:hours_intro}} {{fact:hours}}"}]},
-          {"name": "sms_directions", "on": {"sms": {"keywords": ["address", "where", "directions", "parking"]}}, "do": [{"action": "reply", "text": "{{slot:directions_intro}} {{fact:address}}"}]},
-          {"name": "sms_status", "on": {"sms": {"keywords": ["status", "order", "update"]}}, "do": [{"action": "reply", "text": "{{slot:status_help}}"}, {"action": "notify", "text": "Status question by text from {{sms.from}}: {{sms.body}}"}]},
-          {"name": "sms_person", "on": {"sms": {"keywords": ["person", "human", "manager", "staff"]}}, "do": [
+          {"name": "sms_hours", "on": {"sms": {"topic": "hours"}}, "do": [{"action": "reply", "text": "{{slot:hours_intro}} {{fact:hours}}"}]},
+          {"name": "sms_directions", "on": {"sms": {"topic": "directions"}}, "do": [{"action": "reply", "text": "{{slot:directions_intro}} {{fact:address}}"}]},
+          {"name": "sms_status", "on": {"sms": {"topic": "status"}}, "do": [{"action": "reply", "text": "{{slot:status_help}}"}, {"action": "notify", "text": "Status question by text from {{sms.from}}: {{sms.body}}"}]},
+          {"name": "sms_person", "on": {"sms": {"topic": "person"}}, "do": [
               {"action": "reply", "text": "{{slot:handoff_received}}"}, {"action": "notify", "text": "Someone needs a person: {{sms.from}} says \"{{sms.body}}\""}]},
           {"name": "phone_menu", "on": {"call": {"menu": {"prompt": "menu_prompt", "fallback_say": "Press 1 for opening hours, 2 to book, 3 to check on something, or 0 for a person.", "options": {
               "1": [{"action": "play", "audio": ["hours_intro"]}, {"action": "reply", "text": "{{fact:hours}}"}],
@@ -66,17 +84,17 @@ def workflows_for(profile):
     if profile == "corrections":
         w += [{"name": "account_funded", "on": {"event": "account.funded"}, "do": [_sms(None, "{{business}}: {{slot:account_funded}}")]},
               {"name": "account_low_balance", "on": {"event": "account.low_balance"}, "do": [_sms(None, "{{business}}: {{slot:account_low_balance}}")]},
-              {"name": "visit_rules", "on": {"sms": {"keywords": ["rules", "visit", "visiting", "dress"]}}, "do": [{"action": "reply", "text": "{{slot:visit_rules_reminder}} {{fact:visit_rules}}"}]},
-              {"name": "bail_info", "on": {"sms": {"keywords": ["bail", "bond"]}}, "do": [{"action": "reply", "text": "{{slot:bail_info_help}} {{fact:bail_contact}}"}]},
+              {"name": "visit_rules", "on": {"sms": {"topic": "rules"}}, "do": [{"action": "reply", "text": "{{slot:visit_rules_reminder}} {{fact:visit_rules}}"}]},
+              {"name": "bail_info", "on": {"sms": {"topic": "bail"}}, "do": [{"action": "reply", "text": "{{slot:bail_info_help}} {{fact:bail_contact}}"}]},
               {"name": "lockdown", "on": {"event": "facility.lockdown"}, "do": [_sms(None, "{{business}}: {{slot:lockdown_notice}}")]}]
     if profile == "collections":
         w += [{"name": "payment_due_notice", "on": {"event": "payment.due"}, "do": [_sms(None, "{{business}}: {{slot:payment_due}}")]},
               {"name": "payment_failed_notice", "on": {"event": "payment.failed"}, "do": [_sms(None, "{{business}}: {{slot:payment_failed}}")]},
-              {"name": "sms_hardship", "on": {"sms": {"keywords": ["hardship", "cannot pay", "can't pay", "plan", "afford"]}}, "do": [
+              {"name": "sms_hardship", "on": {"sms": {"topic": "hardship"}}, "do": [
                   {"action": "reply", "text": "{{slot:hardship_help}} {{slot:payment_plan_offer}}"}, {"action": "notify", "text": "Payment help requested by text from {{sms.from}}: {{sms.body}}"}]}]
-    w += [{"name": "email_hours", "on": {"email": {"keywords": ["hours", "open", "closed", "closing"]}}, "do": [
+    w += [{"name": "email_hours", "on": {"email": {"topic": "hours"}}, "do": [
               {"action": "email", "to": "{{email.from}}", "subject": "Re: {{email.subject}}", "text": "{{business}}: {{slot:hours_intro}} {{fact:hours}}\n\n(This reply was sent by an automated assistant. Reply to reach a person.)"}]},
-          {"name": "email_person", "on": {"email": {"keywords": ["person", "human", "manager", "complaint", "urgent", "refund"]}}, "do": [
+          {"name": "email_person", "on": {"email": {"topic": "person", "keywords": ["complaint", "urgent", "refund"]}}, "do": [
               {"action": "notify", "text": "Customer email needs a person: {{email.from}}: {{email.subject}}"},
               {"action": "email", "to": "{{email.from}}", "subject": "Re: {{email.subject}}", "text": "{{business}}: {{slot:handoff_received}}"}]}]
     if profile == "support":

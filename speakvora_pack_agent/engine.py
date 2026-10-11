@@ -3,7 +3,7 @@ always through the safety checks first. Dry-run (the default) records what it WO
 import datetime as dt, json, re, time
 from zoneinfo import ZoneInfo
 
-from . import safety as S, slots as slots_mod, templating as T
+from . import i18n, safety as S, slots as slots_mod, templating as T
 from .audio import AudioError, AudioStore
 from .connectors import signing
 from .connectors.gcal import GoogleCalendar
@@ -41,6 +41,7 @@ class Agent:
             except PackError:
                 pass
         self.dry = bool(cfg.get("dry_run", True))
+        self.lang = i18n.lang_of(self.pack.language)
         oc = str((cfg.get("facts") or {}).get("oncall_phone", ""))
         if oc and "YOUR-" not in oc:                                              # your own on-call phone is staff, not a customer: it may receive urgent alerts without a consent record
             cfg.setdefault("recipients", {}).setdefault("allow", []).append(oc)
@@ -87,7 +88,7 @@ class Agent:
 
     # ---- helpers -------------------------------------------------------------------------------------------------------------------------------
     def ctx(self, **kw):
-        return {"facts": self.cfg.get("facts", {}), "business": self.cfg.get("business", ""), **kw}
+        return {"facts": self.cfg.get("facts", {}), "business": self.cfg.get("business", ""), "lang": self.lang, **kw}
 
     def record(self, wf, action, status, **extra):
         self.state.log(workflow=wf, action=action, status=status, dry_run=self.dry, **extra)
@@ -273,8 +274,8 @@ class Agent:
             if not self.state.once("mail:" + (m["message_id"] or m["from"] + m["subject"])):
                 continue
             for w in self.workflows:
-                kw = [k.lower() for k in ((w.get("on") or {}).get("email") or {}).get("keywords", [])]
-                if (w.get("on") or {}).get("email") is not None and (not kw or any(re.search(r"\b" + re.escape(k) + r"\b", low) for k in kw)):
+                kw = self._triggers((w.get("on") or {}).get("email"))
+                if (w.get("on") or {}).get("email") is not None and (not kw or any(i18n.matches(k, low, self.lang) for k in kw)):
                     ctx = self.ctx(email=m, customer={"email": m["from"], "sms_consent": True})
                     self.run_actions(w["name"], w.get("do", []), ctx); ran += 1
                     break
@@ -285,7 +286,7 @@ class Agent:
         text = f"{ev.get('title','')}\n{ev.get('description','')}"
         m = PHONE_RX.search(text)
         name = re.search(r"(?:name|for)\s*[:\-]\s*([^\n,]+)", text, re.I)
-        rx = cc.get("consent_regex") or r"(?:sms|text)\s*ok\s*[:=]\s*(?:yes|true|1)|consent\s*[:=]\s*(?:yes|true)"       # 'SMS OK: yes' in the event notes; 'SMS OK: False' is NOT consent
+        rx = cc.get("consent_regex") or r"(?:sms|text)\s*ok\s*[:=]\s*(?:yes|true|1|sí|si|oui|sim|sì|ja|kyllä|हाँ|はい|是|نعم|예|네)|consent\s*[:=]\s*(?:yes|true)"       # 'SMS OK: yes' in the event notes; 'SMS OK: False' is NOT consent
         return {"name": (name.group(1).strip() if name else ev.get("title", "")), "phone": S.norm_phone(m.group(1)) if m else "", "sms_consent": bool(re.search(rx, text.lower()))}
 
     def tick(self):
@@ -305,7 +306,7 @@ class Agent:
                     lead, win = int(c.get("starts_in_minutes", 60)), int(c.get("window_minutes", 10))
                     if not (lead - win <= mins <= lead) or (c.get("title_contains") and c["title_contains"].lower() not in ev["title"].lower()):
                         continue
-                    ctx = self.ctx(event=ev, customer=self.calendar_contact(ev), start_local=dt.datetime.fromtimestamp(ev["start"], ZoneInfo(self.cfg["timezone"])).strftime("%a %b %-d, %-I:%M %p"))
+                    ctx = self.ctx(event=ev, customer=self.calendar_contact(ev), start_local=i18n.fmt_dt(ev["start"], self.cfg["timezone"], self.lang))
                     if self._when_ok(w.get("when"), ctx) and self.state.once(f"cal:{ev['id']}:{w['name']}:{lead}"):
                         out.append({"workflow": w["name"], "event": ev["title"], "results": self.run_actions(w["name"], w.get("do", []), ctx)})
         local = dt.datetime.fromtimestamp(now, ZoneInfo(self.cfg["timezone"]))
@@ -313,16 +314,20 @@ class Agent:
             sc = w["on"]["schedule"]
             if local.strftime("%H:%M") >= sc.get("at", "09:00") and DAYS[local.weekday()] in sc.get("days", DAYS) and self.state.once(f"sched:{w['name']}:{local.date()}"):
                 events = self._events(now, now + 86400)
-                ctx = self.ctx(today=[{"title": e["title"], "time": dt.datetime.fromtimestamp(e["start"], ZoneInfo(self.cfg["timezone"])).strftime("%-I:%M %p")} for e in events],
-                               today_text="\n".join(f"{dt.datetime.fromtimestamp(e['start'], ZoneInfo(self.cfg['timezone'])).strftime('%-I:%M %p')} {e['title']}" for e in events) or "Nothing booked yet.")
+                ctx = self.ctx(today=[{"title": e["title"], "time": i18n.fmt_dt(e["start"], self.cfg["timezone"], self.lang)} for e in events],
+                               today_text="\n".join(f"{i18n.fmt_dt(e['start'], self.cfg['timezone'], self.lang)} {e['title']}" for e in events) or "-")
                 out.append({"workflow": w["name"], "results": self.run_actions(w["name"], w.get("do", []), ctx)})
         return out
 
+    def _triggers(self, spec):
+        """Words that start a text/email workflow: explicit 'keywords' plus the 'topic' words (English + this pack's language + your own in agent.json 'keywords')."""
+        return [k.lower() for k in (spec or {}).get("keywords", [])] + [k.lower() for k in (i18n.keywords(spec["topic"], self.lang, self.cfg.get("keywords")) if spec and spec.get("topic") else [])]
+
     def handle_sms(self, params):
-        """An inbound text from Twilio. Returns the reply text ('' = no reply). STOP / START / HELP are handled first, as carriers require."""
+        """An inbound text from Twilio. Returns the reply text ('' = no reply). STOP / START / HELP (and the opt-out words of the pack's language) are handled first, as carriers require."""
         who, body = S.norm_phone(params.get("From", "")), (params.get("Body") or "").strip()
         low = body.lower()
-        if low in ("stop", "stopall", "unsubscribe", "cancel", "end", "quit"):
+        if low in i18n.opt_out_words(self.lang):
             self.state.opt_out(who); self.state.log(workflow="sms", status="opt_out", to=who)
             try:
                 return self.pack.text("opt_out_ack")
@@ -331,10 +336,10 @@ class Agent:
         if low in ("start", "unstop", "yes"):
             self.state.opt_in(who); return "You are subscribed again. Reply STOP to unsubscribe."
         if low == "help":
-            return self.cfg.get("help_text", "Reply STOP to unsubscribe. For help, call us.")
+            return self.cfg.get("help_text") or i18n.glue("help", self.lang)
         for w in self.workflows:
-            kw = [k.lower() for k in ((w.get("on") or {}).get("sms") or {}).get("keywords", [])]
-            if kw and any(re.search(r"\b" + re.escape(k) + r"\b", low) for k in kw):
+            kw = self._triggers((w.get("on") or {}).get("sms"))
+            if kw and any(i18n.matches(k, low, self.lang) for k in kw):
                 ctx = self.ctx(sms={"from": who, "body": body}, customer={"phone": who, "sms_consent": True})   # they texted us first: replying is always allowed
                 out = {"reply": "", "play": []}
                 self.run_actions(w["name"], w.get("do", []), ctx, out)

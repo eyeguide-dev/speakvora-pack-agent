@@ -15,6 +15,9 @@ def main(argv=None):
     r = sub.add_parser("run", help="start the agent"); r.add_argument("-c", "--config", default="agent.json"); r.add_argument("--live", action="store_true", help="really send texts, calls and messages (default is dry-run)")
     p = sub.add_parser("phrases", help="search the pack"); p.add_argument("words", nargs="*"); p.add_argument("--pack", default="./pack"); p.add_argument("--category", default="")
     i = sub.add_parser("init", help="write agent.json and workflows.json for this pack's industry"); i.add_argument("--pack", default="./pack"); i.add_argument("--force", action="store_true")
+    i.add_argument("--mode", choices=["strict", "standard", "open"], default="standard", help="open = no per-person or hourly limits and no quiet hours (opt-outs, required notices and the kill switch stay on)")
+    dc = sub.add_parser("doctor", help="check your setup and tell you what to fix next"); dc.add_argument("-c", "--config", default="agent.json")
+    ev = sub.add_parser("events", help="list the events this pack reacts to, with ready-to-paste examples for curl, Python, Node, PHP, Ruby and Go"); ev.add_argument("-c", "--config", default="agent.json"); ev.add_argument("--lang", default="curl", choices=["curl", "python", "node", "php", "ruby", "go"])
     so = sub.add_parser("source", help="connect a tool: list the ready-made mappings, or add one (github, gitlab, pagerduty, stripe, shopify, calendly, generic-pos)"); so.add_argument("action", choices=["list", "add"]); so.add_argument("name", nargs="?"); so.add_argument("-c", "--config", default="agent.json")
     sl = sub.add_parser("slots", help="which spoken lines this pack still lacks for your workflows; write or send the request for the missing ones")
     sl.add_argument("-c", "--config", default="agent.json"); sl.add_argument("--all", action="store_true", help="every line the industry normally needs, not only the ones your workflows use")
@@ -40,13 +43,19 @@ def main(argv=None):
         import os
         from . import recipes, slots as SL
         pk = Pack(a.pack); _lang, slug = SL.pack_slug(str(pk.meta.get("pack", ""))); prof = SL.profile_for(slug)
-        for name, doc in (("agent.json", {**recipes.agent_config(), "pack": a.pack}), ("workflows.json", recipes.workflows_for(prof))):
+        for name, doc in (("agent.json", {**recipes.agent_config(), "pack": a.pack, "mode": a.mode}), ("workflows.json", recipes.workflows_for(prof, pk.language))):
             if os.path.exists(name) and not a.force:
                 print(f"{name} already exists (use --force to replace)"); continue
             json.dump(doc, open(name, "w", encoding="utf-8"), ensure_ascii=False, indent=1); print("wrote", name)
         print(f"industry profile: {prof}. Next: fill in the YOUR-... values in agent.json, then run:  python -m speakvora_pack_agent check")
         return 0
-    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots"))
+    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events"))
+    if a.cmd == "doctor":
+        from . import doctor
+        return doctor.run(cfg)
+    if a.cmd == "events":
+        from . import doctor
+        return doctor.events(cfg, a.lang)
     if a.cmd == "check":
         ag = Agent(cfg)
         print(f"pack: {ag.pack.meta.get('title')} ({len(ag.pack.items)} lines, language {ag.pack.language}, {len(ag.pack.slots)} workflow slots)")

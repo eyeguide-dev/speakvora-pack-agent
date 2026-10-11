@@ -16,12 +16,12 @@ SECRET = "event-secret"; TOKEN = "twilio-token"; SLACK_SECRET = "slack-signing"
 LINES = json.load(open(os.path.join(ROOT, "lines", "restaurants.en.json")))["lines"]
 
 
-def make_pack(d, m4a=False):
+def make_pack(d, m4a=False, lang="en"):
     os.makedirs(os.path.join(d, "audio")); os.makedirs(os.path.join(d, "workflow_lines"))
     items = [{"id": 1, "text": "Thank you for choosing us.", "file": "audio/00001.m4a", "category": "closing"}, {"id": 2, "text": "Your order has been canceled.", "file": "audio/00002.m4a", "category": "order"}]
     for it in items:
         open(os.path.join(d, it["file"]), "wb").write(b"M4A")
-    json.dump({"pack": "t", "title": "Test", "language": "en", "items": items}, open(os.path.join(d, "manifest.json"), "w"))
+    json.dump({"pack": "t", "title": "Test", "language": lang, "items": items}, open(os.path.join(d, "manifest.json"), "w"))
     wl = []
     for i, ln in enumerate(LINES, 1):
         f = f"workflow_lines/w{i:02d}.{'m4a' if m4a else 'mp3'}"; open(os.path.join(d, f), "wb").write(b"MP3")
@@ -30,9 +30,9 @@ def make_pack(d, m4a=False):
 
 
 class Rig:
-    def __init__(self, dry=False, now=NOON, m4a=False, extra=None):
+    def __init__(self, dry=False, now=NOON, m4a=False, extra=None, lang="en"):
         self.tmp = tempfile.mkdtemp(); self.mock = Mock(); self.now = [now]
-        make_pack(os.path.join(self.tmp, "pack"), m4a)
+        make_pack(os.path.join(self.tmp, "pack"), m4a, lang)
         shutil.copy(os.path.join(ROOT, "examples", "restaurant", "workflows.json"), os.path.join(self.tmp, "workflows.json"))
         raw = {"business": "Bella", "dry_run": dry, "pack": "./pack", "workflows": "./workflows.json", "state_dir": "./state", "timezone": "America/New_York", "public_base_url": "https://agent.test",
                "events": {"secret": SECRET}, "facts": {"hours": "Tue-Sun 5-10 PM.", "address": "12 Main St", "review_url": "https://g.page/r/x"},
@@ -329,6 +329,99 @@ class DevTools(unittest.TestCase):
         d = tempfile.mkdtemp(); json.dump({"sources": []}, open(os.path.join(d, "agent.json"), "w"))
         out = subprocess.run([sys.executable, "-m", "speakvora_pack_agent", "source", "add", "github"], cwd=d, env=dict(os.environ, PYTHONPATH=ROOT), capture_output=True, text=True); self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(json.load(open(os.path.join(d, "agent.json")))["sources"][0]["name"], "github"); self.assertIn("/hook/github", out.stdout); shutil.rmtree(d)
+
+
+class Languages(unittest.TestCase):
+    """The agent understands, answers and formats dates in every language Speakvora packs exist in."""
+    HOURS = {"en": "What are your hours?", "es": "¿Cuál es el horario?", "fr": "Quels sont vos horaires ?", "pt": "Qual o horário de vocês?", "it": "Che orari avete?", "de": "Wann sind die Öffnungszeiten?", "fi": "Mitkä ovat aukioloajat?",
+             "hi": "आपके खुलने का समय क्या है?", "ja": "営業時間を教えてください", "zh": "你们的营业时间是几点？", "ar": "ما هي ساعات العمل؟", "ko": "영업시간이 어떻게 되나요?"}
+    STOP = {"en": "STOP", "es": "parar", "fr": "arrêt", "pt": "parar", "it": "basta", "de": "stopp", "fi": "lopeta", "hi": "रोकें", "ja": "停止", "zh": "退订", "ar": "إيقاف", "ko": "수신거부"}
+    PERSON = {"en": "I want a manager", "es": "quiero hablar con un gerente", "fr": "je veux parler à un responsable", "pt": "quero falar com o gerente", "it": "vorrei parlare con un responsabile", "de": "ich möchte mit dem Manager sprechen",
+              "fi": "haluan puhua esimiehen kanssa", "hi": "मुझे मैनेजर से बात करनी है", "ja": "店長と話したいです", "zh": "我要找经理", "ar": "أريد التحدث مع المدير", "ko": "매니저와 통화하고 싶어요"}
+
+    def agent(self, lang, profile="food"):
+        from speakvora_pack_agent import recipes, slots as SL
+        r = Rig(lang=lang); r.agent.profile = profile; r.agent.registry = SL.registry(profile); r.agent.workflows = recipes.workflows_for(profile, lang)["workflows"]; return r
+
+    def test_every_language_answers_an_hours_question_and_a_person_request(self):
+        for lang in self.HOURS:
+            r = self.agent(lang); reply = r.agent.handle_sms({"From": "+16465550101", "Body": self.HOURS[lang]})
+            self.assertIn("Tue-Sun 5-10 PM.", reply, lang); self.assertIn(r.agent.pack.text("hours_intro"), reply, lang)
+            self.assertIn(r.agent.pack.text("handoff_received"), r.agent.handle_sms({"From": "+16465550102", "Body": self.PERSON[lang]}), lang); r.close()
+
+    def test_local_opt_out_words_work_and_english_stop_always_does(self):
+        for lang, word in self.STOP.items():
+            r = self.agent(lang); r.agent.handle_sms({"From": "+16465550101", "Body": word}); self.assertTrue(r.agent.state.is_opted_out("+16465550101"), lang)
+            r.agent.state.opt_in("+16465550101"); r.agent.handle_sms({"From": "+16465550101", "Body": "STOP"}); self.assertTrue(r.agent.state.is_opted_out("+16465550101"), lang); r.close()
+
+    def test_order_texts_use_the_pack_language_not_english_glue(self):
+        r = self.agent("es"); r.event("order.ready", customer=CUST, order={"number": 42}); body = r.mock.calls("Messages.json")[0]["form"]["Body"]
+        self.assertIn("Pedido 42:", body); self.assertNotIn("order 42 is ready", body); r.event("order.delayed", customer=CUST, order={"number": 42, "extra_minutes": 10}); self.assertIn("(10 min)", r.mock.calls("Messages.json")[1]["form"]["Body"]); r.close()
+
+    def test_dates_are_formatted_in_the_pack_language(self):
+        from speakvora_pack_agent import i18n
+        ts = int(dt.datetime(2026, 10, 13, 23, 0, tzinfo=dt.timezone.utc).timestamp())
+        self.assertEqual(i18n.fmt_dt(ts, "America/New_York", "en"), "Tue Oct 13, 7:00 PM"); self.assertEqual(i18n.fmt_dt(ts, "America/New_York", "es"), "mar 13 oct, 19:00"); self.assertEqual(i18n.fmt_dt(ts, "America/New_York", "ja"), "10月13日(火) 19:00")
+        for lang in i18n.LANGS: self.assertTrue(i18n.fmt_dt(ts, "America/New_York", lang)); self.assertTrue(i18n.glue("help", lang) and i18n.glue("order", lang) and i18n.glue("auto_footer", lang))
+
+    def test_calendar_consent_accepts_yes_in_other_languages(self):
+        r = Rig(lang="es")
+        for yes in ("sí", "oui", "sim", "ja", "はい"): self.assertTrue(r.agent.calendar_contact({"title": "x", "description": f"Phone: 646-555-0101\nSMS OK: {yes}"})["sms_consent"], yes)
+        self.assertFalse(r.agent.calendar_contact({"title": "x", "description": "Phone: 646-555-0101\nSMS OK: no"})["sms_consent"]); r.close()
+
+    def test_users_can_add_their_own_trigger_words(self):
+        r = self.agent("es"); r.agent.cfg["keywords"] = {"hours": ["cuando abren"]}; self.assertIn("Tue-Sun 5-10 PM.", r.agent.handle_sms({"From": "+16465550101", "Body": "cuando abren mañana"})); r.close()
+
+    def test_help_reply_is_in_the_pack_language(self):
+        r = self.agent("fr"); self.assertIn("Répondez STOP", r.agent.handle_sms({"From": "+16465550101", "Body": "help"})); r.close()
+
+    def test_unknown_language_falls_back_to_english(self):
+        from speakvora_pack_agent import i18n
+        self.assertEqual((i18n.lang_of("xx"), i18n.lang_of(None), i18n.lang_of("pt-BR")), ("en", "en", "pt"))
+
+
+class Doctor(unittest.TestCase):
+    def setUp(self):
+        self.r = Rig(dry=True)
+
+    def tearDown(self):
+        self.r.close()
+
+    def cap(self, fn, *a):
+        import contextlib, io
+        b = io.StringIO()
+        with contextlib.redirect_stdout(b):
+            rc = fn(*a)
+        return rc, b.getvalue()
+
+    def cfg(self):
+        return config.load(os.path.join(self.r.tmp, "agent.json"), lazy_secrets=True)
+
+    def test_doctor_runs_and_names_fixes(self):
+        from speakvora_pack_agent import doctor
+        rc, out = self.cap(doctor.run, self.cfg())
+        self.assertEqual(rc, 0); self.assertIn("doctor", out); self.assertIn("Mode:", out)
+
+    def test_events_lists_every_workflow_event_in_every_language(self):
+        from speakvora_pack_agent import doctor
+        names = doctor.events_of(self.r.agent); self.assertTrue(names)
+        for lang in ("curl", "python", "node", "php", "ruby", "go"):
+            rc, out = self.cap(doctor.events, self.cfg(), lang)
+            for n in names:
+                self.assertIn(n, out)
+            self.assertIn("SV_EVENT_SECRET", out)
+
+    def test_sample_events_are_accepted_by_the_agent(self):
+        from speakvora_pack_agent import doctor
+        for n in doctor.events_of(self.r.agent):
+            res = self.r.agent.handle_event(doctor.sample(n))
+            self.assertNotIn("error", str(res).lower(), (n, res))
+
+    def test_mode_open_removes_limits(self):
+        raw = json.load(open(os.path.join(self.r.tmp, "agent.json"))); raw["mode"] = "open"
+        json.dump(raw, open(os.path.join(self.r.tmp, "agent.json"), "w"))
+        c = self.cfg()
+        self.assertIsNone(c["limits"]["per_hour"]); self.assertIsNone(c["limits"]["per_recipient_per_day"])
 
 
 class Required(unittest.TestCase):

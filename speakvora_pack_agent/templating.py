@@ -28,6 +28,12 @@ def render(text, ctx, pack=None):
                 return pack.text(str(lookup(ctx, key[8:]) or ""))
             except Exception:  # noqa: BLE001
                 return ""
+        if key.startswith("t:"):                                      # a short glue word in the pack's language (see i18n.GLUE)
+            from . import i18n
+            try:
+                return i18n.glue(key[2:], ctx.get("lang", "en"))
+            except KeyError:
+                return ""
         if key.startswith("fact:"):
             v = (ctx.get("facts") or {}).get(key[5:])
             return "" if v is None else str(v)

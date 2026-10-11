@@ -1,0 +1,17 @@
+[Unit]
+Description=Speakvora pack agent
+After=network-online.target
+
+[Service]
+User=agent
+WorkingDirectory=/opt/agent
+EnvironmentFile=/opt/agent/.env
+ExecStart=/usr/local/bin/speakvora-pack-agent run -c /opt/agent/agent.json
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/agent
+
+[Install]
+WantedBy=multi-user.target
