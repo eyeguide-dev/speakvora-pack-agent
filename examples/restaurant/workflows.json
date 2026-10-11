@@ -44,6 +44,6 @@
     {"action": "slack", "channel": "#host", "text": "Today's reservations:\n{{today_text}}"}]},
   {"name": "slack_say", "on": {"slack_command": "/say"}, "do": [
     {"action": "sms", "to": "{{command.arg2}}", "text": "{{business}}: {{slotvar:command.arg1}}"},
-    {"action": "reply", "text": "Texted {{command.arg2}}: {{slotvar:command.arg1}}"}]}
+    {"action": "reply", "text": "Text to {{command.arg2}} ({{last.sms}}): {{slotvar:command.arg1}}"}]}
  ]
 }

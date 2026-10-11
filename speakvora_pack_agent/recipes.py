@@ -68,7 +68,7 @@ def _workflows_for(profile):
               "3": [{"action": "play", "audio": ["status_help"]}, {"action": "notify", "text": "Caller {{call.from}} asked for a status update."}],
               "0": [{"action": "play", "audio": ["handoff_person"]}, {"action": "notify", "text": "Caller {{call.from}} wants a person."}]}}}}, "do": []},
           {"name": "daily_briefing", "on": {"schedule": {"at": "09:30"}}, "do": [{"action": "notify", "text": "Today:\n{{today_text}}"}]},
-          {"name": "slack_say", "on": {"slack_command": "/say"}, "do": [_sms("{{command.arg2}}", "{{business}}: {{slotvar:command.arg1}}"), {"action": "reply", "text": "Texted {{command.arg2}}: {{slotvar:command.arg1}}"}]}]
+          {"name": "slack_say", "on": {"slack_command": "/say"}, "do": [_sms("{{command.arg2}}", "{{business}}: {{slotvar:command.arg1}}"), {"action": "reply", "text": "Text to {{command.arg2}} ({{last.sms}}): {{slotvar:command.arg1}}"}]}]
     if profile == "devops":
         oncall = lambda slot, kind="sms": {"action": kind, "to": "{{fact:oncall_phone}}", "urgent": True, **({"text": "{{business}}: {{slot:" + slot + "}} {{repo}} {{branch}} {{url}}"} if kind == "sms" else {"play": [slot]})}  # noqa: E731
         w += [{"name": "pipeline_failed", "on": {"event": "pipeline.failed"}, "do": [{"action": "notify", "text": "Pipeline FAILED: {{repo}} {{branch}} by {{author}} {{url}}"}, oncall("pipeline_failed")]},
@@ -116,5 +116,5 @@ def agent_config(business="YOUR-BUSINESS-NAME"):
             "recipients": {"allow": []},
             "consent": {"field": "customer.sms_consent", "required": True},
             "twilio": {"account_sid": "env:TWILIO_ACCOUNT_SID", "auth_token": "env:TWILIO_AUTH_TOKEN", "from_number": "env:TWILIO_FROM"},
-            "slack": {"bot_token": "env:SLACK_BOT_TOKEN", "signing_secret": "env:SLACK_SIGNING_SECRET", "channel": "#general"},
+            "slack": {"bot_token": "env:SLACK_BOT_TOKEN", "signing_secret": "env:SLACK_SIGNING_SECRET", "channel": "#general", "channels": {}},
             "google_calendar": {"mode": "ics", "ics_url": "env:CALENDAR_ICS_URL"}, "teams": {}, "microsoft_calendar": {}, "inbox": {}, "sources": []}

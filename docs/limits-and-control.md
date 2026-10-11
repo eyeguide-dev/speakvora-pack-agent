@@ -24,3 +24,7 @@ Add your own: `"compliance": {"extra_required": [{"slot": "confidentiality_notic
 
 ## Dry-run, allow-lists, logs
 `--live` or `"dry_run": false` is the only way to send. Everything the agent does or refuses (with the reason) is in `agent-state/agent.log.jsonl`.
+
+
+## Opt-outs also stop calls
+When a person texts STOP (or the pack language's word for it), the agent stops both texts and calls to that number until they opt in again. This is on purpose and cannot be switched off. Twilio also keeps its own STOP list for your number; a person who texted STOP to your Twilio number must reply START to Twilio before any text reaches them.

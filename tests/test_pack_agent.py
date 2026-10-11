@@ -629,11 +629,36 @@ class Web(unittest.TestCase):
         code = urllib.request.urlopen(f"http://127.0.0.1:{self.port}/audio/w02.mp3").status; self.assertEqual(code, 200)
         with self.assertRaises(urllib.error.HTTPError): urllib.request.urlopen(f"http://127.0.0.1:{self.port}/audio/nope.mp3")
 
+
+    def test_delivery_status_callback_logs_what_really_happened(self):
+        code, _ = self.twilio("/twilio/status", {"MessageSid": "SM1", "MessageStatus": "undelivered", "ErrorCode": "30034", "To": "+16465550101"}); self.assertEqual(code, 200)
+        self.twilio("/twilio/status", {"MessageSid": "SM2", "MessageStatus": "delivered", "To": "+16465550101"}); self.twilio("/twilio/status", {"MessageSid": "SM3", "MessageStatus": "queued", "To": "+16465550101"})
+        d = [x for x in self.r.log() if x.get("workflow") == "delivery"]
+        self.assertEqual([(x["status"], x.get("error_code")) for x in d], [("undelivered", "30034"), ("delivered", None)])          # queued is not final: not logged
+        self.assertEqual(self.post("/twilio/status", "MessageSid=SM1&MessageStatus=delivered", {"X-Twilio-Signature": "nope"})[0], 403)
+
+    def test_outbound_text_asks_twilio_for_delivery_updates(self):
+        self.r.agent.twilio.status_url = "https://agent.test/twilio/status"
+        self.r.event("order.ready", customer=CUST, order={"number": 5}); form = self.r.mock.calls("Messages.json")[-1]["form"]
+        self.assertEqual(form.get("StatusCallback"), "https://agent.test/twilio/status")
+
+    def test_slack_roles_go_to_the_default_channel_unless_mapped(self):
+        a = self.r.agent
+        a.cfg["slack"]["channel"] = "#general"; a.cfg["slack"]["channels"] = {"#kitchen": "#orders"}
+        self.assertEqual(a._slack_channel("#front"), "#general"); self.assertEqual(a._slack_channel("kitchen"), "#orders"); self.assertEqual(a._slack_channel("#host"), "#general"); self.assertEqual(a._slack_channel("C0123ABC"), "C0123ABC")
+        a.cfg["slack"]["channel"] = ""; self.assertEqual(a._slack_channel("#front"), "#front")
+
+    def test_a_service_that_is_not_set_up_says_so(self):
+        r = Rig(extra={"slack": {"bot_token": "", "channel": "#general"}}); r.agent.slack.configured = False
+        res = r.event("order.delayed", customer=CUST, order={"number": 5, "extra_minutes": 10})
+        sl = [x for w in res["workflows"] for x in w["results"] if x["action"] == "slack"][0]
+        self.assertEqual(sl["status"], "skipped"); self.assertIn("Slack is not set up", sl["reason"]); r.close()
+
     def test_slack_command_needs_signature_and_texts_a_customer(self):
         body = urllib.parse.urlencode({"command": "/say", "text": "order_ready +16465550177", "user_name": "host"}).encode(); ts = str(int(__import__("time").time()))
         sig = "v0=" + hmac.new(SLACK_SECRET.encode(), f"v0:{ts}:".encode() + body, hashlib.sha256).hexdigest()
         self.assertEqual(self.post("/slack/command", body, {"X-Slack-Request-Timestamp": ts, "X-Slack-Signature": "v0=bad"})[0], 401)
-        code, out = self.post("/slack/command", body, {"X-Slack-Request-Timestamp": ts, "X-Slack-Signature": sig}); self.assertEqual(code, 200); self.assertIn("Texted +16465550177", out)
+        code, out = self.post("/slack/command", body, {"X-Slack-Request-Timestamp": ts, "X-Slack-Signature": sig}); self.assertEqual(code, 200); self.assertIn("Text to +16465550177 (sent)", out)
         self.assertEqual(self.r.mock.calls("Messages.json")[0]["form"]["To"], "+16465550177")
 
 

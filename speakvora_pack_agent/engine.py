@@ -41,6 +41,8 @@ class Agent:
             except PackError:
                 pass
         self.dry = bool(cfg.get("dry_run", True))
+        base = str(cfg.get("public_base_url", "")).rstrip("/")
+        self.twilio.status_url = base + "/twilio/status" if base.startswith("https://") and "YOUR-" not in base else ""     # Twilio tells us later whether a text or call really arrived
         self.lang = i18n.lang_of(self.pack.language)
         oc = str((cfg.get("facts") or {}).get("oncall_phone", ""))
         if oc and "YOUR-" not in oc:                                              # your own on-call phone is staff, not a customer: it may receive urgent alerts without a consent record
@@ -89,6 +91,18 @@ class Agent:
     # ---- helpers -------------------------------------------------------------------------------------------------------------------------------
     def ctx(self, **kw):
         return {"facts": self.cfg.get("facts", {}), "business": self.cfg.get("business", ""), "lang": self.lang, **kw}
+
+    def _slack_channel(self, name):
+        """Workflows name a role ('#front', '#kitchen', '#host'). agent.json "slack": {"channel": "#general", "channels": {"#kitchen": "#orders"}}: a role listed under channels goes there, every other role goes to the one default channel, so a single setting is enough."""
+        sc = self.cfg.get("slack") or {}; chmap = {str(k).lstrip("#"): v for k, v in (sc.get("channels") or {}).items()}
+        key = str(name or "").lstrip("#")
+        if key in chmap:
+            return chmap[key]
+        return (sc.get("channel") or name) if str(name or "").startswith("#") else name         # a channel written without '#' (an ID such as C0123ABC) is used exactly as written
+
+    def _need(self, ok, what, hint):
+        if not ok:
+            raise PackError(f"{what} is not set up yet: {hint}")
 
     def record(self, wf, action, status, **extra):
         self.state.log(workflow=wf, action=action, status=status, dry_run=self.dry, **extra)
@@ -155,6 +169,7 @@ class Agent:
             text = a["text"] if a.get("raw") else self._sms_text(a["text"], to)  # required notices (opt-out footer, debt-collector notice...) are added for you
             if self.dry:
                 self.record(wf, kind, "dry_run", to=to, text=text, media=media, channel="whatsapp" if wa else "sms"); return {"status": "dry_run"}
+            self._need(self.twilio.configured or self.sms_provider.configured, "Texting", "add the twilio section (or sms_provider) in agent.json")
             if self.sms_provider.configured and not wa:
                 r = self.sms_provider.send(to=to, text=text, media_url=media or "")
             else:
@@ -166,6 +181,7 @@ class Agent:
                 return blocked
             if self.dry:
                 self.record(wf, kind, "dry_run", text=a["text"]); return {"status": "dry_run"}
+            self._need(self.teams.configured, "Microsoft Teams", "add teams.webhook_url in agent.json")
             self.teams.post(a["text"], a.get("title")); self.safe.sent("teams", "teams"); self.record(wf, kind, "sent"); return {"status": "sent"}
         if kind == "notify":
             # staff alert to every team chat you connected (Slack and/or Teams): the workflow does not care which one you use
@@ -184,6 +200,7 @@ class Agent:
             twiml = twiml_parts(parts)
             if self.dry:
                 self.record(wf, kind, "dry_run", to=to, parts=[list(p) for p in parts]); return {"status": "dry_run"}
+            self._need(self.twilio.configured or self.call_provider.configured, "Calling", "add the twilio section (or call_provider) in agent.json")
             r = self.call_provider.send(to=to, twiml=twiml, audio_urls=[v for k, v in parts if k == "play"]) if self.call_provider.configured else self.twilio.call(to, twiml)
             self.safe.sent("call", to); self.record(wf, kind, "sent", to=to, sid=(r or {}).get("sid")); return {"status": "sent"}
         if kind == "slack":
@@ -191,12 +208,14 @@ class Agent:
             if blocked:
                 return blocked
             path = self.audio.playable_file(self.pack.resolve(a["audio"])["id"]) if a.get("audio") else None
+            ch = self._slack_channel(a.get("channel"))
             if self.dry:
-                self.record(wf, kind, "dry_run", text=a["text"], channel=a.get("channel"), audio=bool(path)); return {"status": "dry_run"}
-            self.slack.post(a["text"], a.get("channel"))
+                self.record(wf, kind, "dry_run", text=a["text"], channel=ch, audio=bool(path)); return {"status": "dry_run"}
+            self._need(self.slack.configured, "Slack", "add slack.bot_token (or slack.webhook_url) in agent.json")
+            self.slack.post(a["text"], ch)
             if path:
-                self.slack.upload(a.get("channel"), path, self.pack.text(self.pack.resolve(a["audio"])["id"])[:80])
-            self.safe.sent("slack", a.get("channel", "")); self.record(wf, kind, "sent", channel=a.get("channel")); return {"status": "sent"}
+                self.slack.upload(ch, path, self.pack.text(self.pack.resolve(a["audio"])["id"])[:80])
+            self.safe.sent("slack", a.get("channel", "")); self.record(wf, kind, "sent", channel=ch); return {"status": "sent"}
         if kind == "email":
             blocked = self._gate(wf, "email", a["to"], ctx)
             if blocked:
@@ -322,6 +341,17 @@ class Agent:
     def _triggers(self, spec):
         """Words that start a text/email workflow: explicit 'keywords' plus the 'topic' words (English + this pack's language + your own in agent.json 'keywords')."""
         return [k.lower() for k in (spec or {}).get("keywords", [])] + [k.lower() for k in (i18n.keywords(spec["topic"], self.lang, self.cfg.get("keywords")) if spec and spec.get("topic") else [])]
+
+    def handle_delivery(self, params):
+        """Twilio's status callback for a text or call we sent. A text Twilio accepted can still be refused by the carrier (for example error 30034, US numbers not yet registered for business texting): log what really happened."""
+        sid = params.get("MessageSid") or params.get("CallSid") or ""
+        kind = "sms" if params.get("MessageSid") else "call"
+        st = (params.get("MessageStatus") or params.get("CallStatus") or "").lower()
+        final = {"delivered": "delivered", "undelivered": "undelivered", "failed": "undelivered", "completed": "delivered", "busy": "undelivered", "no-answer": "undelivered", "canceled": "undelivered"}
+        if st in final:
+            extra = {"error_code": params["ErrorCode"]} if params.get("ErrorCode") else {}
+            self.record("delivery", kind, final[st], sid=sid, provider_status=st, to=params.get("To", ""), **extra)
+        return {"ok": True}
 
     def handle_sms(self, params):
         """An inbound text from Twilio. Returns the reply text ('' = no reply). STOP / START / HELP (and the opt-out words of the pack's language) are handled first, as carriers require."""

@@ -10,6 +10,7 @@ class Twilio:
         self.sid, self.token, self.from_number = cfg.get("account_sid", ""), cfg.get("auth_token", ""), cfg.get("from_number", "")
         self.base = cfg.get("api_base", "https://api.twilio.com").rstrip("/")
         self.configured = bool(self.sid and self.token and self.from_number)
+        self.status_url = ""
 
     def _auth(self):
         return {"authorization": "Basic " + base64.b64encode(f"{self.sid}:{self.token}".encode()).decode()}
@@ -18,10 +19,12 @@ class Twilio:
         form = {"To": to, "From": from_ or self.from_number, "Body": body[:1500]}
         if media_url:
             form["MediaUrl"] = media_url
+        if self.status_url:
+            form["StatusCallback"] = self.status_url
         return http.request("POST", f"{self.base}/2010-04-01/Accounts/{self.sid}/Messages.json", self._auth(), form=form)[1]
 
     def call(self, to, twiml):
-        return http.request("POST", f"{self.base}/2010-04-01/Accounts/{self.sid}/Calls.json", self._auth(), form={"To": to, "From": self.from_number, "Twiml": twiml})[1]
+        return http.request("POST", f"{self.base}/2010-04-01/Accounts/{self.sid}/Calls.json", self._auth(), form={"To": to, "From": self.from_number, "Twiml": twiml, **({"StatusCallback": self.status_url, "StatusCallbackEvent": "completed"} if self.status_url else {})})[1]
 
     def check_signature(self, url, params, signature):
         data = url + "".join(k + str(params[k]) for k in sorted(params))

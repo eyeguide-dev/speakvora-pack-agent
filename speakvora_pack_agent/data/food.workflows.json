@@ -328,7 +328,7 @@
     },
     {
      "action": "reply",
-     "text": "Texted {{command.arg2}}: {{slotvar:command.arg1}}"
+     "text": "Text to {{command.arg2}} ({{last.sms}}): {{slotvar:command.arg1}}"
     }
    ]
   }
