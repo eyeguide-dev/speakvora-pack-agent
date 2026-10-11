@@ -4,7 +4,7 @@ A small agent that turns an offline voice pack into automated work: confirm book
 
 It runs on **your own server**, next to your app, with **your own accounts**. Standard-library Python only. No hosted service, no per-message fee from us, nothing to install in your chat or calendar.
 
-> Speakvora sells offline voice packs (audio you ship once). Every pack includes this agent. The agent is free software (MIT); the pack audio is licensed separately. You can use the agent with any set of audio files laid out like a pack.
+> Speakvora sells offline voice packs (audio you ship once). The packs are being rebuilt to include this agent, English first, so a purchase is audio plus agent for one price. The agent is free software (MIT) and works with any set of audio files laid out like a pack; the pack audio is licensed separately.
 
 ## Try it in two minutes, no accounts
 
@@ -17,7 +17,7 @@ It runs a restaurant's day against fake Twilio, Slack and Google servers on your
 ## Use it with a pack
 
 ```bash
-pip install speakvora-pack-agent        # or use the copy inside every Speakvora pack
+pip install speakvora-pack-agent        # once published on PyPI; until then clone this repo (the demo needs nothing else)
 cd your-unzipped-pack
 speakvora-pack-agent init --pack .      # writes agent.json + workflows.json for the pack's industry
 speakvora-pack-agent check              # what is connected, which spoken lines are missing

@@ -19,7 +19,7 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://speakvora.com/offline-pack-agent"
+Homepage = "https://speakvora.com/packs"
 Documentation = "https://github.com/eyeguide-dev/speakvora-pack-agent/tree/main/docs"
 Source = "https://github.com/eyeguide-dev/speakvora-pack-agent"
 Issues = "https://github.com/eyeguide-dev/speakvora-pack-agent/issues"
