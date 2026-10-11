@@ -1,10 +1,10 @@
 """Everything language-specific the agent needs besides the pack's own lines: the words people text to trigger a workflow, opt-out words, date formats, and the few glue words in a message. Covers the 12 languages Speakvora packs exist in
-(en, es, fr, pt, it, de, fi, hi, ja, zh, ar, ko). English words always still work (carriers require STOP in English). The local word lists are plain and common; add your own in agent.json under "keywords": {"hours": ["..."]}."""
+(en, es, fr, pt, it, de, fi, hi, ja, zh, ar, ko) and the six added after them (ru, tr, vi, pl, nl, id). English words always still work (carriers require STOP in English). The local word lists are plain and common; add your own in agent.json under "keywords": {"hours": ["..."]}."""
 import datetime as dt
 from zoneinfo import ZoneInfo
 
-LANGS = ("en", "es", "fr", "pt", "it", "de", "fi", "hi", "ja", "zh", "ar", "ko")
-SUBSTRING = {"hi", "ja", "zh", "ar", "ko", "de", "fi"}   # no spaces between words (hi, ja, zh, ar, ko) or heavy inflection and compounds (de, fi): match inside the text
+LANGS = ("en", "es", "fr", "pt", "it", "de", "fi", "hi", "ja", "zh", "ar", "ko", "ru", "tr", "vi", "pl", "nl", "id")
+SUBSTRING = {"hi", "ja", "zh", "ar", "ko", "de", "fi", "ru", "tr", "vi", "pl"}   # no spaces between words (hi, ja, zh, ar, ko) or heavy inflection and compounds (de, fi): match inside the text
 
 KW = {   # topic -> language -> words
     "hours": {"en": "hours open close closing", "es": "horario horarios abierto abren cierran cerrado", "fr": "horaires heures ouvert fermé ferme fermeture", "pt": "horário horario horários aberto abre fecha fechado", "it": "orari orario aperto chiuso apre chiude",
@@ -40,6 +40,43 @@ DAYS = {"en": "Mon Tue Wed Thu Fri Sat Sun", "es": "lun mar mié jue vie sáb do
 MONTHS = {"en": "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", "es": "ene feb mar abr may jun jul ago sep oct nov dic", "fr": "janv. févr. mars avr. mai juin juil. août sept. oct. nov. déc.", "pt": "jan fev mar abr mai jun jul ago set out nov dez",
           "it": "gen feb mar apr mag giu lug ago set ott nov dic", "de": "Jan Feb März Apr Mai Juni Juli Aug Sep Okt Nov Dez", "fi": "tammi helmi maalis huhti touko kesä heinä elo syys loka marras joulu",
           "hi": "जन॰ फ़र॰ मार्च अप्रैल मई जून जुल॰ अग॰ सित॰ अक्तू॰ नव॰ दिस॰", "ja": "1月 2月 3月 4月 5月 6月 7月 8月 9月 10月 11月 12月", "zh": "1月 2月 3月 4月 5月 6月 7月 8月 9月 10月 11月 12月", "ar": "يناير فبراير مارس أبريل مايو يونيو يوليو أغسطس سبتمبر أكتوبر نوفمبر ديسمبر", "ko": "1월 2월 3월 4월 5월 6월 7월 8월 9월 10월 11월 12월"}
+
+
+# The six languages added after the first twelve. Short plain word lists; Russian, Polish and Turkish match inside words (heavy inflection) and Vietnamese matches syllables.
+_NEW = {
+    "ru": {"hours": "часы время работы открыто закрыто график", "directions": "адрес где проехать парковка", "reservation": "бронь бронировать забронировать столик запись", "status": "заказ статус самовывоз обновление",
+           "person": "человек менеджер сотрудник оператор", "reschedule": "перенести изменить отменить", "rules": "правила визит посещение", "bail": "залог", "hardship": "трудности платить рассрочка",
+           "opt_out": "стоп отписаться отмена", "order": "Заказ", "min": "мин", "auto_footer": "(Этот ответ отправил автоматический помощник. Ответьте, чтобы связаться с человеком.)", "help": "Отправьте STOP, чтобы отписаться. Для помощи позвоните нам.",
+           "days": "пн вт ср чт пт сб вс", "months": "янв фев мар апр май июн июл авг сен окт ноя дек", "yes": "да"},
+    "tr": {"hours": "saat saatler açık kapalı çalışma", "directions": "adres nerede yol tarif otopark", "reservation": "rezervasyon randevu masa", "status": "sipariş durum teslim güncelleme",
+           "person": "kişi insan yönetici temsilci", "reschedule": "değiştir iptal ertele", "rules": "kurallar ziyaret", "bail": "kefalet", "hardship": "zorluk ödeme taksit",
+           "opt_out": "dur iptal", "order": "Sipariş", "min": "dk", "auto_footer": "(Bu yanıt otomatik bir asistan tarafından gönderildi. Bir kişiye ulaşmak için yanıtlayın.)", "help": "Abonelikten çıkmak için STOP yazın. Yardım için bizi arayın.",
+           "days": "Pzt Sal Çar Per Cum Cmt Paz", "months": "Oca Şub Mar Nis May Haz Tem Ağu Eyl Eki Kas Ara", "yes": "evet"},
+    "vi": {"hours": "giờ mở cửa đóng", "directions": "địa chỉ đâu đường đỗ", "reservation": "đặt bàn hẹn", "status": "đơn trạng thái nhận cập nhật",
+           "person": "người quản lý nhân viên", "reschedule": "đổi hủy dời", "rules": "quy định thăm", "bail": "bảo lãnh", "hardship": "khó khăn trả góp",
+           "opt_out": "dừng hủy", "order": "Đơn hàng", "min": "phút", "auto_footer": "(Tin nhắn này do trợ lý tự động gửi. Hãy trả lời để gặp nhân viên.)", "help": "Trả lời STOP để hủy đăng ký. Cần hỗ trợ, vui lòng gọi cho chúng tôi.",
+           "days": "T2 T3 T4 T5 T6 T7 CN", "months": "1 2 3 4 5 6 7 8 9 10 11 12", "yes": "có"},
+    "pl": {"hours": "godziny otwarte zamknięte otwarcia", "directions": "adres gdzie dojazd parking", "reservation": "rezerwacja rezerwować stolik wizyta", "status": "zamówienie status odbiór aktualizacja",
+           "person": "osoba człowiek kierownik pracownik", "reschedule": "zmień anuluj przełóż", "rules": "zasady odwiedziny wizyta", "bail": "kaucja", "hardship": "trudności płatność raty",
+           "opt_out": "stop anuluj wypisz", "order": "Zamówienie", "min": "min", "auto_footer": "(Tę odpowiedź wysłał automatyczny asystent. Odpowiedz, aby skontaktować się z osobą.)", "help": "Odpowiedz STOP, aby zrezygnować. W razie pomocy zadzwoń do nas.",
+           "days": "pon wt śr czw pt sob niedz", "months": "sty lut mar kwi maj cze lip sie wrz paź lis gru", "yes": "tak"},
+    "nl": {"hours": "openingstijden uren open dicht gesloten", "directions": "adres waar route parkeren", "reservation": "reserveren reservering tafel afspraak boeken", "status": "bestelling status afhalen update",
+           "person": "persoon mens manager medewerker", "reschedule": "wijzigen annuleren verplaatsen", "rules": "regels bezoek", "bail": "borgtocht", "hardship": "moeite betalen betalingsregeling",
+           "opt_out": "stop afmelden", "order": "Bestelling", "min": "min", "auto_footer": "(Dit antwoord is verstuurd door een automatische assistent. Antwoord om een medewerker te spreken.)", "help": "Antwoord STOP om je af te melden. Bel ons voor hulp.",
+           "days": "ma di wo do vr za zo", "months": "jan feb mrt apr mei jun jul aug sep okt nov dec", "yes": "ja"},
+    "id": {"hours": "jam buka tutup operasional", "directions": "alamat dimana arah parkir", "reservation": "reservasi pesan meja janji", "status": "pesanan status ambil pembaruan",
+           "person": "orang manusia manajer staf", "reschedule": "ubah batalkan jadwal", "rules": "aturan kunjungan", "bail": "jaminan", "hardship": "kesulitan bayar cicilan",
+           "opt_out": "berhenti batal", "order": "Pesanan", "min": "mnt", "auto_footer": "(Balasan ini dikirim oleh asisten otomatis. Balas untuk menghubungi petugas.)", "help": "Balas STOP untuk berhenti berlangganan. Untuk bantuan, hubungi kami.",
+           "days": "Sen Sel Rab Kam Jum Sab Min", "months": "Jan Feb Mar Apr Mei Jun Jul Agu Sep Okt Nov Des", "yes": "ya"},
+}
+for _l, _t in _NEW.items():
+    for _topic in KW:
+        KW[_topic][_l] = _t[_topic]
+    OPT_OUT[_l] = _t["opt_out"]
+    for _k in ("order", "min", "auto_footer", "help"):
+        GLUE[_k][_l] = _t[_k]
+    DAYS[_l], MONTHS[_l] = _t["days"], _t["months"]
+YES_WORDS = "yes true 1 sí si oui sim sì ja kyllä हाँ はい 是 نعم 예 네 да evet có tak ya"
 
 
 def lang_of(code):
@@ -80,6 +117,8 @@ def fmt_dt(ts, tz, lang):
         return f"{d.month}월 {d.day}일({day}) {hm}"
     if lang == "ar":
         return f"{day} {d.day} {mon}، {hm}"
+    if lang == "vi":
+        return f"{day} {d.day}/{d.month}, {hm}"
     if lang == "de":
         return f"{day}, {d.day}. {mon}, {hm}"
     if lang == "hi":

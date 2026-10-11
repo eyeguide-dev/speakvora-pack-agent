@@ -375,6 +375,25 @@ class Languages(unittest.TestCase):
     def test_help_reply_is_in_the_pack_language(self):
         r = self.agent("fr"); self.assertIn("Répondez STOP", r.agent.handle_sms({"From": "+16465550101", "Body": "help"})); r.close()
 
+    NEW = {"ru": ("Какие у вас часы работы?", "стоп", "хочу поговорить с менеджером"), "tr": ("Çalışma saatleriniz nedir?", "dur", "yönetici ile konuşmak istiyorum"),
+           "vi": ("Giờ mở cửa của quán là mấy giờ?", "dừng", "tôi muốn gặp quản lý"), "pl": ("Jakie są wasze godziny otwarcia?", "stop", "chcę rozmawiać z kierownikiem"),
+           "nl": ("Wat zijn jullie openingstijden?", "stop", "ik wil een manager spreken"), "id": ("Jam buka berapa?", "berhenti", "saya ingin bicara dengan manajer")}
+
+    def test_the_six_newer_languages_understand_hours_person_and_opt_out(self):
+        for lang, (hours, stop, person) in self.NEW.items():
+            r = self.agent(lang)
+            self.assertIn("Tue-Sun 5-10 PM.", r.agent.handle_sms({"From": "+16465550101", "Body": hours}), lang)
+            self.assertIn(r.agent.pack.text("handoff_received"), r.agent.handle_sms({"From": "+16465550102", "Body": person}), lang)
+            r.agent.handle_sms({"From": "+16465550103", "Body": stop}); self.assertTrue(r.agent.state.is_opted_out("+16465550103"), lang)
+            self.assertTrue(r.agent.calendar_contact({"title": "x", "description": "Phone: 646-555-0101\nSMS OK: " + {"ru": "да", "tr": "evet", "vi": "có", "pl": "tak", "nl": "ja", "id": "ya"}[lang]})["sms_consent"], lang)
+            r.close()
+
+    def test_language_tables_cover_every_language(self):
+        from speakvora_pack_agent import i18n
+        for lang in i18n.LANGS:
+            for topic in i18n.KW: self.assertTrue(i18n.KW[topic].get(lang), (topic, lang))
+            self.assertTrue(i18n.OPT_OUT.get(lang) and i18n.DAYS[lang] and i18n.MONTHS[lang]); self.assertEqual(len(i18n.DAYS[lang].split(" ")), 7, lang); self.assertEqual(len(i18n.MONTHS[lang].split(" ")), 12, lang)
+
     def test_unknown_language_falls_back_to_english(self):
         from speakvora_pack_agent import i18n
         self.assertEqual((i18n.lang_of("xx"), i18n.lang_of(None), i18n.lang_of("pt-BR")), ("en", "en", "pt"))

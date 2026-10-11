@@ -38,7 +38,7 @@ class PackZip(unittest.TestCase):
         self.assertEqual(self.sv("phrases", "thank", "--pack", ".").returncode, 0)
 
     def test_runs_dry_and_records_but_sends_nothing(self):
-        cfg = json.load(open(os.path.join(self.d, "agent.json"))); cfg.update(listen={"host": "127.0.0.1", "port": 18999}, public_base_url="http://127.0.0.1:18999", facts={"hours": "9-5", "address": "x", "review_url": "https://r.test"}, business="Bella")
+        cfg = json.load(open(os.path.join(self.d, "agent.json"))); cfg.update(listen={"host": "127.0.0.1", "port": 18999}, public_base_url="http://127.0.0.1:18999", facts={"hours": "9-5", "address": "x", "review_url": "https://r.test"}, business="Bella", quiet_hours={"start": "00:00", "end": "00:00", "applies_to": []})            # quiet hours would block the text at night; this test checks dry-run behaviour at any hour
         json.dump(cfg, open(os.path.join(self.d, "agent.json"), "w"))
         p = subprocess.Popen(["sh", "sv-agent", "run"], cwd=self.d, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
