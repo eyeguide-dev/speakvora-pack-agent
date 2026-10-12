@@ -331,6 +331,76 @@ class DevTools(unittest.TestCase):
         self.assertEqual(json.load(open(os.path.join(d, "agent.json")))["sources"][0]["name"], "github"); self.assertIn("/hook/github", out.stdout); shutil.rmtree(d)
 
 
+class OfflineQueue(unittest.TestCase):
+    """The network goes away: texts, Slack posts and calls wait in the outbox on disk, keep their order, and go out when it returns. Nothing is ever sent twice."""
+    DEAD = "http://127.0.0.1:9"                                                                  # nothing listens here: connection refused, i.e. provably not sent
+
+    def offline(self, r):
+        r.live = (r.agent.twilio.base, r.agent.slack.base); r.agent.twilio.base = r.agent.slack.base = self.DEAD
+
+    def online(self, r):
+        r.agent.twilio.base, r.agent.slack.base = r.live
+
+    def test_actions_queue_while_offline_and_go_out_in_order_when_it_returns(self):
+        r = Rig(); self.offline(r); out = r.event("order.ready", customer=CUST, order={"number": 71})
+        st = {x["action"]: x["status"] for x in out["workflows"][0]["results"]}; self.assertEqual((st["sms"], st["slack"]), ("queued", "queued"))
+        self.assertEqual(len(r.agent.state.outbox()), 2); self.assertEqual(r.agent.flush_outbox()["offline"], True); self.assertEqual(len(r.agent.state.outbox()), 2)
+        self.online(r); res = r.agent.flush_outbox(); self.assertEqual(res["sent"], 2); self.assertEqual(r.agent.state.outbox(), [])
+        self.assertEqual(len(r.mock.calls("Messages.json")), 1); self.assertEqual(len(r.mock.calls("chat.postMessage")), 1); self.assertIn("order 71 is ready", r.mock.calls("Messages.json")[0]["form"]["Body"])
+        self.assertEqual(r.agent.flush_outbox()["sent"], 0); self.assertEqual(len(r.mock.calls("Messages.json")), 1)           # a second flush sends nothing again
+        self.assertIn("delivered_from_queue", [x["status"] for x in r.log()]); r.close()
+
+    def test_queue_survives_a_restart(self):
+        r = Rig(); self.offline(r); r.event("order.ready", customer=CUST, order={"number": 72})
+        agent2 = Agent(config.load(os.path.join(r.tmp, "agent.json")), now=lambda: r.now[0]); self.assertEqual(len(agent2.state.outbox()), 2)
+        agent2.twilio.base, agent2.slack.base = r.live; self.assertEqual(agent2.flush_outbox()["sent"], 2); self.assertEqual(len(r.mock.calls("Messages.json")), 1); r.close()
+
+    def test_old_actions_expire_instead_of_arriving_hours_late(self):
+        r = Rig(extra={"queue": {"max_age_minutes": {"sms": 30}}}); self.offline(r); r.event("order.ready", customer=CUST, order={"number": 73})
+        r.now[0] += 31 * 60; self.online(r); res = r.agent.flush_outbox()
+        self.assertEqual(res["expired"], 1); self.assertEqual(res["sent"], 1); self.assertEqual(r.mock.calls("Messages.json"), []); self.assertEqual(len(r.mock.calls("chat.postMessage")), 1)   # the text expired, the staff Slack note (24 h) still went
+        self.assertIn("expired", [x["status"] for x in r.log()]); r.close()
+
+    def test_a_timeout_is_not_queued_because_it_may_have_arrived(self):
+        import socket
+        from speakvora_pack_agent import web
+        self.assertFalse(web.is_offline(socket.timeout())); self.assertTrue(web.is_offline(socket.gaierror(-2, "no dns"))); self.assertTrue(web.is_offline(ConnectionRefusedError()))
+        self.assertFalse(web.is_offline(web.HttpError(500, "x")))
+
+    def test_server_errors_are_not_retried_and_do_not_queue(self):
+        r = Rig(); r.mock.fail["Messages.json"] = 500; r.event("order.ready", customer=CUST, order={"number": 74}); self.assertEqual(len(r.agent.state.outbox()), 0); r.close()
+
+    def test_quiet_hours_keep_a_queued_text_waiting_until_morning(self):
+        r = Rig(); self.offline(r); r.event("order.ready", customer=CUST, order={"number": 75})
+        r.now[0] = dt.datetime(2026, 10, 13, 3, 30, tzinfo=dt.timezone.utc).timestamp(); self.online(r); r.agent.cfg["queue"]["max_age_minutes"]["sms"] = 2000      # 23:30 New York
+        res = r.agent.flush_outbox(); self.assertEqual(res["waiting"], 1); self.assertEqual(r.mock.calls("Messages.json"), []); self.assertEqual([q["kind"] for q in r.agent.state.outbox()], ["sms"])
+        r.now[0] = dt.datetime(2026, 10, 13, 13, 0, tzinfo=dt.timezone.utc).timestamp(); self.assertEqual(r.agent.flush_outbox()["sent"], 1); self.assertEqual(len(r.mock.calls("Messages.json")), 1); r.close()
+
+    def test_an_opt_out_that_arrives_while_queued_stops_the_text(self):
+        r = Rig(); self.offline(r); r.event("order.ready", customer=CUST, order={"number": 76}); r.agent.state.opt_out("+16465550101"); self.online(r)
+        res = r.agent.flush_outbox(); self.assertEqual(r.mock.calls("Messages.json"), []); self.assertEqual(res["dropped"], 1); r.close()
+
+    def test_kill_switch_pauses_the_queue(self):
+        r = Rig(); self.offline(r); r.event("order.ready", customer=CUST, order={"number": 77}); self.online(r)
+        open(os.path.join(r.agent.cfg["state_dir"], "STOP"), "w").close(); self.assertEqual(r.agent.flush_outbox()["sent"], 0); self.assertEqual(len(r.agent.state.outbox()), 2); r.close()
+
+    def test_slack_text_is_not_posted_twice_when_the_clip_upload_is_what_failed(self):
+        r = Rig(); a = {"action": "slack", "channel": "#front", "text": "hello", "_posted": True, "audio": "w01"}
+        r.agent.state.enqueue({"wf": "t", "kind": "slack", "a": a, "ctx": {}}); res = r.agent.flush_outbox(); self.assertEqual(res["sent"], 1); self.assertEqual(r.mock.calls("chat.postMessage"), []); r.close()
+
+    def test_queue_command_lists_and_drops_without_the_service_keys(self):
+        import contextlib, io
+        from speakvora_pack_agent import cli
+        r = Rig(); self.offline(r); r.event("order.ready", customer=CUST, order={"number": 78}); cfgp = os.path.join(r.tmp, "agent.json"); buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["queue", "list", "-c", cfgp]); cli.main(["queue", "drop", "all", "-c", cfgp])
+        self.assertIn("2 waiting", buf.getvalue()); self.assertEqual(Agent(config.load(cfgp)).state.outbox(), []); r.close()
+
+    def test_call_is_queued_with_a_short_life_and_health_reports_the_queue(self):
+        r = Rig(); self.offline(r); out = r.agent.run_actions("t", [{"action": "call", "to": "+16465550101", "play": "w01", "urgent": True}], r.agent.ctx(customer=CUST))
+        self.assertEqual(out[0]["status"], "queued"); self.assertEqual(r.agent.cfg["queue"]["max_age_minutes"]["call"], 15); r.close()
+
+
 class Languages(unittest.TestCase):
     """The agent understands, answers and formats dates in every language Speakvora packs exist in."""
     HOURS = {"en": "What are your hours?", "es": "¿Cuál es el horario?", "fr": "Quels sont vos horaires ?", "pt": "Qual o horário de vocês?", "it": "Che orari avete?", "de": "Wann sind die Öffnungszeiten?", "fi": "Mitkä ovat aukioloajat?",

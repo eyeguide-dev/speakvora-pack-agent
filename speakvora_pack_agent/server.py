@@ -34,7 +34,7 @@ def make_handler(agent):
         def do_GET(self):
             p = self.path.split("?")[0]
             if p == "/health":
-                return self._send(200, {"ok": True, "dry_run": agent.dry, "pack": agent.pack.meta.get("pack"), "workflows": len(agent.workflows), "missing_slots": agent.missing_slots, "missing_required_lines": agent.missing_required, "killed": agent.safe.killed()})
+                return self._send(200, {"ok": True, "dry_run": agent.dry, "pack": agent.pack.meta.get("pack"), "workflows": len(agent.workflows), "missing_slots": agent.missing_slots, "missing_required_lines": agent.missing_required, "killed": agent.safe.killed(), "queued": len(agent.state.outbox())})
             if p.startswith("/audio/"):
                 got = agent.audio.serve(p[len("/audio/"):].rsplit(".", 1)[0])
                 return self._send(200, got[0], got[1]) if got else self._send(404, {"error": "not_found"})
@@ -89,6 +89,10 @@ def serve(agent, host=None, port=None, tick_seconds=60):
     stop = threading.Event()
 
     def loop():
+        try:
+            agent.flush_outbox()                                              # anything left in the outbox from before a restart or power cut goes out as soon as the connection allows
+        except Exception as e:  # noqa: BLE001
+            agent.state.log(workflow="outbox", status="error", error=str(e)[:200])
         while not stop.wait(tick_seconds):
             try:
                 agent.tick()

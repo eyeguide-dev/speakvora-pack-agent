@@ -22,6 +22,7 @@ def main(argv=None):
     sl = sub.add_parser("slots", help="which spoken lines this pack still lacks for your workflows; write or send the request for the missing ones")
     sl.add_argument("-c", "--config", default="agent.json"); sl.add_argument("--all", action="store_true", help="every line the industry normally needs, not only the ones your workflows use")
     sl.add_argument("--write", action="store_true", help="write slot-requests.json"); sl.add_argument("--send", action="store_true", help="send the request to Speakvora (needs SPEAKVORA_KEY)")
+    qu = sub.add_parser("queue", help="actions waiting for the internet: list them, send them now, or drop them"); qu.add_argument("action", choices=["list", "flush", "drop"]); qu.add_argument("id", nargs="?", help="a queue id, or 'all' for drop"); qu.add_argument("-c", "--config", default="agent.json")
     e = sub.add_parser("event", help="send a signed test event to a running agent"); e.add_argument("-c", "--config", default="agent.json"); e.add_argument("file"); e.add_argument("--url", default="")
     a = ap.parse_args(argv)
     if a.cmd == "phrases":
@@ -49,7 +50,7 @@ def main(argv=None):
             json.dump(doc, open(name, "w", encoding="utf-8"), ensure_ascii=False, indent=1); print("wrote", name)
         print(f"industry profile: {prof}. Next: fill in the YOUR-... values in agent.json, then run:  python -m speakvora_pack_agent check")
         return 0
-    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events"))
+    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events") or (a.cmd == "queue" and a.action != "flush"))
     if a.cmd == "doctor":
         from . import doctor
         return doctor.run(cfg)
@@ -59,7 +60,7 @@ def main(argv=None):
     if a.cmd == "check":
         ag = Agent(cfg)
         print(f"pack: {ag.pack.meta.get('title')} ({len(ag.pack.items)} lines, language {ag.pack.language}, {len(ag.pack.slots)} workflow slots)")
-        print(f"workflows: {len(ag.workflows)}  | dry_run: {ag.dry}")
+        print(f"workflows: {len(ag.workflows)}  | dry_run: {ag.dry}  | waiting in the offline outbox: {len(ag.state.outbox())}")
         wl_missing = [i for i in ag.pack.missing_audio() if i in set(ag.pack.slots.values())]
         print("workflow-line audio files missing:", wl_missing[:10] or "none")
         for n, svc in (("twilio", ag.twilio), ("slack", ag.slack), ("google calendar", ag.gcal), ("email", ag.mail)):
@@ -83,6 +84,17 @@ def main(argv=None):
         return 0
     if a.cmd == "slots":
         return slots_cli(cfg, a)
+    if a.cmd == "queue":
+        ag = Agent(cfg); items = ag.state.outbox()
+        if a.action == "list":
+            for q in items:
+                print(f"{q['id']:>20}  {q['kind']:<16} {q['wf']:<24} waiting {int(ag.now() - q['queued_at'])} s  {str(q['a'].get('to') or q['a'].get('channel') or q['a'].get('url') or '')[:40]}")
+            print(f"{len(items)} waiting" if items else "nothing waiting"); return 0
+        if a.action == "flush":
+            print(json.dumps(ag.flush_outbox())); return 0
+        if not a.id:
+            print("give a queue id or 'all'"); return 1
+        print("dropped", ag.state.clear_outbox() if a.id == "all" else int(ag.state.dequeue(a.id))); return 0
     if a.cmd == "event":
         return signing_cli.send(cfg, a.file, a.url)
     return 1

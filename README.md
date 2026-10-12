@@ -33,6 +33,8 @@ New here? Start with [docs/integrate-in-10-minutes.md](docs/integrate-in-10-minu
 
 Texts, calls and WhatsApp through Twilio, or any provider's web API (`sms_provider`, `call_provider`); Slack and Microsoft Teams; Google Calendar and Microsoft 365 (ICS link or OAuth); SMTP and IMAP email; any system that sends a webhook (a short mapping, no code); any REST API (`http` action). See [docs/connect-anything.md](docs/connect-anything.md) and [docs/integrate-existing-numbers.md](docs/integrate-existing-numbers.md).
 
+**When the internet goes away:** texts, calls, Slack and Teams posts, email, calendar entries and webhooks wait in an outbox on disk and go out in order when the connection returns (safety checks run again at send time; old actions expire; a timeout is never retried, so nothing is sent twice). See [docs/offline-and-queue.md](docs/offline-and-queue.md).
+
 ## Safety is on by default
 Dry-run first. Customer messages need consent. STOP is always honoured. Quiet hours and limits (`strict`, `standard`, `open`). Notices your industry must say are added automatically (automated-call line, opt-out footer, emergency and privacy for health, facility notices, debt-collector notice, confidentiality). Signed requests only. A kill switch (create a file named `STOP` in `agent-state/`). See [docs/safety.md](docs/safety.md) and [docs/limits-and-control.md](docs/limits-and-control.md).
 

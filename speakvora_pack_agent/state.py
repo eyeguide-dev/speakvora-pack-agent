@@ -7,7 +7,7 @@ class State:
         self.dir, self.now, self.lock = directory, now, threading.Lock()
         os.makedirs(directory, exist_ok=True)
         self.path = os.path.join(directory, "state.json")
-        self.data = {"done": {}, "optout": {}, "sent": []}
+        self.data = {"done": {}, "optout": {}, "sent": [], "outbox": []}
         if os.path.exists(self.path):
             try:
                 self.data.update(json.load(open(self.path, encoding="utf-8")))
@@ -54,6 +54,24 @@ class State:
     def sent_since(self, seconds, kind=None, to=None):
         t = self.now() - seconds
         return sum(1 for s in self.data["sent"] if s[0] >= t and (kind is None or s[1] == kind) and (to is None or s[2] == to))
+
+    # ---- the outbox: actions that could not leave because the network was down, kept (on disk, so a restart or power cut keeps them) until they can be sent ----
+    def enqueue(self, item):
+        with self.lock:
+            self.data["outbox"].append({**item, "id": f"q{int(self.now() * 1000)}-{len(self.data['outbox'])}", "queued_at": int(self.now())}); self.save()
+            return self.data["outbox"][-1]["id"]
+
+    def outbox(self):
+        with self.lock:
+            return list(self.data["outbox"])
+
+    def dequeue(self, qid):
+        with self.lock:
+            n = len(self.data["outbox"]); self.data["outbox"] = [q for q in self.data["outbox"] if q["id"] != qid]; self.save(); return n != len(self.data["outbox"])
+
+    def clear_outbox(self):
+        with self.lock:
+            n = len(self.data["outbox"]); self.data["outbox"] = []; self.save(); return n
 
     def log(self, **rec):
         rec["t"] = int(self.now())

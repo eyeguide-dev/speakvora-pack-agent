@@ -1,6 +1,6 @@
 """The agent: receives triggers (an event from your app, a calendar tick, an inbound text or call, a Slack command, a daily schedule), picks the matching workflows from workflows.json, and runs their actions through the connectors,
 always through the safety checks first. Dry-run (the default) records what it WOULD do and sends nothing."""
-import datetime as dt, json, re, time
+import datetime as dt, json, re, threading, time
 from zoneinfo import ZoneInfo
 
 from . import i18n, safety as S, slots as slots_mod, templating as T
@@ -19,6 +19,8 @@ from .state import State
 from . import web
 
 PHONE_RX = re.compile(r"(\+?\d[\d\-\s().]{8,}\d)")
+QUEUEABLE = ("sms", "call", "slack", "teams", "email", "webhook", "http", "calendar_create")       # actions that wait in the outbox when the network is down
+KEEP_WHILE_BLOCKED = ("quiet_hours", "hourly_limit", "recipient_daily_limit")                      # a queued action blocked only by timing waits (until it expires); any other refusal drops it
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
@@ -41,6 +43,7 @@ class Agent:
             except PackError:
                 pass
         self.dry = bool(cfg.get("dry_run", True))
+        self._flush_lock = threading.Lock()
         base = str(cfg.get("public_base_url", "")).rstrip("/")
         self.twilio.status_url = base + "/twilio/status" if base.startswith("https://") and "YOUR-" not in base else ""     # Twilio tells us later whether a text or call really arrived
         self.lang = i18n.lang_of(self.pack.language)
@@ -151,7 +154,59 @@ class Agent:
             return {"status": "blocked", "reason": why}
         return None
 
+    def _queueable(self, kind, a):
+        q = self.cfg.get("queue") or {}
+        return bool(q.get("enabled", True)) and kind in QUEUEABLE and not (kind == "http" and str(a.get("method", "POST")).upper() == "GET")
+
     def _do(self, wf, kind, a, ctx, out):
+        """Runs one action. If the network is down (and only if the request provably never left this machine) the action is kept in the outbox and sent when the connection is back."""
+        try:
+            return self._do_now(wf, kind, a, ctx, out)
+        except Exception as e:  # noqa: BLE001
+            if not (self._queueable(kind, a) and web.is_offline(e)):
+                raise
+            qid = self.state.enqueue({"wf": wf, "kind": kind, "a": a, "ctx": {"customer": ctx.get("customer") or {}}})
+            self.record(wf, kind, "queued", queue_id=qid, reason="offline")
+            return {"status": "queued"}
+
+    def flush_outbox(self):
+        """Sends what was queued while offline, oldest first. Stops at the first action that still cannot leave (the connection is still down). Old actions expire (a reminder call 15 minutes late is worse than none: queue.max_age_minutes),
+        timing blocks (quiet hours, hourly limit) keep an action waiting, and every other refusal drops it with a log line. The safety checks run again at send time."""
+        items = self.state.outbox()
+        stats = {"queued": len(items), "sent": 0, "expired": 0, "dropped": 0, "waiting": 0, "offline": False}
+        if not items or self.dry or not self._flush_lock.acquire(blocking=False):
+            return stats
+        try:
+            if self.safe.killed():
+                stats["waiting"] = len(items); return stats
+            ages = (self.cfg.get("queue") or {}).get("max_age_minutes") or {}
+            for q in items:
+                kind, a, now = q["kind"], q["a"], self.now()
+                if now - q["queued_at"] > float(ages.get(kind, 1440)) * 60:
+                    self.state.dequeue(q["id"]); stats["expired"] += 1
+                    self.record(q["wf"], kind, "expired", queue_id=q["id"], waited_s=int(now - q["queued_at"])); continue
+                ctx = self.ctx(**(q.get("ctx") or {}))
+                who = S.norm_phone(a.get("to")) if kind in ("sms", "call") else str(a.get("to", ""))
+                ok, why = self.safe.check("webhook" if kind == "http" else kind, who, ctx, bool(a.get("urgent")))
+                if not ok and why in KEEP_WHILE_BLOCKED:
+                    stats["waiting"] += 1; continue
+                try:
+                    r = self._do_now(q["wf"], kind, dict(a), ctx, {"reply": "", "play": []})
+                except Exception as e:  # noqa: BLE001
+                    if web.is_offline(e):
+                        stats["offline"] = True; stats["waiting"] += len(items) - items.index(q); break
+                    self.state.dequeue(q["id"]); stats["dropped"] += 1
+                    self.record(q["wf"], kind, "failed_from_queue", queue_id=q["id"], error=type(e).__name__ + ": " + str(e)[:200]); continue
+                self.state.dequeue(q["id"])
+                if r.get("status") == "blocked":
+                    stats["dropped"] += 1
+                else:
+                    stats["sent"] += 1; self.record(q["wf"], kind, "delivered_from_queue", queue_id=q["id"], waited_s=int(self.now() - q["queued_at"]))
+            return stats
+        finally:
+            self._flush_lock.release()
+
+    def _do_now(self, wf, kind, a, ctx, out):
         if kind == "reply":
             out["reply"] = a.get("text", ""); self.record(wf, kind, "ok"); return {"status": "ok"}
         if kind == "play":
@@ -190,7 +245,7 @@ class Agent:
                 res.append(self._do(wf, "slack", dict(a), ctx, out)["status"])
             if self.teams.configured:
                 res.append(self._do(wf, "teams", {"text": a["text"], "title": a.get("title")}, ctx, out)["status"])
-            return {"status": "sent" if "sent" in res else (res[0] if res else "skipped")}
+            return {"status": "sent" if "sent" in res else ("queued" if "queued" in res else (res[0] if res else "skipped"))}
         if kind == "call":
             to = S.norm_phone(a["to"]); blocked = self._gate(wf, "call", to, ctx, bool(a.get("urgent")))
             if blocked:
@@ -212,7 +267,8 @@ class Agent:
             if self.dry:
                 self.record(wf, kind, "dry_run", text=a["text"], channel=ch, audio=bool(path)); return {"status": "dry_run"}
             self._need(self.slack.configured, "Slack", "add slack.bot_token (or slack.webhook_url) in agent.json")
-            self.slack.post(a["text"], ch)
+            if not a.get("_posted"):                                          # a retry after the text went out must not post it twice
+                self.slack.post(a["text"], ch); a["_posted"] = True
             if path:
                 self.slack.upload(ch, path, self.pack.text(self.pack.resolve(a["audio"])["id"])[:80])
             self.safe.sent("slack", a.get("channel", "")); self.record(wf, kind, "sent", channel=ch); return {"status": "sent"}
@@ -309,7 +365,8 @@ class Agent:
         return {"name": (name.group(1).strip() if name else ev.get("title", "")), "phone": S.norm_phone(m.group(1)) if m else "", "sms_consent": bool(re.search(rx, text.lower()))}
 
     def tick(self):
-        """Call about once a minute: calendar reminders and daily schedules."""
+        """Call about once a minute: queued actions, calendar reminders and daily schedules."""
+        self.flush_outbox()
         if self.inbox.configured:
             self.poll_email()
         if not (self.gcal.configured or self.outlook.configured or any((w.get("on") or {}).get("schedule") for w in self.workflows)):
