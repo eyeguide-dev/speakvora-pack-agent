@@ -85,6 +85,12 @@ class State:
             self.data["jobs"][jid] = {"id": jid, "wf": wf, "kind": kind, "a": a, "ctx": ctx or {}, "status": status, "created": n, "updated": n, "queued_at": n if status == "queued" else None, "attempts": 0, "history": [[n, status, ""]]}
             self._prune(); self.save(); return self.data["jobs"][jid]
 
+    def update_proposal(self, jid, i, **fields):
+        with self.lock:
+            j = self.data["jobs"].get(jid)
+            if j and j.get("result") and 0 <= i < len(j["result"]["proposals"]):
+                j["result"]["proposals"][i].update(fields); j["updated"] = int(self.now()); self.save()
+
     def job_get(self, jid):
         with self.lock:
             j = self.data["jobs"].get(jid); return dict(j) if j else None

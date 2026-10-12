@@ -1,0 +1,30 @@
+{
+  "workflows": [
+    {
+      "name": "refund_review",
+      "on": {"event": "refunds.review"},
+      "do": [
+        {"action": "reason",
+         "task": "Review these support conversations. Decide which customers should get a refund and explain why. Propose a short, kind text for each customer who should get one, and a note for the team.",
+         "inputs": "{{conversations}}",
+         "contacts": "{{customers}}",
+         "allow": ["sms", "slack"],
+         "channels": ["#support"],
+         "notify": "#support"}
+      ]
+    },
+    {
+      "name": "refund_review_from_slack",
+      "on": {"slack_command": "/review"},
+      "ack": "Looking at it. What I find will wait for your approval in the dashboard.",
+      "do": [
+        {"action": "reason",
+         "task": "Answer the question from the team using only the input. If the input does not say, say so.",
+         "inputs": "{{command.rest}}",
+         "allow": ["slack"],
+         "channels": ["#support"],
+         "auto_allow": ["slack"]}
+      ]
+    }
+  ]
+}

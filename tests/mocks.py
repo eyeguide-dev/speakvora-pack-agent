@@ -46,6 +46,10 @@ class Mock:
             return 200, {}
         if p.endswith("/files.completeUploadExternal"):
             return 200, {"ok": True}
+        if p.endswith("/chat/completions"):
+            return 200, {"choices": [{"message": {"content": getattr(self, "model_text", "{}")}}], "usage": {"prompt_tokens": 10, "completion_tokens": 20}}
+        if p.endswith("/v1/messages"):
+            return 200, {"content": [{"type": "text", "text": getattr(self, "model_text", "{}")}], "usage": {"input_tokens": 10, "output_tokens": 20}}
         if p.endswith("/packs/slot-requests"):
             return 200, {"queued": len((r["json"] or {}).get("slots", [])), "already_queued_or_built": 0, "note": "Queued. They arrive in the next pack version."}
         if p == "/token":

@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 from . import slots as SL
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-ATTENTION = ("needs_review", "failed", "expired", "undelivered")
+ATTENTION = ("proposed", "needs_review", "failed", "expired", "undelivered")
 
 
 def token(agent):
@@ -45,7 +45,13 @@ def _requests(agent):
 
 def _job(j):
     a = j.get("a") or {}
-    return {"id": j["id"], "status": j["status"], "kind": j["kind"], "workflow": j["wf"], "to": str(a.get("to") or a.get("channel") or a.get("url") or "")[:60], "text": str(a.get("text") or a.get("subject") or a.get("title") or "")[:140],
+    extra = {}
+    if j["kind"] == "reason" and j.get("result"):
+        r = j["result"]
+        extra = {"summary": r.get("summary", ""), "reasoning": r.get("reasoning", ""), "model": r.get("model", ""), "sent_chars": r.get("sent_chars", 0), "sent_to_model": r.get("sent_to_model", "")[:1500], "dropped": r.get("dropped", []),
+                 "proposals": [{"i": i, "action": p["action"], "to": (p["args"].get("name") or p["args"].get("channel") or p["args"].get("url") or p["args"].get("title") or ""), "text": str(p["args"].get("text") or p["args"].get("json") or p["args"].get("subject") or "")[:400],
+                                "why": p.get("why", ""), "state": p["state"], "status": p.get("status") or ""} for i, p in enumerate(r.get("proposals", []))]}
+    return {**extra, "id": j["id"], "status": j["status"], "kind": j["kind"], "workflow": j["wf"], "to": str(a.get("to") or a.get("channel") or a.get("url") or "")[:60], "text": str(a.get("text") or a.get("subject") or a.get("title") or "")[:140],
             "created": j["created"], "updated": j["updated"], "attempts": j.get("attempts", 0), "error": (j.get("error") or "")[:200], "note": (j["history"][-1][2] if j.get("history") else "")}
 
 
@@ -112,6 +118,16 @@ def handle(agent, method, path, headers, raw):
             if act == "retry":
                 agent.flush_outbox()
             out = {"job": _job(agent.state.job_get(jid))}
+        elif method == "POST" and (m2 := re.match(r"^/dash/api/proposals/([\w:.\-]+)/(approve|reject)$", p)):
+            body = json.loads(raw or b"{}"); jid, act = m2.group(1), m2.group(2); idx = body.get("indexes")
+            idx = [int(i) for i in idx] if isinstance(idx, list) else None
+            if act == "approve":
+                if idx is None:
+                    jj = agent.state.job_get(jid); idx = [i for i, pr in enumerate(((jj or {}).get("result") or {}).get("proposals", [])) if pr["state"] == "pending"]
+                agent.execute_proposals(jid, idx); agent.flush_outbox()
+            else:
+                agent.reject_proposals(jid, idx)
+            out = {"job": _job(agent.state.job_get(jid))}
         elif p == "/dash/api/pause" and method == "POST":
             on = bool(json.loads(raw or b"{}").get("on")); f = os.path.join(agent.state.dir, "STOP")
             if on:
@@ -141,7 +157,7 @@ main{max-width:940px;margin:0 auto;padding:18px 16px 60px}h1{font-size:19px;marg
 .chips{display:flex;gap:6px;flex-wrap:wrap}.chip{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:99px;padding:4px 12px;font:inherit;cursor:pointer}.chip b{font-variant-numeric:tabular-nums;margin-left:5px;color:var(--mut)}.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}.chip.on b{color:#fff}.chip.alert b{color:var(--warn)}.chip.alert.on b{color:#fff}
 .bar{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}.bar input,.bar select{font:inherit;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--card);color:var(--ink)}.bar input{flex:1;min-width:160px}
 .box{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:600;font-size:12px}tr:last-child td{border-bottom:0}
-.st{font-weight:600}.st.needs_review,.st.expired,.st.undelivered{color:var(--warn)}.st.failed,.st.blocked{color:var(--bad)}.st.delivered,.st.sent{color:var(--acc)}.mut{color:var(--mut)}
+.st{font-weight:600}.st.needs_review,.st.expired,.st.undelivered,.st.proposed{color:var(--warn)}.st.failed,.st.blocked{color:var(--bad)}.st.delivered,.st.sent{color:var(--acc)}.mut{color:var(--mut)}
 button.b{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:3px 9px;cursor:pointer;margin:1px 2px 1px 0}button.b:hover{border-color:var(--acc)}button.p{font:inherit;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:8px;padding:6px 14px;cursor:pointer}button:disabled{opacity:.5}
 .empty{padding:16px;color:var(--mut)}.pad{padding:12px 14px}label{display:block;font-size:12px;color:var(--mut);margin:8px 0 3px}textarea,.pad input[type=text]{font:inherit;width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 9px;background:var(--bg);color:var(--ink)}.msg{margin-top:8px;font-size:13px}
 .meter{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:6px 0}.meter i{display:block;height:100%;background:var(--acc)}
@@ -161,13 +177,20 @@ button.b{font:inherit;border:1px solid var(--line);background:var(--card);color:
 </main><script>
 const T=(location.hash.match(/token=([\\w-]+)/)||[])[1]||sessionStorage.getItem('t')||'';if(T)sessionStorage.setItem('t',T);history.replaceState(null,'',location.pathname);
 const $=id=>document.getElementById(id);let S=null,JOBS=[],FILTER='all';
-const GROUPS={all:null,need:['needs_review','failed','undelivered','expired'],wait:['pending','queued','sending'],sent:['sent','delivered'],delivered:['delivered'],stopped:['blocked','cancelled','failed','expired']};
+const GROUPS={all:null,need:['proposed','needs_review','failed','undelivered','expired'],wait:['pending','queued','sending'],sent:['sent','delivered'],delivered:['delivered'],stopped:['blocked','cancelled','failed','expired']};
 const LABELS=[['all','All'],['need','Needs you'],['wait','Waiting'],['sent','Sent'],['delivered','Delivered']];
 async function api(p,o){o=o||{};o.headers=Object.assign({'x-dashboard-token':T,'content-type':'application/json'},o.headers||{});const r=await fetch(p,o);const j=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(j.message||j.error||r.status),{status:r.status});return j}
 const ago=(s,n)=>{const d=n-s;return d<90?d+' s ago':d<5400?Math.round(d/60)+' min ago':d<172800?Math.round(d/3600)+' h ago':Math.round(d/86400)+' days ago'};
 function td(t,c){const x=document.createElement('td');if(c)x.className=c;x.textContent=t;return x}
 function bt(label,fn){const b=document.createElement('button');b.className='b';b.textContent=label;b.onclick=async()=>{b.disabled=true;try{await fn()}catch(e){alert(e.message)}load()};return b}
 const inGroup=(j,g)=>!GROUPS[g]||GROUPS[g].includes(j.status);
+function proposalBox(j){const d=document.createElement('div');d.style.cssText='padding:4px 2px 10px';const s=document.createElement('div');s.innerHTML='';const b=document.createElement('b');b.textContent=j.summary||'Suggestion';s.appendChild(b);d.appendChild(s);
+const r=document.createElement('div');r.className='mut';r.textContent=j.reasoning;d.appendChild(r);
+const det=document.createElement('details');det.style.margin='6px 0';const sm=document.createElement('summary');sm.textContent='What was sent to the model ('+j.sent_chars+' characters, '+(j.model||'')+')';det.appendChild(sm);const pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;font-size:12px';pre.textContent=j.sent_to_model;det.appendChild(pre);d.appendChild(det);
+const boxes=[];(j.proposals||[]).forEach(p=>{const l=document.createElement('label');l.style.cssText='display:block;margin:5px 0;font-size:13px;color:var(--ink)';const cb=document.createElement('input');cb.type='checkbox';cb.style.marginRight='8px';cb.checked=p.state==='pending';cb.disabled=p.state!=='pending';cb.dataset.i=p.i;boxes.push(cb);l.appendChild(cb);l.appendChild(document.createTextNode(p.action+(p.to?' to '+p.to:'')+': '+p.text));const w=document.createElement('div');w.className='mut';w.style.marginLeft='24px';w.textContent=(p.why?'Why: '+p.why+'. ':'')+(p.state!=='pending'?'['+p.state+(p.status?', '+p.status:'')+']':'');l.appendChild(w);d.appendChild(l)});
+if((j.dropped||[]).length){const x=document.createElement('div');x.className='mut';x.style.fontSize='12px';x.textContent='Not shown (not allowed here): '+j.dropped.join('; ');d.appendChild(x)}
+if(j.status==='proposed'){const row=document.createElement('div');row.style.marginTop='8px';row.appendChild(bt('Approve the checked',()=>api('/dash/api/proposals/'+j.id+'/approve',{method:'POST',body:JSON.stringify({indexes:boxes.filter(x=>x.checked&&!x.disabled).map(x=>+x.dataset.i)})})));row.appendChild(bt('Reject all',()=>api('/dash/api/proposals/'+j.id+'/reject',{method:'POST',body:'{}'})));d.appendChild(row)}
+return d}
 function render(){const now=S.now,q=$('q').value.trim().toLowerCase(),k=$('kind').value;
 const chips=$('chips');chips.textContent='';LABELS.forEach(([g,l])=>{const n=JOBS.filter(j=>inGroup(j,g)).length;const c=document.createElement('button');c.className='chip'+(FILTER===g?' on':'')+(g==='need'&&n?' alert':'');c.textContent=l;const b=document.createElement('b');b.textContent=n;c.appendChild(b);c.onclick=()=>{FILTER=g;render()};chips.appendChild(c)});
 const list=JOBS.filter(j=>inGroup(j,FILTER)&&(!k||j.kind===k)&&(!q||(j.to+' '+j.workflow+' '+j.text+' '+j.kind).toLowerCase().includes(q)));const box=$('list');box.textContent='';
@@ -178,7 +201,7 @@ const a=document.createElement('td');a.style.whiteSpace='nowrap';
 if(['pending','queued'].includes(j.status))a.appendChild(bt('Cancel',()=>api('/dash/api/jobs/'+j.id+'/cancel',{method:'POST',body:'{}'})));
 if(j.status==='needs_review'){a.appendChild(bt('It arrived',()=>api('/dash/api/jobs/'+j.id+'/mark-sent',{method:'POST',body:'{}'})));a.appendChild(bt('Did not arrive: send again',()=>{if(confirm('Only if you checked with the provider and it did NOT arrive. Send again?'))return api('/dash/api/jobs/'+j.id+'/retry',{method:'POST',body:JSON.stringify({confirm_not_sent:true})})}))}
 if(['failed','expired'].includes(j.status))a.appendChild(bt('Try again',()=>api('/dash/api/jobs/'+j.id+'/retry',{method:'POST',body:'{}'})));
-r.appendChild(a)});box.appendChild(t)}
+r.appendChild(a);if(j.proposals){const r2=t.insertRow();const c=r2.insertCell();c.colSpan=5;c.appendChild(proposalBox(j))}});box.appendChild(t)}
 function lines(){const cov=S.coverage,have=cov.needed-cov.missing.length,box=$('coverage');box.textContent='';const p=document.createElement('div');p.textContent=cov.needed?have+' of '+cov.needed+' spoken lines your workflows use are in this pack.':'Your workflows use no named lines.';box.appendChild(p);
 const m=document.createElement('div');m.className='meter';const i=document.createElement('i');i.style.width=(cov.needed?Math.round(100*have/cov.needed):100)+'%';m.appendChild(i);box.appendChild(m);
 if(cov.missing.length){const ul=document.createElement('div');cov.missing.forEach(x=>{const lab=document.createElement('label');lab.style.cssText='margin:6px 0;font-size:13px;color:var(--ink)';const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.style.marginRight='8px';cb.dataset.slot=x.slot;lab.append(cb,document.createTextNode(x.slot+': '+x.example));ul.appendChild(lab)});box.appendChild(ul);

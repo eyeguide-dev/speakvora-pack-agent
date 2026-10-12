@@ -25,6 +25,7 @@ def main(argv=None):
     qu = sub.add_parser("queue", help="actions waiting for the internet: list them, send them now, or drop them"); qu.add_argument("action", choices=["list", "flush", "drop"]); qu.add_argument("id", nargs="?", help="a queue id, or 'all' for drop"); qu.add_argument("-c", "--config", default="agent.json")
     jb = sub.add_parser("jobs", help="every send the agent made or waits to make: list, cancel, retry, mark sent"); jb.add_argument("action", choices=["list", "cancel", "retry", "mark-sent"]); jb.add_argument("id", nargs="?"); jb.add_argument("-c", "--config", default="agent.json")
     jb.add_argument("--status", default="", help="list only this status (pending, sending, queued, sent, delivered, undelivered, needs_review, failed, blocked, expired, cancelled)"); jb.add_argument("--confirm-not-sent", action="store_true", help="for retry of a needs_review job: you checked with the provider and it did NOT arrive")
+    pr = sub.add_parser("proposals", help="what a reasoning step suggested: list, approve or reject (nothing runs until you approve)"); pr.add_argument("action", choices=["list", "approve", "reject"]); pr.add_argument("id", nargs="?"); pr.add_argument("--only", default="", help="comma-separated proposal numbers, for example 0,2"); pr.add_argument("-c", "--config", default="agent.json")
     e = sub.add_parser("event", help="send a signed test event to a running agent"); e.add_argument("-c", "--config", default="agent.json"); e.add_argument("file"); e.add_argument("--url", default="")
     a = ap.parse_args(argv)
     if a.cmd == "phrases":
@@ -52,7 +53,7 @@ def main(argv=None):
             json.dump(doc, open(name, "w", encoding="utf-8"), ensure_ascii=False, indent=1); print("wrote", name)
         print(f"industry profile: {prof}. Next: fill in the YOUR-... values in agent.json, then run:  python -m speakvora_pack_agent check")
         return 0
-    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events") or (a.cmd == "queue" and a.action != "flush") or a.cmd == "jobs")
+    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events") or (a.cmd == "queue" and a.action != "flush") or a.cmd == "jobs" or (a.cmd == "proposals" and a.action != "approve"))
     if a.cmd == "doctor":
         from . import doctor
         return doctor.run(cfg)
@@ -88,6 +89,28 @@ def main(argv=None):
         return 0
     if a.cmd == "slots":
         return slots_cli(cfg, a)
+    if a.cmd == "proposals":
+        ag = Agent(cfg)
+        if a.action == "list":
+            for j in ag.state.jobs(("proposed", "approved", "answered")):
+                if j["kind"] != "reason":
+                    continue
+                r = j["result"]; print(f"{j['id']}  [{j['status']}]  {r['summary'][:100]}   (model {r.get('model')}, {r.get('sent_chars')} chars sent)")
+                for i, p in enumerate(r["proposals"]):
+                    print(f"   {i}. {p['state']:<8} {p['action']:<16} {str(p['args'].get('name') or p['args'].get('channel') or p['args'].get('url') or p['args'].get('title') or '')[:24]:<24} {str(p['args'].get('text') or '')[:70]}")
+            return 0
+        if not a.id:
+            print("give a proposal id (see 'proposals list')"); return 1
+        idx = [int(x) for x in a.only.split(",") if x.strip()] if a.only else None
+        try:
+            if a.action == "approve":
+                res = ag.execute_proposals(a.id, idx if idx is not None else [i for i, p in enumerate((ag.state.job_get(a.id) or {}).get("result", {}).get("proposals", [])) if p["state"] == "pending"]); ag.flush_outbox()
+                print(json.dumps(res))
+            else:
+                print(ag.reject_proposals(a.id, idx)["status"])
+        except PermissionError as e:
+            print(e); return 1
+        return 0
     if a.cmd == "jobs":
         ag = Agent(cfg)
         if a.action == "list":

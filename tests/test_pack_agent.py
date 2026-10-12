@@ -534,6 +534,105 @@ class Dashboard(unittest.TestCase):
             os.environ.pop("SPEAKVORA_KEY", None); os.environ.pop("SPEAKVORA_HOST", None)
 
 
+class Reasoning(unittest.TestCase):
+    """The optional reasoning step with the developer's own AI key: the model only proposes, a person approves, everything that runs is a normal journaled send."""
+    MODEL = {"summary": "Ann should get a refund.", "reasoning": "Her order never arrived.", "proposals": [
+        {"action": "sms", "contact": "c1", "text": "We are sorry your order never arrived. A refund is on its way.", "why": "order never arrived"},
+        {"action": "slack", "channel": "#front", "text": "Refund proposed for Ann Lee.", "why": "tell the team"}]}
+    EVENT = {"event": "refunds.review", "id": "rv-1", "conversations": [{"customer": "c1", "text": "My order never arrived. Call me on 646-555-0101 or write a@b.com, card 4242 4242 4242 4242"}],
+             "customers": [{"id": "c1", "name": "Ann Lee", "phone": "+16465550101", "email": "ann@example.com", "sms_consent": True}]}
+    WF = {"name": "refund_review", "on": {"event": "refunds.review"}, "do": [{"action": "reason", "task": "Decide which customers should get a refund and explain why.", "inputs": "{{conversations}}", "contacts": "{{customers}}", "allow": ["sms", "slack"], "channels": ["#front"], "notify": "#front"}]}
+
+    def rig(self, model=None, reasoner=None, dry=False, extra=None):
+        r = Rig(dry=dry, extra={"reasoner": {"provider": "openai", "base_url": "PLACEHOLDER", "api_key": "sk-test", "model": "m1", **(reasoner or {})}, **(extra or {})})
+        r.agent.cfg["reasoner"]["base_url"] = r.mock.url; r.mock.model_text = json.dumps(model if model is not None else self.MODEL); r.agent.workflows.append(self.WF); return r
+
+    def job(self, r):
+        return [j for j in r.agent.state.jobs() if j["kind"] == "reason"][0]
+
+    def test_only_the_chosen_inputs_reach_the_model_and_personal_details_are_replaced(self):
+        r = self.rig(); out = r.agent.handle_event(self.EVENT); self.assertEqual(out["matched"], 1)
+        sent = [q for q in r.mock.requests if q["path"].endswith("/chat/completions")]; self.assertEqual(len(sent), 1); body = json.dumps(sent[0]["json"]); self.assertEqual(sent[0]["auth"], "Bearer sk-test")
+        self.assertIn("never arrived", body); self.assertIn("Ann Lee", body); self.assertIn("c1", body)
+        for secret in ("646-555-0101", "a@b.com", "4242 4242 4242 4242", "+16465550101", "ann@example.com", "xoxb-1", TOKEN): self.assertNotIn(secret, body)
+        self.assertIn("[phone]", body); self.assertIn("[email]", body); self.assertIn("[number]", body)
+        j = self.job(r); self.assertEqual(j["status"], "proposed"); self.assertEqual(len(j["result"]["proposals"]), 2); self.assertEqual(r.mock.calls("Messages.json"), [])           # nothing was sent: only proposed
+        self.assertEqual(len(r.mock.calls("chat.postMessage")), 1); self.assertIn("wait for your approval", r.mock.calls("chat.postMessage")[0]["json"]["text"]); r.close()
+
+    def test_approving_runs_the_proposals_as_normal_sends_once(self):
+        r = self.rig(); r.agent.handle_event(self.EVENT); j = self.job(r); res = r.agent.execute_proposals(j["id"], [0])
+        self.assertEqual(res[0]["state"], "done"); m = r.mock.calls("Messages.json"); self.assertEqual(len(m), 1); self.assertEqual(m[0]["form"]["To"], "+16465550101"); self.assertIn("refund is on its way", m[0]["form"]["Body"])
+        self.assertEqual(self.job(r)["status"], "proposed")                                           # one proposal is still waiting
+        self.assertEqual(r.agent.execute_proposals(j["id"], [0]), []); self.assertEqual(len(r.mock.calls("Messages.json")), 1)           # approving the same one again sends nothing
+        r.agent.execute_proposals(j["id"], [1]); self.assertEqual(self.job(r)["status"], "approved"); self.assertEqual(len([x for x in r.mock.calls("chat.postMessage") if "Refund proposed" in x["json"]["text"]]), 1)
+        kinds = {x["kind"]: x["status"] for x in r.agent.state.jobs() if x["id"].startswith(j["id"] + ":p")}; self.assertEqual(kinds, {"sms": "sent", "slack": "sent"}); r.close()
+
+    def test_the_safety_rules_still_apply_to_approved_proposals(self):
+        ev = json.loads(json.dumps(self.EVENT)); ev["customers"][0]["sms_consent"] = False
+        r = self.rig(); r.agent.handle_event(ev); j = self.job(r); res = r.agent.execute_proposals(j["id"], [0]); self.assertEqual(res[0]["state"], "failed"); self.assertEqual(res[0]["status"], "blocked"); self.assertEqual(r.mock.calls("Messages.json"), []); r.close()
+        r = self.rig(); r.agent.handle_event(self.EVENT); open(os.path.join(r.agent.cfg["state_dir"], "STOP"), "w").close(); j = self.job(r); r.agent.execute_proposals(j["id"], [0]); self.assertEqual(r.mock.calls("Messages.json"), []); r.close()
+
+    def test_rejecting_sends_nothing(self):
+        r = self.rig(); r.agent.handle_event(self.EVENT); j = self.job(r); self.assertEqual(r.agent.reject_proposals(j["id"])["status"], "rejected"); self.assertEqual(r.mock.calls("Messages.json"), [])
+        with self.assertRaises(PermissionError): r.agent.execute_proposals(j["id"], [0]); r.close()
+
+    def test_anything_the_workflow_did_not_allow_is_dropped(self):
+        bad = {"summary": "s", "reasoning": "r", "proposals": [{"action": "http", "url": "https://evil.example/x", "json": {}}, {"action": "sms", "contact": "nobody", "text": "hello there"}, {"action": "slack", "channel": "#secret", "text": "hi"},
+                                                              {"action": "email", "contact": "c1", "text": "x y z"}, {"action": "sms", "contact": "c1", "text": "Your refund is coming.", "why": "ok"}]}
+        r = self.rig(model=bad); r.agent.handle_event(self.EVENT); res = self.job(r)["result"]; self.assertEqual([p["action"] for p in res["proposals"]], ["sms"]); self.assertEqual(len(res["dropped"]), 4); r.close()
+
+    def test_a_bad_answer_or_a_down_model_never_acts(self):
+        r = self.rig(); r.mock.model_text = "I think you should refund everyone."; r.agent.handle_event(self.EVENT); j = self.job(r); self.assertEqual(j["status"], "failed"); self.assertIn("expected JSON", j["error"]); self.assertEqual(r.mock.calls("Messages.json"), []); r.close()
+        r = self.rig(); r.mock.fail["chat/completions"] = 503; r.agent.handle_event(self.EVENT); self.assertEqual(self.job(r)["status"], "failed"); r.close()                       # asking again later is safe, so it is failed, not needs_review
+        r = Rig(); r.agent.workflows.append(self.WF); r.agent.handle_event(self.EVENT); self.assertEqual(self.job(r)["status"], "failed"); self.assertIn("reasoner", self.job(r)["error"]); r.close()
+
+    def test_dry_run_does_not_call_the_model(self):
+        r = self.rig(dry=True); r.agent.handle_event(self.EVENT); self.assertEqual(r.mock.requests, []); self.assertIn("dry_run", [x["status"] for x in r.log() if x.get("action") == "reason"]); r.close()
+
+    def test_a_per_hour_limit_protects_the_developers_bill(self):
+        r = self.rig(reasoner={"max_per_hour": 1}); r.agent.handle_event(self.EVENT); r.agent.handle_event(dict(self.EVENT, id="rv-2"))
+        self.assertEqual(len([q for q in r.mock.requests if q["path"].endswith("/chat/completions")]), 1); self.assertEqual(sorted(j["status"] for j in r.agent.state.jobs() if j["kind"] == "reason"), ["blocked", "proposed"]); r.close()
+
+    def test_offline_the_question_waits_and_is_asked_when_the_connection_returns(self):
+        r = self.rig(); live = r.agent.cfg["reasoner"]["base_url"]; r.agent.cfg["reasoner"]["base_url"] = "http://127.0.0.1:9"; r.agent.handle_event(self.EVENT); self.assertEqual(self.job(r)["status"], "queued")
+        r.agent.cfg["reasoner"]["base_url"] = live; self.assertEqual(r.agent.flush_outbox()["sent"], 1); self.assertEqual(self.job(r)["status"], "proposed"); r.close()
+
+    def test_auto_allow_lets_a_workflow_run_chosen_low_risk_actions_without_a_click(self):
+        wf = json.loads(json.dumps(self.WF)); wf["do"][0]["auto_allow"] = ["slack"]; wf["do"][0].pop("notify"); r = self.rig(); r.agent.workflows[-1] = wf; r.agent.handle_event(self.EVENT)
+        self.assertEqual(len([x for x in r.mock.calls("chat.postMessage") if "Refund proposed" in x["json"]["text"]]), 1); self.assertEqual(r.mock.calls("Messages.json"), []); self.assertEqual([p["state"] for p in self.job(r)["result"]["proposals"]], ["pending", "done"]); r.close()
+
+    def test_anthropic_messages_api_is_supported(self):
+        r = self.rig(reasoner={"provider": "anthropic", "api_key": "ak-1"}); r.agent.handle_event(self.EVENT); q = [x for x in r.mock.requests if x["path"].endswith("/v1/messages")]; self.assertEqual(len(q), 1)
+        self.assertEqual(q[0]["json"]["model"], "m1"); self.assertIn("never arrived", json.dumps(q[0]["json"])); self.assertEqual(self.job(r)["status"], "proposed"); r.close()
+
+    def test_a_slack_command_answers_at_once_and_reasons_in_the_background(self):
+        import time as _t
+        r = self.rig(); wf = {"name": "ask", "on": {"slack_command": "/review"}, "ack": "Looking.", "do": [{"action": "reason", "task": "Answer the question.", "inputs": "{{command.text}}", "allow": ["slack"], "channels": ["#front"]}]}; r.agent.workflows.append(wf)
+        out = r.agent.handle_slack_command({"command": "/review", "text": "which orders are late", "user_name": "bo"}); self.assertEqual(out["text"], "Looking.")
+        for _ in range(60):
+            if [j for j in r.agent.state.jobs() if j["kind"] == "reason" and j["status"] == "proposed"]: break
+            _t.sleep(.1)
+        self.assertEqual(self.job(r)["status"], "proposed"); self.assertIn("which orders are late", json.dumps([q["json"] for q in r.mock.requests if q["path"].endswith("/chat/completions")])); r.close()
+
+    def test_the_dashboard_shows_proposals_and_approves_them(self):
+        r = self.rig(); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start(); r.agent.handle_event(self.EVENT)
+        from speakvora_pack_agent import dashboard
+        def call(path, body=None):
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None, method="POST" if body is not None else "GET", headers={"x-dashboard-token": dashboard.token(r.agent)})
+            with urllib.request.urlopen(req, timeout=10) as x: return json.loads(x.read())
+        s = call("/dash/api/summary"); att = [j for j in s["attention"] if j["kind"] == "reason"][0]; self.assertEqual(att["status"], "proposed"); self.assertEqual(len(att["proposals"]), 2); self.assertIn("never arrived", att["reasoning"]); self.assertIn("[phone]", att["sent_to_model"])
+        j = call(f"/dash/api/proposals/{att['id']}/approve", {"indexes": [0]})["job"]; self.assertEqual(j["proposals"][0]["state"], "done"); self.assertEqual(len(r.mock.calls("Messages.json")), 1)
+        j = call(f"/dash/api/proposals/{att['id']}/reject", {})["job"]; self.assertEqual(j["status"], "approved"); srv.shutdown(); srv.server_close(); r.close()
+
+    def test_proposals_command_lists_approves_and_rejects(self):
+        import contextlib, io
+        from speakvora_pack_agent import cli
+        r = self.rig(); r.agent.handle_event(self.EVENT); jid = self.job(r)["id"]; cfgp = os.path.join(r.tmp, "agent.json"); buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["proposals", "list", "-c", cfgp]); cli.main(["proposals", "reject", jid, "--only", "1", "-c", cfgp])
+        out = buf.getvalue(); self.assertIn("Ann should get a refund", out); self.assertIn("sms", out); r.close()
+
+
 class Languages(unittest.TestCase):
     """The agent understands, answers and formats dates in every language Speakvora packs exist in."""
     HOURS = {"en": "What are your hours?", "es": "¿Cuál es el horario?", "fr": "Quels sont vos horaires ?", "pt": "Qual o horário de vocês?", "it": "Che orari avete?", "de": "Wann sind die Öffnungszeiten?", "fi": "Mitkä ovat aukioloajat?",

@@ -3,7 +3,7 @@ always through the safety checks first. Dry-run (the default) records what it WO
 import datetime as dt, http.client, json, re, smtplib, ssl, threading, time
 from zoneinfo import ZoneInfo
 
-from . import i18n, safety as S, slots as slots_mod, templating as T
+from . import i18n, reasoner as R, safety as S, slots as slots_mod, templating as T
 from .audio import AudioError, AudioStore
 from .connectors import signing
 from .connectors.gcal import GoogleCalendar
@@ -19,7 +19,7 @@ from .state import State
 from . import web
 
 PHONE_RX = re.compile(r"(\+?\d[\d\-\s().]{8,}\d)")
-QUEUEABLE = ("sms", "call", "slack", "teams", "email", "webhook", "http", "calendar_create")       # actions that wait in the outbox when the network is down
+QUEUEABLE = ("sms", "call", "slack", "teams", "email", "webhook", "http", "calendar_create", "reason")       # actions that wait in the outbox when the network is down
 KEEP_WHILE_BLOCKED = ("quiet_hours", "hourly_limit", "recipient_daily_limit")                      # a queued action blocked only by timing waits (until it expires); any other refusal drops it
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
@@ -133,7 +133,7 @@ class Agent:
             try:
                 if kind == "http" and not re.match(r"^https?://[^/{}?#\s]+", str(a.get("url", ""))):
                     raise PackError("An http action must write the server address literally (https://host/...). Only the path, query and body may use {{...}} values.")
-                a = T.render_obj({k: v for k, v in a.items() if k != "if"}, ctx, self.pack)
+                a = self._render_reason(a, ctx) if kind == "reason" else T.render_obj({k: v for k, v in a.items() if k != "if"}, ctx, self.pack)
                 if "YOUR-" in json.dumps(a):                                  # an example value from the sample config: never send it to a customer
                     raise PackError("Fill in the YOUR-... values in agent.json (for example the review link) before this can be sent.")
                 jid = f"{job_prefix}:{idx}" if job_prefix else None; ctx["_jid"] = jid or ""
@@ -147,6 +147,21 @@ class Agent:
                 ctx.setdefault("last", {})[kind] = "error"
                 self.record(wf_name, kind, "error", error=type(e).__name__ + ": " + str(e)[:200]); results.append({"action": kind, "status": "error", "error": str(e)[:200]})
         return results
+
+    def _render_reason(self, a, ctx):
+        """Like normal rendering, but {{path}} on its own resolves to the real value (a list, a record) so a workflow can hand the model structured data it fetched."""
+        def val(o):
+            if isinstance(o, str):
+                m = re.fullmatch(r"\{\{\s*([\w.:\-]+)\s*\}\}", o)
+                if m and not m.group(1).startswith(("slot:", "slotvar:", "t:", "fact:")):
+                    v = T.lookup(ctx, m.group(1)); return "" if v is None else v
+                return T.render(o, ctx, self.pack)
+            if isinstance(o, dict):
+                return {k: val(v) for k, v in o.items()}
+            if isinstance(o, list):
+                return [val(v) for v in o]
+            return o
+        return {k: val(v) for k, v in a.items() if k != "if"}
 
     def _gate(self, wf, kind, to, ctx, urgent=False):
         ok, why = self.safe.check(kind, to, ctx, urgent)
@@ -190,13 +205,19 @@ class Agent:
                     self.state.job_set(jid, "queued", "offline", error=err); self.record(wf, kind, "queued", queue_id=jid, reason="offline"); return {"status": "queued", "job": jid}
                 self.state.job_set(jid, "failed", "offline and the queue is switched off", error=err); raise
             refused_by_smtp = isinstance(e, (smtplib.SMTPAuthenticationError, smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPConnectError))
+            if kind == "reason":                                        # asking a model has no side effects, so a timeout is simply a failed attempt: safe to try again
+                self.state.job_set(jid, "failed", err, error=err); return {"status": "failed", "job": jid, "error": err}
             uncertain = (isinstance(e, web.HttpError) and (e.status == 0 or e.status >= 500)) or (isinstance(e, (OSError, http.client.HTTPException, ssl.SSLError, smtplib.SMTPException)) and not refused_by_smtp)
             if uncertain:                                               # a timeout, a server error or a dropped connection: it may have arrived, so it is NEVER sent again by itself
                 self.state.job_set(jid, "needs_review", err, error=err); self.record(wf, kind, "needs_review", job=jid, error=err)
                 return {"status": "needs_review", "job": jid, "error": err}
             self.state.job_set(jid, "failed", err, error=err); raise      # the provider refused it (4xx or an error answer): nothing was sent
         st = r.get("status")
-        if st == "blocked":
+        if st in ("proposed", "answered"):
+            self.state.job_set(jid, st, (r["result"]["summary"] or "")[:150], result=r["result"], error="")
+            if st == "proposed":
+                self._after_proposal(jid, wf, a)
+        elif st == "blocked":
             self.state.job_set(jid, "blocked", r.get("reason", ""), reason=r.get("reason", ""))
         elif st in ("sent", "ok", "created"):
             self.state.job_set(jid, "sent", "provider accepted it", provider_id=r.get("sid") or None, error="")
@@ -241,6 +262,69 @@ class Agent:
         if not j or j["status"] != "needs_review":
             raise PermissionError("Only a needs_review job can be marked as sent.")
         self.state.job_set(jid, "sent", "marked as sent by a person after checking the provider"); return self.state.job_get(jid)
+
+    # ---- proposals: what a reasoning step suggests. Nothing runs until a person approves it (or the workflow listed the action under auto_allow). ---------------------------------------------------
+    def _after_proposal(self, jid, wf, a):
+        j = self.state.job_get(jid); res = j["result"]
+        auto = [p for p in res["proposals"] if p["action"] in (a.get("auto_allow") or [])]
+        if auto:
+            self.execute_proposals(jid, [i for i, p in enumerate(res["proposals"]) if p["action"] in (a.get("auto_allow") or [])])
+        if a.get("notify"):                                                    # a short note to the team: what was found and that proposals wait in the dashboard
+            n = sum(1 for p in self.state.job_get(jid)["result"]["proposals"] if p["state"] == "pending")
+            txt = (res["summary"] or "Done.") + (f" {n} proposed action(s) wait for your approval in the dashboard." if n else "")
+            self.run_actions(wf, [{"action": "slack", "channel": a["notify"], "text": txt}], self.ctx(), job_prefix=f"{jid}:notify")
+
+    def _finish_proposals(self, jid):
+        j = self.state.job_get(jid); ps = j["result"]["proposals"]
+        if all(p["state"] != "pending" for p in ps):
+            self.state.job_set(jid, "approved" if any(p["state"] in ("done", "failed", "approved") for p in ps) else "rejected", "all proposals decided")
+
+    def execute_proposals(self, jid, indexes):
+        """Runs the chosen proposals as normal journaled sends (consent, STOP, quiet hours, limits and the kill switch apply). A proposal runs once: its job id is fixed, so approving twice sends nothing twice."""
+        j = self.state.job_get(jid)
+        if not j or j["kind"] != "reason" or j["status"] not in ("proposed", "approved"):
+            raise PermissionError("Only a reasoning result that still has proposals waiting can be approved.")
+        out = []
+        for i in indexes:
+            res = self.state.job_get(jid)["result"]
+            if not (0 <= i < len(res["proposals"])) or res["proposals"][i]["state"] != "pending":
+                continue
+            p = res["proposals"][i]; k, args = p["action"], p["args"]
+            contacts = {c["id"]: c for c in (j["a"].get("contacts") or []) if isinstance(c, dict)}
+            c = contacts.get(args.get("contact", ""), {})
+            consent = bool(c.get("sms_consent") or c.get("consent"))
+            ctx = self.ctx(customer={"name": c.get("name", ""), "phone": c.get("phone", ""), "email": c.get("email", ""), "sms_consent": consent})
+            if k == "sms":
+                a2 = {"action": "sms", "to": c.get("phone", ""), "text": args["text"], "raw": False}
+            elif k == "email":
+                a2 = {"action": "email", "to": c.get("email", ""), "subject": args["subject"], "text": args["text"]}
+            elif k in ("slack", "teams"):
+                a2 = {"action": k, "channel": args["channel"], "text": args["text"]}
+            elif k == "http":
+                a2 = {"action": "http", "method": "POST", "url": args["url"], "json": args["json"]}
+            else:
+                a2 = {"action": "calendar_create", "title": args["title"], "start": args["start"], "minutes": args["minutes"]}
+            cj = f"{jid}:p{i}"
+            try:
+                r = self._do(j["wf"], k, a2, ctx, {"reply": "", "play": []}, cj)            # the model's text is sent as written: it is NOT run through templates
+                state = "done" if r.get("status") in ("sent", "ok", "created", "queued", "dry_run") else "failed"
+            except Exception as e:  # noqa: BLE001
+                r, state = {"status": "failed", "error": str(e)[:200]}, "failed"
+            self.state.update_proposal(jid, i, state=state, job=cj, status=r.get("status"))
+            out.append({"index": i, "state": state, "status": r.get("status")})
+        self._finish_proposals(jid)
+        return out
+
+    def reject_proposals(self, jid, indexes=None):
+        j = self.state.job_get(jid)
+        if not j or j["kind"] != "reason" or j["status"] != "proposed":
+            raise PermissionError("Only a reasoning result that still has proposals waiting can be rejected.")
+        ps = j["result"]["proposals"]
+        for i in (range(len(ps)) if indexes is None else indexes):
+            if 0 <= i < len(ps) and ps[i]["state"] == "pending":
+                self.state.update_proposal(jid, i, state="rejected")
+        self._finish_proposals(jid)
+        return self.state.job_get(jid)
 
     def flush_outbox(self):
         """Sends the queued jobs, oldest first. Stops at the first one that still cannot leave (the connection is still down). Old jobs expire (queue.max_age_minutes): a reminder call 15 minutes late is worse than none.
@@ -381,6 +465,24 @@ class Agent:
             if a.get("save_as"):
                 ctx.setdefault("http", {})[a["save_as"]] = resp if isinstance(resp, (dict, list)) else {"text": resp}
             self.safe.sent("webhook", raw_url); self.record(wf, kind, "ok", method=method, url=raw_url, status=st); return {"status": "ok", "http_status": st}
+        if kind == "reason":
+            if self.safe.killed():
+                self.record(wf, kind, "blocked", reason="kill_switch"); return {"status": "blocked", "reason": "kill_switch"}
+            rc = self.cfg.get("reasoner") or {}
+            allow = [k for k in (a.get("allow") or []) if k in R.KINDS]; contacts = [c for c in (a.get("contacts") or []) if isinstance(c, dict) and c.get("id")]
+            channels, hosts = [str(x) for x in (a.get("channels") or [])], [str(x) for x in (a.get("hosts") or [])]
+            user = R.build_user(a.get("task", ""), a.get("inputs", ""), contacts, allow, channels, hosts, int(rc.get("max_input_chars", R.DEFAULT_MAX_CHARS)), rc.get("redact"))
+            if self.dry:
+                self.record(wf, kind, "dry_run", task=str(a.get("task", ""))[:120], would_send_chars=len(user)); return {"status": "dry_run"}
+            self._need(rc.get("model") and (rc.get("api_key") or rc.get("base_url")), "Reasoning", "add the reasoner section (provider, model, api_key) in agent.json")
+            if self.state.sent_since(3600, kind="reason") >= int(rc.get("max_per_hour", 20)):
+                self.record(wf, kind, "blocked", reason="reason_limit"); return {"status": "blocked", "reason": "reason_limit"}
+            text, usage = R.ask(rc, user)
+            self.safe.sent("reason", "model")
+            res = R.parse(text); kept, dropped = R.validate(res["proposals"], allow, contacts, channels, hosts)
+            result = {"summary": res["summary"], "reasoning": res["reasoning"], "proposals": kept, "dropped": dropped, "sent_to_model": user[:4000], "sent_chars": len(user), "model": rc.get("model"), "usage": usage}
+            self.record(wf, kind, "proposed" if kept else "answered", proposals=len(kept), dropped=len(dropped), sent_chars=len(user), model=rc.get("model"))
+            return {"status": "proposed" if kept else "answered", "result": result}
         if kind == "calendar_create":
             if self.dry:
                 self.record(wf, kind, "dry_run", title=a.get("title")); return {"status": "dry_run"}
@@ -562,6 +664,9 @@ class Agent:
                 ctx = self.ctx(command={"text": text, "arg1": parts[0] if parts else "", "arg2": parts[1] if len(parts) > 1 else "", "rest": " ".join(parts[2:]), "user": form.get("user_name", "")},
                                customer={"phone": S.norm_phone(parts[1]) if len(parts) > 1 else "", "sms_consent": True})
                 out = {"reply": "", "play": []}
+                if any(x.get("action") == "reason" for x in w.get("do", [])):          # a model can take longer than Slack waits: answer now, work in the background
+                    threading.Thread(target=self.run_actions, args=(w["name"], w.get("do", []), ctx, out), daemon=True).start()
+                    return {"response_type": "ephemeral", "text": w.get("ack") or "On it. What I find will wait for your approval in the dashboard."}
                 self.run_actions(w["name"], w.get("do", []), ctx, out)
                 return {"response_type": "ephemeral", "text": out["reply"] or "Done."}
         return {"response_type": "ephemeral", "text": f"No workflow handles {cmd}."}

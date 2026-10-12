@@ -10,8 +10,8 @@ DEFAULTS = {
     "consent": {"field": "customer.sms_consent", "required": True},
     "events": {"secret": ""}, "facts": {},
     "mode": "standard", "compliance": {"sms_footer": "first", "extra_required": []}, "sms_provider": {}, "call_provider": {},
-    "queue": {"enabled": True, "max_age_minutes": {"call": 15, "sms": 120, "email": 1440, "slack": 1440, "teams": 1440, "webhook": 1440, "http": 1440, "calendar_create": 10080}},
-    "twilio": {}, "slack": {}, "google_calendar": {}, "email": {}, "webhooks": {}, "sources": [], "http": {}, "teams": {}, "microsoft_calendar": {}, "inbox": {},
+    "queue": {"enabled": True, "max_age_minutes": {"call": 15, "sms": 120, "reason": 60, "email": 1440, "slack": 1440, "teams": 1440, "webhook": 1440, "http": 1440, "calendar_create": 10080}},
+    "reasoner": {}, "twilio": {}, "slack": {}, "google_calendar": {}, "email": {}, "webhooks": {}, "sources": [], "http": {}, "teams": {}, "microsoft_calendar": {}, "inbox": {},
 }
 
 
