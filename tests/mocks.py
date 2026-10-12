@@ -17,7 +17,7 @@ class Mock:
                 ctype = self.headers.get("content-type", "")
                 data = parse_qs(raw.decode("utf-8", "replace")) if "x-www-form-urlencoded" in ctype else None
                 body = json.loads(raw) if "json" in ctype and raw else None
-                req = {"method": self.command, "path": self.path.split("?")[0], "query": self.path.partition("?")[2], "form": {k: v[0] for k, v in (data or {}).items()}, "json": body, "auth": self.headers.get("authorization", ""), "raw": raw}
+                req = {"method": self.command, "path": self.path.split("?")[0], "query": self.path.partition("?")[2], "form": {k: v[0] for k, v in (data or {}).items()}, "json": body, "auth": self.headers.get("authorization", ""), "headers": {k.lower(): v for k, v in self.headers.items()}, "raw": raw}
                 mock.requests.append(req)
                 for rx, code in mock.fail.items():
                     if re.search(rx, req["path"]):
@@ -46,6 +46,16 @@ class Mock:
             return 200, {}
         if p.endswith("/files.completeUploadExternal"):
             return 200, {"ok": True}
+        if p.startswith("/my-app"):
+            return 200, {"ok": 1}
+        if p == "/api/v1/packs" and r["method"] == "GET":
+            return 200, {"packs": [{"id": "t", "version": getattr(self, "latest_version", "2026.10.01"), "phrases": 500}]}
+        if p.endswith("/IncomingPhoneNumbers.json"):
+            return 200, {"incoming_phone_numbers": [] if getattr(self, "no_numbers", False) else [{"sid": "PN1"}]}
+        if re.search(r"/Accounts/[^/]+\.json$", p) and r["method"] == "GET":
+            return 200, {"friendly_name": "Bella Co", "status": "active"}
+        if p.endswith("/auth.test"):
+            return 200, {"ok": not getattr(self, "bad_slack", False), "team": "Bella Team"}
         if p.endswith("/chat/completions"):
             return 200, {"choices": [{"message": {"content": getattr(self, "model_text", "{}")}}], "usage": {"prompt_tokens": 10, "completion_tokens": 20}}
         if p.endswith("/v1/messages"):

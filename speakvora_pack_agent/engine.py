@@ -31,21 +31,16 @@ class Agent:
         self.state = State(cfg["state_dir"], now)
         self.safe = S.Safety(cfg, self.state, now)
         self.audio = AudioStore(self.pack, cfg["state_dir"], cfg.get("public_base_url", ""))
-        self.twilio, self.slack, self.gcal, self.mail = Twilio(cfg["twilio"]), Slack(cfg["slack"]), GoogleCalendar(cfg["google_calendar"]), Email(cfg["email"])
-        self.teams, self.outlook, self.inbox = Teams(cfg.get("teams", {})), OutlookCalendar(cfg.get("microsoft_calendar", {})), Inbox(cfg.get("inbox", {}))
         self.imap_factory = None
-        self.sms_provider, self.call_provider = HttpProvider(cfg.get("sms_provider")), HttpProvider(cfg.get("call_provider"))
-        wf = json.load(open(cfg["workflows"], encoding="utf-8")) if cfg.get("workflows") else {}
-        self.workflows = [w for w in wf.get("workflows", []) if w.get("enabled", True)]
+        self._init_services()
+        wf = self._load_workflows()
         for name, spec in (wf.get("slots") or {}).items():                    # optional overrides: slot name -> a specific phrase
             try:
                 self.pack.slots[name] = self.pack.resolve(spec)["id"]
             except PackError:
                 pass
-        self.dry = bool(cfg.get("dry_run", True))
+        self.dry = bool(cfg.get("dry_run", True)) and not self.state.data.get("live", False)      # the dashboard's "go live" switch is remembered here
         self._flush_lock = threading.Lock()
-        base = str(cfg.get("public_base_url", "")).rstrip("/")
-        self.twilio.status_url = base + "/twilio/status" if base.startswith("https://") and "YOUR-" not in base else ""     # Twilio tells us later whether a text or call really arrived
         self.lang = i18n.lang_of(self.pack.language)
         oc = str((cfg.get("facts") or {}).get("oncall_phone", ""))
         if oc and "YOUR-" not in oc:                                              # your own on-call phone is staff, not a customer: it may receive urgent alerts without a consent record
@@ -59,6 +54,35 @@ class Agent:
         needed = slots_mod.needed_by(wf) | set(slots_mod.required_lines(self.profile, "call_out") + slots_mod.required_lines(self.profile, "menu") + slots_mod.required_lines(self.profile, "sms"))
         self.missing_required = sorted(x for x in needed if x in slots_mod.required_lines(self.profile, "call_out") + slots_mod.required_lines(self.profile, "menu") + slots_mod.required_lines(self.profile, "sms") and x not in self.pack.slots)
         self.missing_slots = sorted(x for x in needed if x not in self.pack.slots and x not in self.pack.by_id)
+
+    def _init_services(self):
+        cfg = self.cfg
+        self.twilio, self.slack, self.gcal, self.mail = Twilio(cfg["twilio"]), Slack(cfg["slack"]), GoogleCalendar(cfg["google_calendar"]), Email(cfg["email"])
+        self.teams, self.outlook, self.inbox = Teams(cfg.get("teams", {})), OutlookCalendar(cfg.get("microsoft_calendar", {})), Inbox(cfg.get("inbox", {}))
+        self.sms_provider, self.call_provider = HttpProvider(cfg.get("sms_provider")), HttpProvider(cfg.get("call_provider"))
+        base = str(cfg.get("public_base_url", "")).rstrip("/")
+        self.twilio.status_url = base + "/twilio/status" if base.startswith("https://") and "YOUR-" not in base else ""     # Twilio tells us later whether a text or call really arrived
+
+    def _load_workflows(self):
+        wf = json.load(open(self.cfg["workflows"], encoding="utf-8")) if self.cfg.get("workflows") else {}
+        self.workflows = [w for w in wf.get("workflows", []) if w.get("enabled", True)]
+        return wf
+
+    def reload(self, new_cfg):
+        """Applies a changed agent.json / secrets / workflows without a restart (the dashboard's Save). The same cfg object is updated in place because the web server holds a reference to it."""
+        keep = {k: self.cfg[k] for k in ("dry_run",) if k in self.cfg}
+        self.cfg.clear(); self.cfg.update(new_cfg); self.cfg.update(keep)
+        self._init_services(); self._load_workflows()
+        oc = str((self.cfg.get("facts") or {}).get("oncall_phone", ""))
+        if oc and "YOUR-" not in oc and oc not in (self.cfg.setdefault("recipients", {}).setdefault("allow", [])):
+            self.cfg["recipients"]["allow"].append(oc)
+
+    def set_live(self, on):
+        """Sending for real (True) or practice mode (False), remembered across restarts."""
+        self.state.data["live"] = bool(on)
+        with self.state.lock:
+            self.state.save()
+        self.cfg["dry_run"] = not on; self.dry = not on
 
     # ---- required lines (always spoken / texted) -----------------------------------------------------------------------------------------------
     def _required(self, applies):
@@ -131,7 +155,7 @@ class Agent:
             if a.get("if") and not self._when_ok(a["if"], ctx):                  # per-action condition, e.g. {"if": {"customer.prefers_call": "*"}}
                 continue
             try:
-                if kind == "http" and not re.match(r"^https?://[^/{}?#\s]+", str(a.get("url", ""))):
+                if kind == "http" and not a.get("connection") and not re.match(r"^https?://[^/{}?#\s]+", str(a.get("url", ""))):
                     raise PackError("An http action must write the server address literally (https://host/...). Only the path, query and body may use {{...}} values.")
                 a = self._render_reason(a, ctx) if kind == "reason" else T.render_obj({k: v for k, v in a.items() if k != "if"}, ctx, self.pack)
                 if "YOUR-" in json.dumps(a):                                  # an example value from the sample config: never send it to a customer
@@ -146,6 +170,11 @@ class Agent:
             except Exception as e:  # noqa: BLE001 - one failing service must never stop the others or the app
                 ctx.setdefault("last", {})[kind] = "error"
                 self.record(wf_name, kind, "error", error=type(e).__name__ + ": " + str(e)[:200]); results.append({"action": kind, "status": "error", "error": str(e)[:200]})
+        if not wf_name.endswith("/mirror"):
+            try:
+                self._mirror(wf_name, ctx, results, job_prefix)
+            except Exception as e:  # noqa: BLE001 - a broken connection never stops the workflow
+                self.record(wf_name, "mirror", "error", error=str(e)[:200])
         return results
 
     def _render_reason(self, a, ctx):
@@ -163,12 +192,60 @@ class Agent:
             return o
         return {k: val(v) for k, v in a.items() if k != "if"}
 
+    def _with_connection(self, a):
+        """An http action that names one of the connections set up in the dashboard ("connection": "my-app") uses its address and key, so the workflow never contains the key."""
+        c = next((x for x in (self.cfg.get("connections") or []) if x.get("id") == a["connection"]), None)
+        if not c or not str(c.get("url", "")).startswith(("https://", "http://")):
+            raise PackError(f"The connection '{a['connection']}' is not set up yet: add it in the dashboard's Connect tab.")
+        a = {k: v for k, v in a.items() if k not in ("connection", "path")}
+        base = str(c["url"]); a["url"] = base.rstrip("/") + "/" + str(a_path).lstrip("/") if (a_path := a.get("path")) else base
+        h = dict(a.get("headers") or {}); au = c.get("auth") or {}; sec = au.get("secret") or ""
+        if sec and "YOUR-" not in sec and not str(sec).startswith("env:"):
+            if au.get("type") == "bearer":
+                h["Authorization"] = "Bearer " + sec
+            elif au.get("type") == "header" and au.get("header"):
+                h[au["header"]] = sec
+            elif au.get("type") == "basic":
+                import base64 as _b; h["Authorization"] = "Basic " + _b.b64encode(sec.encode()).decode()
+        a["headers"] = h
+        return a
+
+    def _mirror(self, wf_name, ctx, results, job_prefix):
+        """A workflow can also tell your own apps what it did (workflows.json: "also_send_to": ["my-app"]): one JSON post per connection, journaled like any other send."""
+        w = next((x for x in self.workflows if x["name"] == wf_name), None)
+        for cid in ((w or {}).get("also_send_to") or []):
+            payload = {"source": "speakvora-pack-agent", "workflow": wf_name, "at": int(self.now()), "results": [{"action": r.get("action"), "status": r.get("status")} for r in results],
+                       **{k: ctx[k] for k in ("event", "customer", "order", "appointment", "party", "command", "sms", "call", "email") if k in ctx}}
+            self.run_actions(wf_name + "/mirror", [{"action": "http", "connection": cid, "method": "POST", "json": json.loads(json.dumps(payload, default=str))}], self.ctx(), job_prefix=(f"{job_prefix}:mirror:{cid}" if job_prefix else None))
+
     def _gate(self, wf, kind, to, ctx, urgent=False):
         ok, why = self.safe.check(kind, to, ctx, urgent)
         if not ok:
             self.record(wf, kind, "blocked", to=to, reason=why)
             return {"status": "blocked", "reason": why}
         return None
+
+    # ---- ask-or-auto: what the person chose (kept in agent-state). Keys are "<workflow>:<action>"; "ask_before" is the list of action kinds that always wait for a click. -----------------------------
+    def policy(self):
+        p = self.state.data.get("policy") or {}
+        return {"ask_before": list(p.get("ask_before") or []), "decisions": dict(p.get("decisions") or {})}
+
+    def set_policy(self, ask_before=None, decision=None, reset=None):
+        with self.state.lock:
+            p = self.state.data.setdefault("policy", {"ask_before": [], "decisions": {}}); p.setdefault("decisions", {}); p.setdefault("ask_before", [])
+            if ask_before is not None:
+                p["ask_before"] = [k for k in ask_before if k in ("sms", "call", "email", "slack", "teams", "http", "calendar_create")]
+            if decision:
+                p["decisions"][decision[0]] = decision[1] if decision[1] in ("auto", "never", "ask") else "ask"
+                if p["decisions"][decision[0]] == "ask":
+                    p["decisions"].pop(decision[0], None)
+            if reset:
+                p["decisions"].pop(reset, None)
+            self.state.save()
+        return self.policy()
+
+    def _decision(self, wf, kind):
+        return self.policy()["decisions"].get(f"{wf}:{kind}")
 
     def _journaled(self, kind, a):
         """Actions that leave this machine and cannot be taken back are written to the job journal before they are sent. Replies, audio picks, log lines and read-only API calls (GET) are not."""
@@ -187,6 +264,12 @@ class Agent:
             if old["status"] == "sending":
                 self.state.job_set(jid, "needs_review", "agent stopped while sending: check with the provider before sending again"); return {"status": "needs_review", "job": jid}
             return {"status": "queued" if old["status"] in ("pending", "queued") else old["status"], "job": jid, "resumed": True}
+        d = self._decision(wf, kind)
+        if not ctx.get("_approved") and kind != "reason":
+            if d == "never":
+                self.state.job_create(jid, wf, kind, a, {"customer": ctx.get("customer") or {}}, "cancelled"); self.record(wf, kind, "declined_by_rule", job=jid); return {"status": "cancelled", "job": jid}
+            if d != "auto" and kind in self.policy()["ask_before"]:
+                self.state.job_create(jid, wf, kind, a, {"customer": ctx.get("customer") or {}}, "needs_approval"); self.record(wf, kind, "needs_approval", job=jid); return {"status": "needs_approval", "job": jid}
         self.state.job_create(jid, wf, kind, a, {"customer": ctx.get("customer") or {}}, "pending")
         return self._attempt(jid, wf, kind, a, ctx, out)
 
@@ -243,10 +326,38 @@ class Agent:
 
     # ---- people controlling jobs (CLI and dashboard) ------------------------------------------------------------------------------------------------
     def cancel_job(self, jid):
+        """Stops a job that has not been sent, or dismisses one that failed or needs a look."""
         j = self.state.job_get(jid)
-        if not j or j["status"] not in ("pending", "queued", "needs_review"):
-            raise PermissionError("Only a job that has not been sent (pending or queued), or one waiting for review, can be cancelled.")
+        if not j or j["status"] not in ("pending", "queued", "needs_review", "needs_approval", "failed", "expired", "undelivered"):
+            raise PermissionError("Only a job that has not been sent, or one that failed or needs a look, can be cancelled.")
         self.state.job_set(jid, "cancelled", "cancelled by a person"); return self.state.job_get(jid)
+
+    APPROVAL_MAX_HOURS = {"call": 1, "sms": 24, "email": 48}
+
+    def approve_job(self, jid, remember=False):
+        """A person says yes to an action that was waiting. It is sent now, through the same safety checks as everything else. remember=True makes this kind of action automatic from now on."""
+        j = self.state.job_get(jid)
+        if not j or j["status"] != "needs_approval":
+            raise PermissionError("This is not waiting for approval.")
+        if self.now() - j["created"] > self.APPROVAL_MAX_HOURS.get(j["kind"], 72) * 3600:
+            self.state.job_set(jid, "expired", "too old to send now"); raise PermissionError("This is too old to send now, so it was dropped. The agent will ask again next time.")
+        if remember:
+            self.set_policy(decision=(f"{j['wf']}:{j['kind']}", "auto"))
+        ctx = self.ctx(**(j.get("ctx") or {})); ctx["_approved"] = True
+        self.state.job_set(jid, "pending", "approved by a person")
+        out = {"reply": "", "play": []}
+        try:
+            return self._attempt(jid, j["wf"], j["kind"], j["a"], ctx, out)
+        except (PackError, AudioError, PermissionError) as e:
+            return {"status": "failed", "error": str(e)[:200]}
+
+    def decline_job(self, jid, remember=False):
+        j = self.state.job_get(jid)
+        if not j or j["status"] != "needs_approval":
+            raise PermissionError("This is not waiting for approval.")
+        if remember:
+            self.set_policy(decision=(f"{j['wf']}:{j['kind']}", "never"))
+        self.state.job_set(jid, "cancelled", "declined by a person"); return self.state.job_get(jid)
 
     def retry_job(self, jid, confirm_not_sent=False):
         """Puts a failed, expired, cancelled or blocked job back in the queue (the safety checks run again when it is sent). A needs_review job may already have arrived, so it needs confirm_not_sent=True: you looked at the provider and it did not."""
@@ -266,9 +377,15 @@ class Agent:
     # ---- proposals: what a reasoning step suggests. Nothing runs until a person approves it (or the workflow listed the action under auto_allow). ---------------------------------------------------
     def _after_proposal(self, jid, wf, a):
         j = self.state.job_get(jid); res = j["result"]
-        auto = [p for p in res["proposals"] if p["action"] in (a.get("auto_allow") or [])]
+        wfn = self.state.job_get(jid)["wf"]
+        for i, p in enumerate(res["proposals"]):                              # a saved "always" or "never" for this kind of proposal is applied at once
+            if self._decision(wfn, p["action"]) == "never":
+                self.state.update_proposal(jid, i, state="rejected")
+        res = self.state.job_get(jid)["result"]
+        auto = [i for i, p in enumerate(res["proposals"]) if p["state"] == "pending" and (p["action"] in (a.get("auto_allow") or []) or self._decision(wfn, p["action"]) == "auto")]
         if auto:
-            self.execute_proposals(jid, [i for i, p in enumerate(res["proposals"]) if p["action"] in (a.get("auto_allow") or [])])
+            self.execute_proposals(jid, auto)
+        self._finish_proposals(jid)
         if a.get("notify"):                                                    # a short note to the team: what was found and that proposals wait in the dashboard
             n = sum(1 for p in self.state.job_get(jid)["result"]["proposals"] if p["state"] == "pending")
             txt = (res["summary"] or "Done.") + (f" {n} proposed action(s) wait for your approval in the dashboard." if n else "")
@@ -279,7 +396,7 @@ class Agent:
         if all(p["state"] != "pending" for p in ps):
             self.state.job_set(jid, "approved" if any(p["state"] in ("done", "failed", "approved") for p in ps) else "rejected", "all proposals decided")
 
-    def execute_proposals(self, jid, indexes):
+    def execute_proposals(self, jid, indexes, remember=False):
         """Runs the chosen proposals as normal journaled sends (consent, STOP, quiet hours, limits and the kill switch apply). A proposal runs once: its job id is fixed, so approving twice sends nothing twice."""
         j = self.state.job_get(jid)
         if not j or j["kind"] != "reason" or j["status"] not in ("proposed", "approved"):
@@ -304,6 +421,9 @@ class Agent:
                 a2 = {"action": "http", "method": "POST", "url": args["url"], "json": args["json"]}
             else:
                 a2 = {"action": "calendar_create", "title": args["title"], "start": args["start"], "minutes": args["minutes"]}
+            if remember:
+                self.set_policy(decision=(f"{j['wf']}:{k}", "auto"))
+            ctx["_approved"] = True
             cj = f"{jid}:p{i}"
             try:
                 r = self._do(j["wf"], k, a2, ctx, {"reply": "", "play": []}, cj)            # the model's text is sent as written: it is NOT run through templates
@@ -315,7 +435,7 @@ class Agent:
         self._finish_proposals(jid)
         return out
 
-    def reject_proposals(self, jid, indexes=None):
+    def reject_proposals(self, jid, indexes=None, remember=False):
         j = self.state.job_get(jid)
         if not j or j["kind"] != "reason" or j["status"] != "proposed":
             raise PermissionError("Only a reasoning result that still has proposals waiting can be rejected.")
@@ -323,6 +443,8 @@ class Agent:
         for i in (range(len(ps)) if indexes is None else indexes):
             if 0 <= i < len(ps) and ps[i]["state"] == "pending":
                 self.state.update_proposal(jid, i, state="rejected")
+                if remember:
+                    self.set_policy(decision=(f"{j['wf']}:{ps[i]['action']}", "never"))
         self._finish_proposals(jid)
         return self.state.job_get(jid)
 
@@ -447,6 +569,8 @@ class Agent:
                 self.record(wf, kind, "dry_run", url=a["url"]); return {"status": "dry_run"}
             headers = signing.sign(self.cfg["events"]["secret"], body) if self.cfg["events"].get("secret") else {}
             web.request("POST", a["url"], {**headers, "content-type": "application/json"}, raw=body); self.safe.sent("webhook", a["url"]); self.record(wf, kind, "sent", url=a["url"]); return {"status": "sent"}
+        if kind == "http" and a.get("connection"):
+            a = self._with_connection(a)
         if kind == "http":
             # Call ANY REST API (their booking system, CRM, POS...). The host is fixed by the workflow file: data from a webhook can fill the path, query and body but can never choose where the request goes.
             raw_url = a["url"]
@@ -546,6 +670,8 @@ class Agent:
     def tick(self):
         """Call about once a minute: queued actions, calendar reminders and daily schedules."""
         self.flush_outbox()
+        from . import sharing
+        sharing.auto(self)                                                       # missing phrases go to Speakvora once a day, if the person agreed
         if self.inbox.configured:
             self.poll_email()
         if not (self.gcal.configured or self.outlook.configured or any((w.get("on") or {}).get("schedule") for w in self.workflows)):

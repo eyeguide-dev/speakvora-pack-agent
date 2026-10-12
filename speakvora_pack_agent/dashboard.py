@@ -5,10 +5,10 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import slots as SL
+from . import connect as SU, recipes, sharing, slots as SL
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-ATTENTION = ("proposed", "needs_review", "failed", "expired", "undelivered")
+ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
 
 
 def token(agent):
@@ -43,14 +43,47 @@ def _requests(agent):
         return []
 
 
+KIND_LABEL = {"sms": "Text message", "call": "Phone call", "slack": "Slack message", "teams": "Teams message", "email": "Email", "calendar_create": "Calendar entry", "webhook": "Message to your app", "http": "Message to your app", "reason": "Suggestion from your AI"}
+STATUS_LABEL = {"sent": "Sent", "delivered": "Delivered", "undelivered": "Not delivered", "queued": "Waiting for internet", "pending": "Sending", "sending": "Sending", "needs_approval": "Waiting for you", "proposed": "Waiting for you",
+                "needs_review": "Please check", "failed": "Did not send", "blocked": "Held back by a safety rule", "expired": "Too old, not sent", "cancelled": "Stopped", "approved": "Approved", "answered": "Answered", "rejected": "Declined"}
+TONE = {"sent": "good", "delivered": "good", "answered": "good", "approved": "good", "queued": "wait", "pending": "wait", "sending": "wait", "needs_approval": "you", "proposed": "you", "needs_review": "you", "failed": "bad", "undelivered": "bad", "blocked": "warn", "expired": "warn", "cancelled": "mute", "rejected": "mute"}
+WHY = {"no_consent": "this person has not agreed to texts", "opted_out": "they replied STOP", "quiet_hours": "it is outside the allowed hours", "kill_switch": "sending is paused", "hourly_limit": "the hourly limit was reached", "recipient_daily_limit": "this person already got the daily maximum",
+       "no_recipient": "there is no phone number or address", "reason_limit": "the AI limit for this hour was reached"}
+
+
+def _person(j):
+    a = j.get("a") or {}; c = (j.get("ctx") or {}).get("customer") or {}
+    return str(c.get("name") or a.get("name") or a.get("to") or a.get("channel") or "").strip()
+
+
+def _plain_error(e):
+    e = str(e or "")
+    if "HTTP 400" in e or "HTTP 4" in e:
+        return "The service refused it. Check the connection in the Connect tab."
+    if "HTTP 5" in e or "timed out" in e.lower():
+        return "The service did not answer properly, so it may or may not have arrived."
+    if "not set up" in e:
+        return e
+    return e[:160]
+
+
 def _job(j):
     a = j.get("a") or {}
-    extra = {}
+    kind = j["kind"]; who = _person(j); wfn = j["wf"]
+    title = KIND_LABEL.get(kind, kind.replace("_", " ").capitalize()) + (f" to {who}" if who and kind in ("sms", "call", "email") else f" in {who}" if who and kind in ("slack", "teams") else "")
+    detail = str(a.get("text") or a.get("subject") or a.get("title") or ("" if kind == "call" else ""))[:300]
+    if kind == "call" and not detail:
+        detail = "A call that plays your recording."
+    why = WHY.get(j.get("reason") or "", "")
+    friendly = {"title": title, "quote": detail, "label": STATUS_LABEL.get(j["status"], j["status"]) + (f": {why}" if j["status"] == "blocked" and why else ""), "tone": TONE.get(j["status"], "mute"),
+                "what": recipes.NICE.get(wfn, ""), "workflow_title": wfn.replace("_", " ").capitalize(), "problem": _plain_error(j.get("error")) if j["status"] in ("failed", "needs_review", "undelivered") else "",
+                "needs_you": j["status"] in ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")}
+    extra = dict(friendly)
     if j["kind"] == "reason" and j.get("result"):
         r = j["result"]
-        extra = {"summary": r.get("summary", ""), "reasoning": r.get("reasoning", ""), "model": r.get("model", ""), "sent_chars": r.get("sent_chars", 0), "sent_to_model": r.get("sent_to_model", "")[:1500], "dropped": r.get("dropped", []),
+        extra.update({"summary": r.get("summary", ""), "reasoning": r.get("reasoning", ""), "model": r.get("model", ""), "sent_chars": r.get("sent_chars", 0), "sent_to_model": r.get("sent_to_model", "")[:1500], "dropped": r.get("dropped", []),
                  "proposals": [{"i": i, "action": p["action"], "to": (p["args"].get("name") or p["args"].get("channel") or p["args"].get("url") or p["args"].get("title") or ""), "text": str(p["args"].get("text") or p["args"].get("json") or p["args"].get("subject") or "")[:400],
-                                "why": p.get("why", ""), "state": p["state"], "status": p.get("status") or ""} for i, p in enumerate(r.get("proposals", []))]}
+                                "why": p.get("why", ""), "state": p["state"], "status": p.get("status") or ""} for i, p in enumerate(r.get("proposals", []))]})
     return {**extra, "id": j["id"], "status": j["status"], "kind": j["kind"], "workflow": j["wf"], "to": str(a.get("to") or a.get("channel") or a.get("url") or "")[:60], "text": str(a.get("text") or a.get("subject") or a.get("title") or "")[:140],
             "created": j["created"], "updated": j["updated"], "attempts": j.get("attempts", 0), "error": (j.get("error") or "")[:200], "note": (j["history"][-1][2] if j.get("history") else "")}
 
@@ -58,7 +91,8 @@ def _job(j):
 def summary(agent):
     st = agent.state; gaps = _gaps(agent); jobs = st.jobs()
     att = [j for j in jobs if j["status"] in ATTENTION][-30:][::-1]
-    return {"now": int(agent.now()), "pack": {"title": agent.pack.meta.get("title"), "id": agent.pack.meta.get("pack"), "language": agent.pack.language, "lines": len(agent.pack.items), "profile": agent.profile, "version": agent.pack.meta.get("version")},
+    svc = [n for n in ("twilio", "slack", "teams", "email", "calendar") if SU.connected(agent, n)]
+    return {"setup": {"connected": len(svc), "services": svc, "ready": SU.readiness(agent)["ok"], "live": not agent.dry}, "update": sharing.update_info(agent), "now": int(agent.now()), "pack": {"title": agent.pack.meta.get("title"), "id": agent.pack.meta.get("pack"), "language": agent.pack.language, "lines": len(agent.pack.items), "profile": agent.profile, "version": agent.pack.meta.get("version")},
             "mode": "dry_run" if agent.dry else "live", "paused": agent.safe.killed(), "counts": st.job_counts(), "workflows": len(agent.workflows),
             "attention": [_job(j) for j in att], "recent": [_job(j) for j in jobs[-40:][::-1]],
             "coverage": {"needed": len(SL.needed_by(json.load(open(agent.cfg["workflows"], encoding="utf-8")))) if agent.cfg.get("workflows") else 0, "missing": gaps},
@@ -66,6 +100,20 @@ def summary(agent):
 
 
 CUSTOM_BAD = re.compile(r"https?://|@|\d{6,}")
+
+
+def policy_view(agent):
+    pol = agent.policy(); names = {"sms": "texts to customers", "call": "phone calls", "email": "emails", "slack": "Slack messages", "teams": "Teams messages", "http": "messages to your app", "calendar_create": "calendar entries"}
+    dec = []
+    for k, v in sorted(pol["decisions"].items()):
+        wfn, _, act = k.partition(":")
+        dec.append({"key": k, "workflow": wfn.replace("_", " ").capitalize(), "action": names.get(act, act), "choice": v})
+    return {"ask_before": pol["ask_before"], "kinds": [{"kind": k, "label": n} for k, n in names.items() if k in ("sms", "call", "email")], "decisions": dec, "share_phrases": sharing.enabled(agent)}
+
+
+def library_view(agent):
+    s = summary(agent); pend = sharing.pending(agent); req = sharing.requested(agent)
+    return {"coverage": s["coverage"], "pending": pend, "requested": [{"slot": k, "t": v} for k, v in sorted(req.items(), key=lambda x: -x[1])], "share": sharing.enabled(agent), "update": sharing.update_info(agent), "log": _requests(agent)[-8:][::-1], "now": int(agent.now())}
 
 
 def request_phrases(agent, body):
@@ -82,18 +130,8 @@ def request_phrases(agent, body):
         picked = [gaps[s] for s in names if s in gaps]
         if not picked:
             raise ValueError("Choose at least one missing line.")
-    path = os.path.join(agent.state.dir, "slot-requests.json"); doc = SL.request_file(agent.pack, agent.profile, picked, path)
-    sent, msg = False, "Saved. Set SPEAKVORA_KEY (an API key from your Speakvora dashboard) and ask again to send it."
-    key = os.environ.get("SPEAKVORA_KEY")
-    if key:
-        req = urllib.request.Request(os.environ.get("SPEAKVORA_HOST", "https://speakvora.com") + "/api/v1/packs/slot-requests", data=json.dumps(doc).encode(), method="POST", headers={"x-api-key": key, "content-type": "application/json"})
-        try:
-            r = json.loads(urllib.request.urlopen(req, timeout=20).read().decode()); sent, msg = True, r.get("note") or "Sent to Speakvora."
-        except Exception as e:  # noqa: BLE001
-            msg = "Could not send it now (" + str(getattr(e, "reason", e))[:80] + "). The request is saved in agent-state/slot-requests.json; try again, or run `slots --send`."
-    log = _requests(agent) + [{"t": int(agent.now()), "slots": [p["slot"] for p in picked], "sent": sent, "text": picked[0]["example"] if body.get("custom") else ""}]
-    json.dump(log[-100:], open(_requests_path(agent), "w", encoding="utf-8"))
-    return {"sent": sent, "message": msg, "slots": [p["slot"] for p in picked]}
+    r = sharing.submit(agent, picked, picked[0]["example"] if body.get("custom") else "")
+    return {"sent": r["sent"], "message": r["message"], "slots": [p["slot"] for p in picked]}
 
 
 def handle(agent, method, path, headers, raw):
@@ -112,9 +150,14 @@ def handle(agent, method, path, headers, raw):
             qs = parse_qs(u.query); s, k, q = (qs.get("status") or [""])[0], (qs.get("kind") or [""])[0], (qs.get("q") or [""])[0].lower()
             rows = [_job(j) for j in agent.state.jobs(s or None) if (not k or j["kind"] == k)]
             out = {"jobs": [j for j in rows if not q or q in (j["to"] + " " + j["workflow"] + " " + j["text"] + " " + j["kind"]).lower()][-300:][::-1]}
-        elif method == "POST" and (m := re.match(r"^/dash/api/jobs/([\w:.\-]+)/(cancel|retry|mark-sent)$", p)):
+        elif method == "POST" and (m := re.match(r"^/dash/api/jobs/([\w:.\-]+)/(cancel|retry|mark-sent|approve|decline)$", p)):
             body = json.loads(raw or b"{}"); jid, act = m.group(1), m.group(2)
-            j = agent.cancel_job(jid) if act == "cancel" else agent.retry_job(jid, bool(body.get("confirm_not_sent"))) if act == "retry" else agent.mark_job_sent(jid)
+            if act == "approve":
+                agent.approve_job(jid, bool(body.get("remember"))); agent.flush_outbox()
+            elif act == "decline":
+                agent.decline_job(jid, bool(body.get("remember")))
+            else:
+                j = agent.cancel_job(jid) if act == "cancel" else agent.retry_job(jid, bool(body.get("confirm_not_sent"))) if act == "retry" else agent.mark_job_sent(jid)
             if act == "retry":
                 agent.flush_outbox()
             out = {"job": _job(agent.state.job_get(jid))}
@@ -124,10 +167,65 @@ def handle(agent, method, path, headers, raw):
             if act == "approve":
                 if idx is None:
                     jj = agent.state.job_get(jid); idx = [i for i, pr in enumerate(((jj or {}).get("result") or {}).get("proposals", [])) if pr["state"] == "pending"]
-                agent.execute_proposals(jid, idx); agent.flush_outbox()
+                agent.execute_proposals(jid, idx, bool(body.get("remember"))); agent.flush_outbox()
             else:
-                agent.reject_proposals(jid, idx)
+                agent.reject_proposals(jid, idx, bool(body.get("remember")))
             out = {"job": _job(agent.state.job_get(jid))}
+        elif p == "/dash/api/setup" and method == "GET":
+            out = SU.status(agent)
+        elif p == "/dash/api/setup/save" and method == "POST":
+            b = json.loads(raw or b"{}"); out = {"card": SU.save(agent, str(b.get("card", "")), b.get("values") or {})}
+        elif p == "/dash/api/setup/test" and method == "POST":
+            b = json.loads(raw or b"{}"); out = SU.test(agent, str(b.get("card", "")), b.get("opts") or {})
+        elif p == "/dash/api/setup/workflow" and method == "POST":
+            b = json.loads(raw or b"{}"); out = {"workflows": SU.set_workflow(agent, str(b.get("name", "")), bool(b.get("enabled")))}
+        elif p == "/dash/api/setup/live" and method == "POST":
+            out = SU.go_live(agent, bool(json.loads(raw or b"{}").get("on")))
+        elif p == "/dash/api/setup/source" and method == "POST":
+            out = SU.add_source(agent, str(json.loads(raw or b"{}").get("name", "")))
+        elif p == "/dash/api/setup/catalog" and method == "GET":
+            out = {"tiles": SU.catalog(agent), "connections": SU.connections(agent)}
+        elif p == "/dash/api/setup/connection" and method == "POST":
+            out = SU.add_connection(agent, json.loads(raw or b"{}"))
+        elif p == "/dash/api/setup/connection/remove" and method == "POST":
+            out = SU.remove_connection(agent, str(json.loads(raw or b"{}").get("id", "")))
+        elif p == "/dash/api/setup/connection/test" and method == "POST":
+            out = SU.test_connection(agent, str(json.loads(raw or b"{}").get("id", "")))
+        elif p == "/dash/api/setup/incoming" and method == "POST":
+            out = SU.add_incoming(agent, str(json.loads(raw or b"{}").get("name", "")))
+        elif p == "/dash/api/setup/incoming/show" and method == "POST":
+            out = SU.incoming_token(agent, str(json.loads(raw or b"{}").get("id", "")))
+        elif p == "/dash/api/setup/incoming/remove" and method == "POST":
+            out = SU.remove_incoming(agent, str(json.loads(raw or b"{}").get("id", "")))
+        elif p == "/dash/api/setup/workflow-targets" and method == "POST":
+            b = json.loads(raw or b"{}"); out = {"workflows": SU.set_workflow_targets(agent, str(b.get("name", "")), b.get("ids") or [])}
+        elif p == "/dash/api/setup/public-check" and method == "POST":
+            out = SU.check_public(agent)
+        elif p == "/dash/api/policy" and method == "GET":
+            out = policy_view(agent)
+        elif p == "/dash/api/policy" and method == "POST":
+            b = json.loads(raw or b"{}")
+            if "ask_before" in b:
+                agent.set_policy(ask_before=[str(x) for x in b["ask_before"]])
+            if b.get("reset"):
+                agent.set_policy(reset=str(b["reset"]))
+            if isinstance(b.get("decision"), list) and len(b["decision"]) == 2:
+                agent.set_policy(decision=(str(b["decision"][0]), str(b["decision"][1])))
+            if "share_phrases" in b:
+                sharing.set_enabled(agent, bool(b["share_phrases"]))
+            out = policy_view(agent)
+        elif p == "/dash/api/library" and method == "GET":
+            out = library_view(agent)
+        elif p == "/dash/api/library/share" and method == "POST":
+            sharing.set_enabled(agent, bool(json.loads(raw or b"{}").get("on")))
+            if sharing.enabled(agent):
+                sharing.auto(agent)
+            out = library_view(agent)
+        elif p == "/dash/api/library/submit" and method == "POST":
+            b = json.loads(raw or b"{}"); todo = [g for g in sharing.gaps(agent) if g["slot"] in (b.get("slots") or [])] or sharing.pending(agent)
+            if not todo:
+                raise ValueError("Nothing is missing.")
+            r = sharing.submit(agent, todo[:60]); out = {**r, "library": library_view(agent)}
         elif p == "/dash/api/pause" and method == "POST":
             on = bool(json.loads(raw or b"{}").get("on")); f = os.path.join(agent.state.dir, "STOP")
             if on:
@@ -146,74 +244,4 @@ def handle(agent, method, path, headers, raw):
     return 200, json.dumps(out).encode(), "application/json", hdr
 
 
-PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pack agent</title>
-<style>
-:root{--bg:#f6f4ef;--card:#fff;--ink:#1d1b18;--mut:#6b655c;--line:#e3ded5;--acc:#1f6f5c;--warn:#a85b00;--bad:#b3261e}
-@media(prefers-color-scheme:dark){:root{--bg:#14130f;--card:#1d1b17;--ink:#f1ede4;--mut:#a39c90;--line:#33302a;--acc:#58c4a8;--warn:#e0a24a;--bad:#ff8a80}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
-main{max-width:940px;margin:0 auto;padding:18px 16px 60px}h1{font-size:19px;margin:0}.sub{color:var(--mut);font-size:13px}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600;border:1px solid var(--line)}.live{color:var(--bad);border-color:var(--bad)}.dry{color:var(--acc);border-color:var(--acc)}.paused{color:var(--warn);border-color:var(--warn)}
-.tabs{display:flex;gap:4px;margin:16px 0 10px;border-bottom:1px solid var(--line)}.tab{border:0;background:none;color:var(--mut);padding:8px 14px;border-bottom:2px solid transparent;font:inherit;cursor:pointer;margin-bottom:-1px}.tab.on{color:var(--ink);border-color:var(--acc);font-weight:600}
-.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:99px;padding:4px 12px;font:inherit;cursor:pointer}.chip b{font-variant-numeric:tabular-nums;margin-left:5px;color:var(--mut)}.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}.chip.on b{color:#fff}.chip.alert b{color:var(--warn)}.chip.alert.on b{color:#fff}
-.bar{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}.bar input,.bar select{font:inherit;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--card);color:var(--ink)}.bar input{flex:1;min-width:160px}
-.box{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:600;font-size:12px}tr:last-child td{border-bottom:0}
-.st{font-weight:600}.st.needs_review,.st.expired,.st.undelivered,.st.proposed{color:var(--warn)}.st.failed,.st.blocked{color:var(--bad)}.st.delivered,.st.sent{color:var(--acc)}.mut{color:var(--mut)}
-button.b{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:3px 9px;cursor:pointer;margin:1px 2px 1px 0}button.b:hover{border-color:var(--acc)}button.p{font:inherit;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:8px;padding:6px 14px;cursor:pointer}button:disabled{opacity:.5}
-.empty{padding:16px;color:var(--mut)}.pad{padding:12px 14px}label{display:block;font-size:12px;color:var(--mut);margin:8px 0 3px}textarea,.pad input[type=text]{font:inherit;width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 9px;background:var(--bg);color:var(--ink)}.msg{margin-top:8px;font-size:13px}
-.meter{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:6px 0}.meter i{display:block;height:100%;background:var(--acc)}
-@media(max-width:560px){th:nth-child(3),td:nth-child(3){display:none}}
-</style></head><body><main>
-<div class="top"><div><h1 id="title">Pack agent</h1><div class="sub" id="sub">Loading...</div></div><div><span class="badge" id="mode"></span> <button class="b" id="pause"></button></div></div>
-<div class="tabs"><button class="tab on" id="t1">Activity</button><button class="tab" id="t2">Lines</button></div>
-<section id="v1"><div class="chips" id="chips"></div>
-<div class="bar"><input id="q" type="search" placeholder="Search a name, number, channel or workflow"><select id="kind"><option value="">All types</option><option value="sms">Texts</option><option value="call">Calls</option><option value="slack">Slack</option><option value="teams">Teams</option><option value="email">Email</option><option value="calendar_create">Calendar</option><option value="webhook">Webhooks and APIs</option></select></div>
-<div class="box" id="list"></div></section>
-<section id="v2" hidden><div class="box pad" id="coverage"></div>
-<div class="box pad" style="margin-top:12px"><b>Ask for another line</b><div class="sub">Sent to Speakvora with your API key (or saved if no key is set). New lines are written, checked and voiced, then arrive in the next version of your pack. No delivery date is promised.</div>
-<label for="when">When is it said?</label><input type="text" id="when" maxlength="160" placeholder="For example: when a customer asks for a refund of a late delivery">
-<label for="text">The sentence you want</label><textarea id="text" rows="2" maxlength="200" placeholder="For example: I am sorry your delivery was late, and I have asked for a refund."></textarea>
-<div style="margin-top:10px"><button class="p" id="ask">Request this line</button></div><div class="msg" id="askmsg"></div><div class="sub" id="past" style="margin-top:10px"></div></div></section>
-<p class="sub" style="margin-top:18px">Runs only on your machine, next to your agent. Pause stops every send until you resume.</p>
-</main><script>
-const T=(location.hash.match(/token=([\\w-]+)/)||[])[1]||sessionStorage.getItem('t')||'';if(T)sessionStorage.setItem('t',T);history.replaceState(null,'',location.pathname);
-const $=id=>document.getElementById(id);let S=null,JOBS=[],FILTER='all';
-const GROUPS={all:null,need:['proposed','needs_review','failed','undelivered','expired'],wait:['pending','queued','sending'],sent:['sent','delivered'],delivered:['delivered'],stopped:['blocked','cancelled','failed','expired']};
-const LABELS=[['all','All'],['need','Needs you'],['wait','Waiting'],['sent','Sent'],['delivered','Delivered']];
-async function api(p,o){o=o||{};o.headers=Object.assign({'x-dashboard-token':T,'content-type':'application/json'},o.headers||{});const r=await fetch(p,o);const j=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(j.message||j.error||r.status),{status:r.status});return j}
-const ago=(s,n)=>{const d=n-s;return d<90?d+' s ago':d<5400?Math.round(d/60)+' min ago':d<172800?Math.round(d/3600)+' h ago':Math.round(d/86400)+' days ago'};
-function td(t,c){const x=document.createElement('td');if(c)x.className=c;x.textContent=t;return x}
-function bt(label,fn){const b=document.createElement('button');b.className='b';b.textContent=label;b.onclick=async()=>{b.disabled=true;try{await fn()}catch(e){alert(e.message)}load()};return b}
-const inGroup=(j,g)=>!GROUPS[g]||GROUPS[g].includes(j.status);
-function proposalBox(j){const d=document.createElement('div');d.style.cssText='padding:4px 2px 10px';const s=document.createElement('div');s.innerHTML='';const b=document.createElement('b');b.textContent=j.summary||'Suggestion';s.appendChild(b);d.appendChild(s);
-const r=document.createElement('div');r.className='mut';r.textContent=j.reasoning;d.appendChild(r);
-const det=document.createElement('details');det.style.margin='6px 0';const sm=document.createElement('summary');sm.textContent='What was sent to the model ('+j.sent_chars+' characters, '+(j.model||'')+')';det.appendChild(sm);const pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;font-size:12px';pre.textContent=j.sent_to_model;det.appendChild(pre);d.appendChild(det);
-const boxes=[];(j.proposals||[]).forEach(p=>{const l=document.createElement('label');l.style.cssText='display:block;margin:5px 0;font-size:13px;color:var(--ink)';const cb=document.createElement('input');cb.type='checkbox';cb.style.marginRight='8px';cb.checked=p.state==='pending';cb.disabled=p.state!=='pending';cb.dataset.i=p.i;boxes.push(cb);l.appendChild(cb);l.appendChild(document.createTextNode(p.action+(p.to?' to '+p.to:'')+': '+p.text));const w=document.createElement('div');w.className='mut';w.style.marginLeft='24px';w.textContent=(p.why?'Why: '+p.why+'. ':'')+(p.state!=='pending'?'['+p.state+(p.status?', '+p.status:'')+']':'');l.appendChild(w);d.appendChild(l)});
-if((j.dropped||[]).length){const x=document.createElement('div');x.className='mut';x.style.fontSize='12px';x.textContent='Not shown (not allowed here): '+j.dropped.join('; ');d.appendChild(x)}
-if(j.status==='proposed'){const row=document.createElement('div');row.style.marginTop='8px';row.appendChild(bt('Approve the checked',()=>api('/dash/api/proposals/'+j.id+'/approve',{method:'POST',body:JSON.stringify({indexes:boxes.filter(x=>x.checked&&!x.disabled).map(x=>+x.dataset.i)})})));row.appendChild(bt('Reject all',()=>api('/dash/api/proposals/'+j.id+'/reject',{method:'POST',body:'{}'})));d.appendChild(row)}
-return d}
-function render(){const now=S.now,q=$('q').value.trim().toLowerCase(),k=$('kind').value;
-const chips=$('chips');chips.textContent='';LABELS.forEach(([g,l])=>{const n=JOBS.filter(j=>inGroup(j,g)).length;const c=document.createElement('button');c.className='chip'+(FILTER===g?' on':'')+(g==='need'&&n?' alert':'');c.textContent=l;const b=document.createElement('b');b.textContent=n;c.appendChild(b);c.onclick=()=>{FILTER=g;render()};chips.appendChild(c)});
-const list=JOBS.filter(j=>inGroup(j,FILTER)&&(!k||j.kind===k)&&(!q||(j.to+' '+j.workflow+' '+j.text+' '+j.kind).toLowerCase().includes(q)));const box=$('list');box.textContent='';
-if(!list.length){const d=document.createElement('div');d.className='empty';d.textContent=JOBS.length?'Nothing matches this filter.':'Nothing sent yet.';box.appendChild(d);return}
-const t=document.createElement('table'),h=t.insertRow();['Status','What','To','When',''].forEach(x=>{const th=document.createElement('th');th.textContent=x;h.appendChild(th)});
-list.forEach(j=>{const r=t.insertRow();r.appendChild(td(j.status.replace('_',' '),'st '+j.status));const w=td(j.kind+' / '+j.workflow);if(j.error||j.note){const s=document.createElement('div');s.className='mut';s.textContent=(j.error||j.note).slice(0,110);w.appendChild(s)}r.appendChild(w);r.appendChild(td(j.to));r.appendChild(td(ago(j.updated,now),'mut'));
-const a=document.createElement('td');a.style.whiteSpace='nowrap';
-if(['pending','queued'].includes(j.status))a.appendChild(bt('Cancel',()=>api('/dash/api/jobs/'+j.id+'/cancel',{method:'POST',body:'{}'})));
-if(j.status==='needs_review'){a.appendChild(bt('It arrived',()=>api('/dash/api/jobs/'+j.id+'/mark-sent',{method:'POST',body:'{}'})));a.appendChild(bt('Did not arrive: send again',()=>{if(confirm('Only if you checked with the provider and it did NOT arrive. Send again?'))return api('/dash/api/jobs/'+j.id+'/retry',{method:'POST',body:JSON.stringify({confirm_not_sent:true})})}))}
-if(['failed','expired'].includes(j.status))a.appendChild(bt('Try again',()=>api('/dash/api/jobs/'+j.id+'/retry',{method:'POST',body:'{}'})));
-r.appendChild(a);if(j.proposals){const r2=t.insertRow();const c=r2.insertCell();c.colSpan=5;c.appendChild(proposalBox(j))}});box.appendChild(t)}
-function lines(){const cov=S.coverage,have=cov.needed-cov.missing.length,box=$('coverage');box.textContent='';const p=document.createElement('div');p.textContent=cov.needed?have+' of '+cov.needed+' spoken lines your workflows use are in this pack.':'Your workflows use no named lines.';box.appendChild(p);
-const m=document.createElement('div');m.className='meter';const i=document.createElement('i');i.style.width=(cov.needed?Math.round(100*have/cov.needed):100)+'%';m.appendChild(i);box.appendChild(m);
-if(cov.missing.length){const ul=document.createElement('div');cov.missing.forEach(x=>{const lab=document.createElement('label');lab.style.cssText='margin:6px 0;font-size:13px;color:var(--ink)';const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.style.marginRight='8px';cb.dataset.slot=x.slot;lab.append(cb,document.createTextNode(x.slot+': '+x.example));ul.appendChild(lab)});box.appendChild(ul);
-const b=document.createElement('button');b.className='p';b.textContent='Request the checked lines';b.onclick=async()=>{const slots=[...ul.querySelectorAll('input:checked')].map(x=>x.dataset.slot);try{const r=await api('/dash/api/phrases',{method:'POST',body:JSON.stringify({slots})});$('askmsg').textContent=r.message}catch(e){$('askmsg').textContent=e.message}load()};box.appendChild(b)}
-$('past').textContent=S.requests.length?'Requested before: '+S.requests.map(r=>(r.sent?'sent ':'saved ')+r.slots.join(', ')+' ('+ago(r.t,S.now)+')').join('; '):''}
-async function load(){try{S=await api('/dash/api/summary');JOBS=(await api('/dash/api/jobs')).jobs}catch(e){$('sub').textContent=e.status===401?'Open the address printed when the agent started (it ends with #token=...).':'Could not load: '+e.message;return}
-$('title').textContent=S.pack.title||'Pack agent';$('sub').textContent=(S.pack.lines||0).toLocaleString()+' lines, language '+S.pack.language+', '+S.workflows+' workflows';
-$('mode').textContent=S.paused?'PAUSED':S.mode==='live'?'LIVE: sending for real':'DRY RUN: nothing is sent';$('mode').className='badge '+(S.paused?'paused':S.mode==='live'?'live':'dry');
-$('pause').textContent=S.paused?'Resume sending':'Pause all sending';$('pause').onclick=()=>api('/dash/api/pause',{method:'POST',body:JSON.stringify({on:!S.paused})}).then(load);
-render();lines()}
-$('t1').onclick=()=>{$('v1').hidden=false;$('v2').hidden=true;$('t1').className='tab on';$('t2').className='tab'};$('t2').onclick=()=>{$('v1').hidden=true;$('v2').hidden=false;$('t2').className='tab on';$('t1').className='tab'};
-$('q').oninput=()=>S&&render();$('kind').onchange=()=>S&&render();
-$('ask').onclick=async()=>{$('ask').disabled=true;try{const r=await api('/dash/api/phrases',{method:'POST',body:JSON.stringify({custom:{when:$('when').value,text:$('text').value}})});$('askmsg').textContent=r.message;if(r.sent){$('when').value='';$('text').value=''}}catch(e){$('askmsg').textContent=e.message}$('ask').disabled=false;load()};
-load();setInterval(load,15000);
-</script></body></html>"""
+from .ui import PAGE  # noqa: E402  (the page lives in ui.py)

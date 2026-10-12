@@ -118,3 +118,14 @@ def agent_config(business="YOUR-BUSINESS-NAME"):
             "twilio": {"account_sid": "env:TWILIO_ACCOUNT_SID", "auth_token": "env:TWILIO_AUTH_TOKEN", "from_number": "env:TWILIO_FROM"},
             "slack": {"bot_token": "env:SLACK_BOT_TOKEN", "signing_secret": "env:SLACK_SIGNING_SECRET", "channel": "#general", "channels": {}},
             "google_calendar": {"mode": "ics", "ics_url": "env:CALENDAR_ICS_URL"}, "teams": {}, "microsoft_calendar": {}, "inbox": {}, "sources": []}
+
+
+# Plain-language description of each ready-made workflow, shown in the dashboard and in the pack README.
+NICE = {"order_ready": "tells customers their order is ready", "order_delayed": "apologises for delays", "table_ready": "tells guests their table is ready", "reservation_created": "confirms reservations and adds them to your calendar",
+            "appointment_created": "confirms bookings and adds them to your calendar", "appointment_reminder_24h": "reminds people a day before (from Google Calendar)", "reservation_reminder_24h": "reminds guests a day before (from Google Calendar)",
+            "no_show_followup": "follows up after a no-show", "thanks_review": "thanks customers and asks for a review", "sms_hours": "answers 'what are your hours?' by text", "sms_directions": "answers 'where are you?' by text",
+            "sms_person": "passes 'I want a person' to your team on Slack or Teams", "phone_menu": "answers your phone with a menu (hours, booking, status, a person)", "daily_briefing": "posts today's bookings to Slack or Teams each morning",
+            "slack_say": "lets staff text a customer a pack line from Slack with /say", "order_received": "confirms new orders", "order_cancelled": "confirms cancellations", "sms_reschedule": "handles 'change my booking' texts", "email_hours": "answers 'what are your hours?' emails", "email_person": "passes emails that need a person to your team",
+            "email_ticket": "creates a helpdesk ticket from each customer email and confirms it", "ticket_update": "tells customers when their ticket changes", "customer_escalated": "alerts your team and reassures the customer when a case is escalated",
+            "callback_scheduled": "confirms a scheduled callback", "appointment_cancelled": "confirms cancellations", "appointment_changed": "confirms changes", "order_out_for_delivery": "tells customers their delivery is on its way"}
+

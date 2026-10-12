@@ -1,6 +1,8 @@
 """agent.json: where the pack is, which services to connect and the safety limits. Secrets are never written in the file: write "env:NAME" and put the value in an environment variable."""
 import json, os
 
+from . import secrets_store
+
 DEFAULTS = {
     "dry_run": True,                                   # nothing is sent until you turn this off on purpose
     "pack": "./pack", "workflows": "./workflows.json", "state_dir": "./agent-state",
@@ -19,20 +21,22 @@ class ConfigError(Exception):
     pass
 
 
-def resolve(v, missing=None):
+def resolve(v, missing=None, store=None):
     """env:NAME -> the variable's value. With a `missing` list, unset variables become "" and are recorded (used by check/slots so you can inspect a pack before keys exist); without it they raise."""
     if isinstance(v, str) and v.startswith("env:"):
         name = v[4:]
         val = os.environ.get(name)
+        if val is None and store:
+            val = store.get(name)                                  # a key typed into the dashboard
         if val is None:
             if missing is not None:
                 missing.append(name); return ""
             raise ConfigError(f"Environment variable {name} is not set (agent.json asks for it).")
         return val
     if isinstance(v, dict):
-        return {k: resolve(x, missing) for k, x in v.items()}
+        return {k: resolve(x, missing, store) for k, x in v.items()}
     if isinstance(v, list):
-        return [resolve(x, missing) for x in v]
+        return [resolve(x, missing, store) for x in v]
     return v
 
 
@@ -61,7 +65,9 @@ def load(path, lazy_secrets=False):
         if not os.path.isabs(cfg[k]):
             cfg[k] = os.path.normpath(os.path.join(base, cfg[k]))
     missing = [] if lazy_secrets else None
-    cfg = {k: (resolve(v, missing) if k not in ("pack", "workflows", "state_dir") else v) for k, v in cfg.items()}
+    store = secrets_store.read(cfg["state_dir"])
+    cfg = {k: (resolve(v, missing, store) if k not in ("pack", "workflows", "state_dir") else v) for k, v in cfg.items()}
+    cfg["_path"] = os.path.abspath(path)
     if lazy_secrets:
         cfg["_missing_env"] = sorted(set(missing))
     return cfg

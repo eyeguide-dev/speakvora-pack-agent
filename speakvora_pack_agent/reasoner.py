@@ -42,20 +42,29 @@ def build_user(task, inputs, contacts, allow, channels, hosts, max_chars, redact
     return redact(body, redact_kinds)[:max_chars]
 
 
-def ask(cfg, user):
-    """One model call. Returns (text, usage). Raises web.HttpError / web.NetworkDown like every other send."""
-    prov = str(cfg.get("provider") or "openai").lower(); timeout = int(cfg.get("timeout", 45)); key = cfg.get("api_key", "")
+def _chat(cfg, system, user, max_tokens=None):
+    prov = str(cfg.get("provider") or "openai").lower(); timeout = int(cfg.get("timeout", 45)); key = cfg.get("api_key", ""); mt = int(max_tokens or cfg.get("max_tokens", 900))
     if prov == "anthropic":
         base = str(cfg.get("base_url") or "https://api.anthropic.com").rstrip("/")
         _st, r = web.request("POST", base + "/v1/messages", {"x-api-key": key, "anthropic-version": "2023-06-01"},
-                             body={"model": cfg["model"], "max_tokens": int(cfg.get("max_tokens", 900)), "temperature": 0, "system": SYSTEM, "messages": [{"role": "user", "content": user}]}, timeout=timeout)
+                             body={"model": cfg["model"], "max_tokens": mt, "temperature": 0, "system": system, "messages": [{"role": "user", "content": user}]}, timeout=timeout)
         return "".join(b.get("text", "") for b in (r or {}).get("content", []) if b.get("type") == "text"), (r or {}).get("usage") or {}
     base = str(cfg.get("base_url") or "https://api.openai.com/v1").rstrip("/")
     h = {"authorization": "Bearer " + key} if key else {}
-    _st, r = web.request("POST", base + "/chat/completions", h, body={"model": cfg["model"], "temperature": 0, "max_tokens": int(cfg.get("max_tokens", 900)),
-                                                                       "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]}, timeout=timeout)
+    _st, r = web.request("POST", base + "/chat/completions", h, body={"model": cfg["model"], "temperature": 0, "max_tokens": mt,
+                                                                       "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}, timeout=timeout)
     ch = ((r or {}).get("choices") or [{}])[0]
     return (ch.get("message") or {}).get("content") or "", (r or {}).get("usage") or {}
+
+
+def ask(cfg, user):
+    """One model call. Returns (text, usage). Raises web.HttpError / web.NetworkDown like every other send."""
+    return _chat(cfg, SYSTEM, user)
+
+
+def ping(cfg):
+    """The dashboard's AI test: a tiny harmless question, a few tokens. Returns the model's short answer."""
+    return _chat(cfg, "You are a connection test.", "Reply with the single word OK.", 8)[0]
 
 
 class BadAnswer(ValueError):

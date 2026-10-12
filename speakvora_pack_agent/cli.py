@@ -53,7 +53,7 @@ def main(argv=None):
             json.dump(doc, open(name, "w", encoding="utf-8"), ensure_ascii=False, indent=1); print("wrote", name)
         print(f"industry profile: {prof}. Next: fill in the YOUR-... values in agent.json, then run:  python -m speakvora_pack_agent check")
         return 0
-    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events") or (a.cmd == "queue" and a.action != "flush") or a.cmd == "jobs" or (a.cmd == "proposals" and a.action != "approve"))
+    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events", "run") or (a.cmd == "queue" and a.action != "flush") or a.cmd == "jobs" or (a.cmd == "proposals" and a.action != "approve"))
     if a.cmd == "doctor":
         from . import doctor
         return doctor.run(cfg)
@@ -77,6 +77,8 @@ def main(argv=None):
     if a.cmd == "run":
         if a.live:
             cfg["dry_run"] = False
+        if cfg.get("_missing_env"):
+            print("not connected yet (open the dashboard's Connect tab to add them): " + ", ".join(cfg["_missing_env"]))
         ag = Agent(cfg)
         srv = serve(ag)
         from . import dashboard

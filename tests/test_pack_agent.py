@@ -1,5 +1,6 @@
 """The pack agent against fake Twilio, Slack and Google: every connector, every safety rule, the restaurant workflows and the signed web endpoints."""
 import base64, datetime as dt, hashlib, hmac, json, os, shutil, sys, tempfile, threading, unittest, urllib.error, urllib.parse, urllib.request
+os.environ.setdefault("SPEAKVORA_HOST", "http://127.0.0.1:9")            # tests never reach the real Speakvora
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT); sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(ROOT, "examples", "restaurant"))
 from mocks import Mock
@@ -492,7 +493,7 @@ class Dashboard(unittest.TestCase):
             return e.code, json.loads(e.read() or b"{}"), dict(e.headers)
 
     def test_page_is_public_but_every_api_call_needs_the_token(self):
-        st, page, hdr = self.call("GET", "/dashboard", tok=False); self.assertEqual(st, 200); self.assertIn("Pack agent", page); self.assertIn("default-src 'none'", hdr["content-security-policy"]); self.assertNotIn("http://", page.replace("http://127", ""))
+        st, page, hdr = self.call("GET", "/dashboard", tok=False); self.assertEqual(st, 200); self.assertIn("speakvora", page); self.assertIn("Your voice bundle", page); self.assertIn("default-src 'none'", hdr["content-security-policy"]); self.assertNotIn("http://", page.replace("http://127", "").replace("http://www.w3.org/2000/svg", ""))
         self.assertEqual(self.call("GET", "/dash/api/summary", tok=False)[0], 401); self.assertEqual(self.call("GET", "/dash/api/summary", tok=False, headers={"x-dashboard-token": "nope"})[0], 401)
         st, s, _ = self.call("GET", "/dash/api/summary"); self.assertEqual(st, 200); self.assertEqual(s["mode"], "live"); self.assertNotIn(TOKEN, json.dumps(s)); self.assertNotIn("xoxb-1", json.dumps(s))
 
@@ -531,7 +532,7 @@ class Dashboard(unittest.TestCase):
             self.assertEqual(self.call("POST", "/dash/api/phrases", {"slots": ["not_a_slot"]})[0], 400)
             st, s, _ = self.call("GET", "/dash/api/summary"); self.assertTrue(s["can_send_requests"]); self.assertEqual(len(s["requests"]), 2)
         finally:
-            os.environ.pop("SPEAKVORA_KEY", None); os.environ.pop("SPEAKVORA_HOST", None)
+            os.environ.pop("SPEAKVORA_KEY", None); os.environ["SPEAKVORA_HOST"] = "http://127.0.0.1:9"
 
 
 class Reasoning(unittest.TestCase):
@@ -631,6 +632,249 @@ class Reasoning(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             cli.main(["proposals", "list", "-c", cfgp]); cli.main(["proposals", "reject", jid, "--only", "1", "-c", cfgp])
         out = buf.getvalue(); self.assertIn("Ann should get a refund", out); self.assertIn("sms", out); r.close()
+
+
+class ConnectTab(unittest.TestCase):
+    """The Connect tab: a person who is not a developer sets everything up from the dashboard, sees failures in plain words and goes live when ready."""
+    def setUp(self):
+        self.r = Rig(dry=True); self.srv = serve(self.r.agent, "127.0.0.1", 0); self.port = self.srv.server_address[1]; threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        from speakvora_pack_agent import dashboard
+        self.tok = dashboard.token(self.r.agent)
+
+    def tearDown(self):
+        self.srv.shutdown(); self.srv.server_close(); self.r.close()
+
+    def call(self, method, path, body=None, tok=True):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=json.dumps(body).encode() if body is not None else (b"{}" if method == "POST" else None), method=method, headers={"x-dashboard-token": self.tok} if tok else {})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as x:
+                return x.status, json.loads(x.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+
+    def card(self, name):
+        return next(c for c in self.call("GET", "/dash/api/setup")[1]["cards"] if c["name"] == name)
+
+    def test_needs_the_token_and_never_returns_a_secret(self):
+        self.assertEqual(self.call("GET", "/dash/api/setup", tok=False)[0], 401)
+        st, s = self.call("GET", "/dash/api/setup"); self.assertEqual(st, 200); txt = json.dumps(s)
+        for secret in (TOKEN, "xoxb-1", SLACK_SECRET, "ya29"): self.assertNotIn(secret, txt)
+        self.assertEqual([c["name"] for c in s["cards"]], ["business", "twilio", "slack", "teams", "calendar", "email", "ai"])
+        tw = self.card("twilio"); self.assertTrue(tw["connected"]); self.assertTrue(next(f for f in tw["fields"] if f["key"] == "auth_token")["set"]); self.assertTrue(next(f for f in tw["fields"] if f["key"] == "auth_token")["hint"].endswith(TOKEN[-4:]))
+
+    def test_saving_a_card_stores_keys_privately_applies_at_once_and_keeps_old_ones_when_the_box_is_empty(self):
+        st, r = self.call("POST", "/dash/api/setup/save", {"card": "teams", "values": {"webhook_url": "https://example.test/teams-hook/abc123456789"}}); self.assertEqual(st, 200)
+        sd = self.r.agent.state.dir; sec = json.load(open(os.path.join(sd, "secrets.json"))); self.assertEqual(sec["TEAMS_WEBHOOK_URL"], "https://example.test/teams-hook/abc123456789"); self.assertEqual(oct(os.stat(os.path.join(sd, "secrets.json")).st_mode & 0o777), "0o600")
+        raw = json.load(open(self.r.agent.cfg["_path"])); self.assertEqual(raw["teams"]["webhook_url"], "env:TEAMS_WEBHOOK_URL"); self.assertNotIn("abc123456789", json.dumps(raw)); self.assertTrue(self.r.agent.teams.configured)       # applied without a restart
+        self.assertTrue(os.path.exists(self.r.agent.cfg["_path"] + ".bak"))
+        self.call("POST", "/dash/api/setup/save", {"card": "teams", "values": {"webhook_url": ""}}); self.assertTrue(self.r.agent.teams.configured)
+        st, r = self.call("POST", "/dash/api/setup/save", {"card": "business", "values": {"business": "Bella Trattoria", "hours": "Tue to Sun 5 to 10", "mode": "strict"}}); self.assertEqual(self.r.agent.cfg["business"], "Bella Trattoria"); self.assertEqual(self.r.agent.cfg["facts"]["hours"], "Tue to Sun 5 to 10")
+
+    def test_bad_input_is_explained_not_saved(self):
+        st, r = self.call("POST", "/dash/api/setup/save", {"card": "twilio", "values": {"from_number": "555-1234"}}); self.assertEqual(st, 400); self.assertIn("country code", r["message"])
+        self.assertEqual(self.call("POST", "/dash/api/setup/save", {"card": "business", "values": {"public_base_url": "ftp://nope"}})[0], 400)
+        self.assertEqual(self.call("POST", "/dash/api/setup/save", {"card": "nonsense", "values": {}})[0], 400)
+        self.assertEqual(self.call("POST", "/dash/api/setup/save", {"card": "business", "values": {"mode": "reckless"}})[0], 400)
+
+    def test_tests_say_in_plain_words_what_works_and_what_to_fix(self):
+        st, r = self.call("POST", "/dash/api/setup/test", {"card": "twilio", "opts": {}}); self.assertTrue(r["ok"]); self.assertIn("Bella Co", r["message"])
+        self.r.mock.no_numbers = True; st, r = self.call("POST", "/dash/api/setup/test", {"card": "twilio", "opts": {}}); self.assertFalse(r["ok"]); self.assertIn("not a number on that account", r["message"]); self.r.mock.no_numbers = False
+        self.r.mock.fail["Accounts"] = 401; st, r = self.call("POST", "/dash/api/setup/test", {"card": "twilio", "opts": {}}); self.assertFalse(r["ok"]); self.assertIn("not accepted", r["message"]); self.r.mock.fail.clear()
+        st, r = self.call("POST", "/dash/api/setup/test", {"card": "slack", "opts": {}}); self.assertTrue(r["ok"]); self.assertEqual(self.r.mock.calls("chat.postMessage"), [])                       # checking does not post
+        st, r = self.call("POST", "/dash/api/setup/test", {"card": "slack", "opts": {"post": True}}); self.assertIn("test message was posted", r["message"]); self.assertEqual(len(self.r.mock.calls("chat.postMessage")), 1)
+        self.r.mock.bad_slack = True; st, r = self.call("POST", "/dash/api/setup/test", {"card": "slack", "opts": {}}); self.assertFalse(r["ok"]); self.assertIn("did not accept", r["message"]); self.r.mock.bad_slack = False
+        self.assertFalse(self.call("POST", "/dash/api/setup/test", {"card": "teams", "opts": {}})[1]["ok"])                                                                                   # not connected yet: told to fill it in
+        self.assertFalse(self.call("POST", "/dash/api/setup/test", {"card": "ai", "opts": {}})[1]["ok"])
+
+    def test_ai_reasoning_card_tests_the_key_and_enables_reasoning(self):
+        self.call("POST", "/dash/api/setup/save", {"card": "ai", "values": {"provider": "openai", "base_url": self.r.mock.url, "api_key": "sk-abc12345", "model": "my-model"}}); self.assertTrue(self.card("ai")["connected"])
+        self.r.mock.model_text = "OK"; st, r = self.call("POST", "/dash/api/setup/test", {"card": "ai", "opts": {}}); self.assertTrue(r["ok"]); self.assertIn("OK", r["message"])
+        q = [x for x in self.r.mock.requests if x["path"].endswith("/chat/completions")][-1]; self.assertEqual(q["auth"], "Bearer sk-abc12345"); self.assertEqual(q["json"]["model"], "my-model"); self.assertLess(q["json"]["max_tokens"], 20)
+        self.assertNotIn("sk-abc12345", open(self.r.agent.cfg["_path"]).read()); self.assertEqual(self.card("ai")["fields"][2]["hint"], "...2345")
+        self.call("POST", "/dash/api/setup/save", {"card": "ai", "values": {"provider": "local"}}); self.assertEqual(self.r.agent.cfg["reasoner"]["provider"], "openai")
+
+    def test_workflows_can_be_switched_on_and_off_and_say_what_they_need(self):
+        st, s = self.call("GET", "/dash/api/setup"); wf = {w["name"]: w for w in s["workflows"]}; self.assertIn("order_ready", wf); self.assertEqual(sorted(wf["order_ready"]["needs"]), ["slack", "twilio"]); self.assertEqual(wf["order_ready"]["missing"], [])
+        self.assertTrue(wf["order_ready"]["what"]); self.assertEqual(self.call("POST", "/dash/api/setup/workflow", {"name": "order_ready", "enabled": False})[0], 200)
+        self.assertNotIn("order_ready", [w["name"] for w in self.r.agent.workflows]); self.assertFalse(next(w for w in json.load(open(self.r.agent.cfg["workflows"]))["workflows"] if w["name"] == "order_ready")["enabled"])
+        self.assertEqual(self.r.agent.handle_event({"event": "order.ready", "id": "x1", "customer": CUST, "order": {"number": 1}})["matched"], 0)
+        self.call("POST", "/dash/api/setup/workflow", {"name": "order_ready", "enabled": True}); self.assertIn("order_ready", [w["name"] for w in self.r.agent.workflows]); self.assertEqual(self.call("POST", "/dash/api/setup/workflow", {"name": "nope", "enabled": True})[0], 400)
+
+    def test_going_live_needs_a_checklist_and_is_remembered(self):
+        st, s = self.call("GET", "/dash/api/setup"); self.assertFalse(s["live"]); self.assertFalse(s["readiness"]["ok"])
+        st, r = self.call("POST", "/dash/api/setup/live", {"on": True}); self.assertEqual(st, 400); self.assertIn("passed its test", r["message"]); self.assertTrue(self.r.agent.dry)
+        for card, opts in (("twilio", {}), ("slack", {}), ("calendar", {})): self.call("POST", "/dash/api/setup/test", {"card": card, "opts": opts})
+        st, s = self.call("GET", "/dash/api/setup"); self.assertTrue(s["readiness"]["ok"], s["readiness"])
+        self.assertEqual(self.call("POST", "/dash/api/setup/live", {"on": True})[0], 200); self.assertFalse(self.r.agent.dry)
+        self.r.agent.handle_event({"event": "order.ready", "id": "live-1", "customer": CUST, "order": {"number": 5}}); self.assertEqual(len(self.r.mock.calls("Messages.json")), 1)
+        again = Agent(config.load(os.path.join(self.r.tmp, "agent.json")), now=lambda: self.r.now[0]); self.assertFalse(again.dry)                          # still live after a restart
+        self.call("POST", "/dash/api/setup/live", {"on": False}); self.assertTrue(self.r.agent.dry); self.assertTrue(Agent(config.load(os.path.join(self.r.tmp, "agent.json")), now=lambda: self.r.now[0]).dry)
+
+    def test_changing_a_connected_service_asks_for_a_new_test_before_going_live(self):
+        for card in ("twilio", "slack", "calendar"): self.call("POST", "/dash/api/setup/test", {"card": card, "opts": {}})
+        self.assertTrue(self.call("GET", "/dash/api/setup")[1]["readiness"]["ok"]); self.call("POST", "/dash/api/setup/save", {"card": "twilio", "values": {"from_number": "+15550002222"}})
+        self.assertFalse(self.call("GET", "/dash/api/setup")[1]["readiness"]["ok"])
+
+    def test_keys_from_the_dashboard_work_for_a_fresh_start_and_environment_variables_win(self):
+        from speakvora_pack_agent import secrets_store
+        sd = self.r.agent.state.dir; secrets_store.set_value(sd, "SV_TEST_KEY", "from-file"); raw = json.load(open(self.r.agent.cfg["_path"])); raw["slack"]["bot_token"] = "env:SV_TEST_KEY"; json.dump(raw, open(self.r.agent.cfg["_path"], "w"))
+        self.assertEqual(config.load(self.r.agent.cfg["_path"])["slack"]["bot_token"], "from-file"); os.environ["SV_TEST_KEY"] = "from-env"
+        try: self.assertEqual(config.load(self.r.agent.cfg["_path"])["slack"]["bot_token"], "from-env")
+        finally: os.environ.pop("SV_TEST_KEY", None)
+
+    def test_slack_manifest_lists_your_slash_commands_and_tools_can_be_added(self):
+        s = self.call("GET", "/dash/api/setup")[1]; m = s["slack_manifest"]; self.assertIn("/say", [c["command"] for c in m["features"]["slash_commands"]]); self.assertIn("chat:write", m["oauth_config"]["scopes"]["bot"])
+        self.assertIn("github", [x["name"] for x in s["sources"]]); st, r = self.call("POST", "/dash/api/setup/source", {"name": "github"}); self.assertEqual(st, 200); self.assertIn("github", [x["name"] for x in json.load(open(self.r.agent.cfg["_path"]))["sources"]])
+        self.assertEqual(self.call("POST", "/dash/api/setup/source", {"name": "../../etc/passwd"})[0], 400)
+
+    def test_the_event_secret_is_made_for_you(self):
+        s = self.call("GET", "/dash/api/setup")[1]; self.assertTrue(s["event_url"].endswith("/event")); self.assertEqual(json.load(open(self.r.agent.cfg["_path"]))["events"]["secret"], "env:SV_EVENT_SECRET")
+
+
+class AskOrAuto(unittest.TestCase):
+    """Approve, decline or let it decide: what the person chose is remembered and applied to the next one."""
+    def rig(self, ask=("sms",)):
+        r = Rig(); r.agent.set_policy(ask_before=list(ask)); return r
+
+    def send(self, r, n):
+        return r.event("order.ready", customer=CUST, order={"number": n}, id=f"ev-{n}")
+
+    def sms(self, r):
+        return [j for j in r.agent.state.jobs() if j["kind"] == "sms"]
+
+    def test_a_text_waits_for_a_click_and_other_sends_do_not(self):
+        r = self.rig(); self.send(r, 1); j = self.sms(r)[0]; self.assertEqual(j["status"], "needs_approval"); self.assertEqual(r.mock.calls("Messages.json"), []); self.assertEqual(len(r.mock.calls("chat.postMessage")), 1)
+        r.agent.approve_job(j["id"]); self.assertEqual(self.sms(r)[0]["status"], "sent"); self.assertEqual(len(r.mock.calls("Messages.json")), 1)
+        with self.assertRaises(PermissionError): r.agent.approve_job(j["id"]); r.close()
+
+    def test_decline_stops_it_and_remember_makes_the_next_ones_automatic_or_never(self):
+        r = self.rig(); self.send(r, 2); r.agent.decline_job(self.sms(r)[0]["id"]); self.assertEqual(self.sms(r)[0]["status"], "cancelled"); self.assertEqual(r.mock.calls("Messages.json"), [])
+        self.send(r, 3); j = [x for x in self.sms(r) if x["status"] == "needs_approval"][0]; r.agent.approve_job(j["id"], remember=True); self.assertEqual(r.agent.policy()["decisions"], {"order_ready:sms": "auto"})
+        self.send(r, 4); self.assertEqual([x["status"] for x in self.sms(r)][-1], "sent"); self.assertEqual(len(r.mock.calls("Messages.json")), 2)                    # sent by itself now
+        r.agent.set_policy(decision=("order_ready:sms", "never")); self.send(r, 5); self.assertEqual(len(r.mock.calls("Messages.json")), 2); self.assertEqual(self.sms(r)[-1]["status"], "cancelled")
+        r.agent.set_policy(reset="order_ready:sms"); self.send(r, 6); self.assertEqual(self.sms(r)[-1]["status"], "needs_approval"); r.close()
+
+    def test_an_old_approval_is_dropped_instead_of_sent_late(self):
+        r = self.rig(); self.send(r, 7); j = self.sms(r)[0]; r.now[0] += 25 * 3600
+        with self.assertRaises(PermissionError): r.agent.approve_job(j["id"])
+        self.assertEqual(self.sms(r)[0]["status"], "expired"); self.assertEqual(r.mock.calls("Messages.json"), []); r.close()
+
+    def test_failed_jobs_can_be_dismissed(self):
+        r = Rig(); r.mock.fail["Messages.json"] = 400; r.event("order.ready", customer=CUST, order={"number": 8}); j = [x for x in r.agent.state.jobs() if x["kind"] == "sms"][0]; self.assertEqual(j["status"], "failed")
+        self.assertEqual(r.agent.cancel_job(j["id"])["status"], "cancelled"); r.close()
+
+    def test_the_page_api_shows_plain_titles_and_handles_approve_decline_and_policy(self):
+        r = self.rig(); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start(); self.send(r, 9)
+        from speakvora_pack_agent import dashboard
+        def call(path, body=None):
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None, method="POST" if body is not None else "GET", headers={"x-dashboard-token": dashboard.token(r.agent)})
+            with urllib.request.urlopen(req, timeout=10) as x: return json.loads(x.read())
+        j = [x for x in call("/dash/api/jobs")["jobs"] if x["kind"] == "sms"][0]; self.assertEqual(j["title"], "Text message to Ann Lee"); self.assertEqual(j["label"], "Waiting for you"); self.assertTrue(j["needs_you"]); self.assertIn("order 9 is ready", j["quote"]); self.assertTrue(j["what"])
+        self.assertEqual(call(f"/dash/api/jobs/{j['id']}/approve", {"remember": True})["job"]["status"], "sent"); self.assertEqual(len(r.mock.calls("Messages.json")), 1)
+        pol = call("/dash/api/policy"); self.assertEqual(pol["decisions"][0]["choice"], "auto"); self.assertEqual(pol["ask_before"], ["sms"]); self.assertEqual([k["kind"] for k in pol["kinds"]], ["sms", "call", "email"])
+        self.assertEqual(call("/dash/api/policy", {"ask_before": ["sms", "call"], "reset": "order_ready:sms"})["decisions"], []); self.assertEqual(r.agent.policy()["ask_before"], ["sms", "call"])
+        srv.shutdown(); srv.server_close(); r.close()
+
+    def test_saved_choices_apply_to_ai_proposals_too(self):
+        rr = Reasoning(); r = rr.rig(); r.agent.handle_event(rr.EVENT); j = rr.job(r); r.agent.execute_proposals(j["id"], [1], remember=True); self.assertEqual(r.agent.policy()["decisions"], {"refund_review:slack": "auto"})
+        r.agent.reject_proposals(j["id"], [0], remember=True); self.assertEqual(r.agent.policy()["decisions"]["refund_review:sms"], "never")
+        n = len(r.mock.calls("chat.postMessage")); r.agent.handle_event(dict(rr.EVENT, id="rv-2")); j2 = [x for x in r.agent.state.jobs() if x["kind"] == "reason"][-1]
+        self.assertEqual([p["state"] for p in j2["result"]["proposals"]], ["rejected", "done"]); self.assertGreater(len(r.mock.calls("chat.postMessage")), n); self.assertEqual(r.mock.calls("Messages.json"), []); r.close()
+
+
+class Sharing(unittest.TestCase):
+    """Missing lines go to Speakvora (only when agreed), once, with no customer data; newer pack versions are noticed."""
+    def rig(self):
+        r = Rig(); os.environ["SPEAKVORA_HOST"] = r.mock.url; r.agent.pack.slots.pop("directions_intro", None); r.agent.pack.slots.pop("no_show_followup", None); return r
+
+    def tearDown(self):
+        os.environ["SPEAKVORA_HOST"] = "http://127.0.0.1:9"
+
+    def test_nothing_is_sent_until_the_person_agrees_then_once_a_day(self):
+        from speakvora_pack_agent import sharing
+        r = self.rig(); self.assertIsNone(sharing.enabled(r.agent)); sharing.auto(r.agent); self.assertEqual(r.mock.calls("slot-requests"), [])
+        sharing.set_enabled(r.agent, True); res = sharing.auto(r.agent); self.assertTrue(res["sent"]); q = r.mock.calls("slot-requests"); self.assertEqual(len(q), 1)
+        self.assertEqual(sorted(s["slot"] for s in q[0]["json"]["slots"]), ["directions_intro", "no_show_followup"]); doc = json.dumps(q[0]["json"]); self.assertNotIn("Ann", doc); self.assertNotIn(TOKEN, doc); self.assertEqual(q[0]["json"]["kind"], "workflow_line_request")
+        r.now[0] += 25 * 3600; self.assertIsNone(sharing.auto(r.agent)); self.assertEqual(len(r.mock.calls("slot-requests")), 1); self.assertEqual(sharing.pending(r.agent), []); r.close()
+
+    def test_offline_it_is_kept_and_asked_again_later(self):
+        from speakvora_pack_agent import sharing
+        r = self.rig(); sharing.set_enabled(r.agent, True); os.environ["SPEAKVORA_HOST"] = "http://127.0.0.1:9"; res = sharing.auto(r.agent); self.assertFalse(res["sent"]); self.assertIn("sent again later", res["message"]); self.assertEqual(len(sharing.pending(r.agent)), 2)
+        os.environ["SPEAKVORA_HOST"] = r.mock.url; r.now[0] += 25 * 3600; self.assertTrue(sharing.auto(r.agent)["sent"]); r.close()
+
+    def test_an_api_key_is_sent_when_there_is_one_and_a_typed_request_is_always_sent(self):
+        from speakvora_pack_agent import sharing
+        r = self.rig(); os.environ["SPEAKVORA_KEY"] = "k-1"
+        try:
+            res = sharing.submit(r.agent, [{"slot": "custom_my_line", "intent": "when a customer asks about parking", "example": "Parking is free for two hours."}]); self.assertTrue(res["sent"]); self.assertEqual(r.mock.calls("slot-requests")[-1]["headers"].get("x-api-key"), "k-1")
+        finally: os.environ.pop("SPEAKVORA_KEY", None)
+        r.close()
+
+    def test_the_library_page_api_and_update_notice(self):
+        r = self.rig(); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start()
+        from speakvora_pack_agent import dashboard
+        def call(path, body=None):
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None, method="POST" if body is not None else "GET", headers={"x-dashboard-token": dashboard.token(r.agent)})
+            with urllib.request.urlopen(req, timeout=10) as x: return json.loads(x.read())
+        r.agent.pack.meta["version"] = "2026.10.01"; r.mock.latest_version = "2026.10.20"
+        lib = call("/dash/api/library"); self.assertIsNone(lib["share"]); self.assertEqual(len(lib["coverage"]["missing"]), 2); self.assertTrue(lib["update"]["available"]); self.assertEqual(lib["update"]["latest"], "2026.10.20")
+        lib = call("/dash/api/library/share", {"on": True}); self.assertTrue(lib["share"]); self.assertEqual(len(lib["requested"]), 2); self.assertEqual(lib["pending"], [])
+        self.assertTrue(call("/dash/api/policy", {"share_phrases": False})["share_phrases"] is False); srv.shutdown(); srv.server_close(); r.close()
+
+
+class Connections(unittest.TestCase):
+    """Your own apps: send to them with a key, tell them what workflows did, and let them send events here."""
+    def setUp(self):
+        self.r = Rig(); self.srv = serve(self.r.agent, "127.0.0.1", 0); self.port = self.srv.server_address[1]; threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        from speakvora_pack_agent import dashboard
+        self.tok = dashboard.token(self.r.agent)
+
+    def tearDown(self):
+        self.srv.shutdown(); self.srv.server_close(); self.r.close()
+
+    def call(self, path, body=None, method=None, headers=None):
+        h = {"x-dashboard-token": self.tok}; h.update(headers or {})
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=json.dumps(body).encode() if body is not None else None, method=method or ("POST" if body is not None else "GET"), headers=h)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as x: return x.status, json.loads(x.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+
+    def add(self, **kw):
+        v = {"name": "My order system", "url": self.r.mock.url + "/my-app/hook", "auth_type": "bearer", "secret": "tok-123456"}; v.update(kw)
+        return self.call("/dash/api/setup/connection", v)
+
+    def test_a_custom_app_is_saved_with_its_key_kept_private_and_can_be_tested(self):
+        st, r = self.add(); self.assertEqual(st, 200); self.assertEqual(r["outgoing"][0]["id"], "my-order-system")
+        raw = json.load(open(self.r.agent.cfg["_path"])); self.assertEqual(raw["connections"][0]["auth"]["secret"], "env:CONN_MY_ORDER_SYSTEM_KEY"); self.assertNotIn("tok-123456", json.dumps(raw))
+        self.assertEqual(json.load(open(os.path.join(self.r.agent.state.dir, "secrets.json")))["CONN_MY_ORDER_SYSTEM_KEY"], "tok-123456")
+        st, t = self.call("/dash/api/setup/connection/test", {"id": "my-order-system"}); self.assertTrue(t["ok"]); q = self.r.mock.calls("/hook")[-1]; self.assertEqual(q["auth"], "Bearer tok-123456"); self.assertTrue(q["json"]["test"])
+        self.add(name="Header app", auth_type="header", header="X-Api-Key", secret="k9"); self.call("/dash/api/setup/connection/test", {"id": "header-app"}); self.assertEqual(self.r.mock.calls("/hook")[-1]["headers"]["x-api-key"], "k9")
+
+    def test_bad_input_is_explained(self):
+        self.assertEqual(self.add(url="ftp://x")[0], 400); self.assertEqual(self.add(url="http://example.com/x")[0], 400); self.assertEqual(self.add(name="")[0], 400); self.assertEqual(self.add(secret="")[0], 400); self.assertEqual(self.add(auth_type="header", header="bad header!")[0], 400)
+
+    def test_a_workflow_can_also_tell_your_app_what_it_did(self):
+        self.add(); st, r = self.call("/dash/api/setup/workflow-targets", {"name": "order_ready", "ids": ["my-order-system"]}); self.assertEqual(st, 200); self.assertEqual(next(w for w in r["workflows"] if w["name"] == "order_ready")["also"], ["my-order-system"])
+        self.r.event("order.ready", customer=CUST, order={"number": 11}, id="mir-1"); q = self.r.mock.calls("/hook"); self.assertEqual(len(q), 1); b = q[0]["json"]; self.assertEqual((b["workflow"], b["source"]), ("order_ready", "speakvora-pack-agent")); self.assertEqual(b["order"]["number"], 11); self.assertIn("sms", [x["action"] for x in b["results"]])
+        self.assertEqual(q[0]["auth"], "Bearer tok-123456"); self.assertEqual(len([j for j in self.r.agent.state.jobs() if j["kind"] == "http"]), 1); self.r.event("order.ready", customer=CUST, order={"number": 11}, id="mir-1"); self.assertEqual(len(self.r.mock.calls("/hook")), 1)   # the same event is never mirrored twice
+
+    def test_removing_a_connection_removes_its_key_and_its_workflow_links(self):
+        self.add(); self.call("/dash/api/setup/workflow-targets", {"name": "order_ready", "ids": ["my-order-system"]}); st, r = self.call("/dash/api/setup/connection/remove", {"id": "my-order-system"}); self.assertEqual(r["outgoing"], [])
+        self.assertNotIn("CONN_MY_ORDER_SYSTEM_KEY", json.load(open(os.path.join(self.r.agent.state.dir, "secrets.json")))); self.assertNotIn("also_send_to", next(w for w in json.load(open(self.r.agent.cfg["workflows"]))["workflows"] if w["name"] == "order_ready"))
+
+    def test_your_app_or_zapier_can_send_events_here_with_a_private_token(self):
+        st, r = self.call("/dash/api/setup/incoming", {"name": "Zapier"}); self.assertEqual(st, 200); self.assertEqual(r["id"], "custom-zapier"); self.assertTrue(r["url"].endswith("/hook/custom-zapier")); tok = r["token"]
+        body = {"event": "order.ready", "id": "z-1", "customer": {"name": "Ann Lee", "phone": "646-555-0101", "sms_consent": True}, "order": {"number": 12}}
+        st, _ = self.call("/hook/custom-zapier", body, headers={"Authorization": "Bearer wrong"}); self.assertEqual(st, 401); self.assertEqual(self.r.mock.calls("Messages.json"), [])
+        st, out = self.call("/hook/custom-zapier", body, headers={"Authorization": "Bearer " + tok}); self.assertEqual(st, 200); self.assertEqual(out["matched"], 1); self.assertEqual(len(self.r.mock.calls("Messages.json")), 1)
+        st, shown = self.call("/dash/api/setup/incoming/show", {"id": "custom-zapier"}); self.assertEqual(shown["token"], tok); self.assertIn("order.ready", shown["events"])
+        self.call("/dash/api/setup/incoming/remove", {"id": "custom-zapier"}); self.assertEqual(self.call("/hook/custom-zapier", body, headers={"Authorization": "Bearer " + tok})[0], 404)
+
+    def test_the_add_menu_offers_services_tools_and_your_own_apps(self):
+        st, c = self.call("/dash/api/setup/catalog"); kinds = {t["kind"] for t in c["tiles"]}; self.assertEqual(kinds, {"service", "tool", "custom_out", "custom_in"}); names = [t["name"] for t in c["tiles"]]
+        for n in ("Slack", "Microsoft Teams", "Texts and calls (Twilio)", "GitHub", "Shopify", "Send to my own app", "Let my app send events here"): self.assertIn(n, names)
+        self.assertTrue(all(len(t["blurb"]) < 60 for t in c["tiles"]))
 
 
 class Languages(unittest.TestCase):

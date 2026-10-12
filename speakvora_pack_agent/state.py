@@ -67,10 +67,10 @@ class State:
 
     def _prune(self):
         cutoff, jobs = self.now() - self.FINAL_KEEP_DAYS * 86400, self.data["jobs"]
-        for k in [k for k, j in jobs.items() if j["status"] not in ("pending", "sending", "queued", "needs_review") and j["updated"] < cutoff]:
+        for k in [k for k, j in jobs.items() if j["status"] not in ("pending", "sending", "queued", "needs_review", "needs_approval", "proposed") and j["updated"] < cutoff]:
             del jobs[k]
         while len(jobs) > self.MAX_JOBS:
-            old = next((k for k, j in jobs.items() if j["status"] not in ("pending", "sending", "queued", "needs_review")), None)
+            old = next((k for k, j in jobs.items() if j["status"] not in ("pending", "sending", "queued", "needs_review", "needs_approval", "proposed")), None)
             if old is None:
                 break
             del jobs[old]

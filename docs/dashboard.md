@@ -1,27 +1,33 @@
-# The local dashboard
+# The dashboard
 
-A small page that runs inside your agent (nothing is installed, nothing leaves your machine). It shows what the agent is doing for THIS pack and lets you act on it.
+A small page that runs inside your agent, on your own machine. Start the agent and open the address it prints (`.../dashboard#token=...`). The part after `#` is your access token: it never goes to a server and never appears in a log. It is kept in `agent-state/dashboard-token`, or set your own with `SV_DASHBOARD_TOKEN`.
 
-Start the agent as usual (`python -m speakvora_pack_agent run`). It prints a line like
+Four places (a bar at the bottom on a phone, at the top on a computer):
 
-    dashboard: http://127.0.0.1:8787/dashboard#token=...
+## Home: what needs you
+A plain card for everything that needs a decision, with big buttons:
+* **Approve / Decline** for an action the agent is holding (see Settings > Ask me first) and for each suggestion from your AI. Switch on **Remember my choice** and the same kind of action is done automatically next time (or never, if you declined). Saved choices are listed in Settings and can be reset.
+* **It arrived / It did not: send again** when the agent could not tell whether something arrived.
+* **Try again / Dismiss** for something that failed, with the reason in plain words.
+Below that: what is waiting for the internet, and **What the agent has done**, a simple feed in sentences ("Text message to Ann Lee: Delivered") with filters for Problems, Texts, Calls, Slack and Teams, Email and My apps. Tap an item for the details.
 
-Open that address on the same machine. The part after `#` is your access token. It never goes to a server and never appears in a log. The token is kept in `agent-state/dashboard-token` (mode 600), or set your own with the environment variable `SV_DASHBOARD_TOKEN`. Every `/dash/api` call needs it; the page itself holds no data.
+## Connect: your connections
+Everything you have connected, and a **+ Add** button to add more at any time: Slack (with a ready-made app manifest), Microsoft Teams, texts and calls (Twilio), Google or Outlook calendar, email, AI reasoning with your own key, tools that start workflows (Shopify, GitHub, GitLab, PagerDuty, Stripe, Calendly, point of sale), and **your own apps**:
+* **Send to my own app**: a web address plus no key, an API key in a header, a bearer token or basic auth. A Test button posts a small message. Each workflow can also tell your app what it did (tick the app under the workflow).
+* **Let my app send events here**: a private address and token. Your app, Zapier, Make, n8n or a form can post a JSON event ("event": "order.ready", ...) to start workflows. The card shows a ready-to-copy example.
+Below the connections: switch each workflow on or off, and a **Go live** checklist. Setup details: [connect-dashboard.md](connect-dashboard.md).
 
-Two tabs. **Activity** is one list you filter: tap All, Needs you, Waiting, Sent or Delivered, pick a type (texts, calls, Slack, Teams, email, calendar, webhooks), or search a name, number, channel or workflow. **Lines** shows how complete your bundle is and lets you ask for more lines.
+## Library
+How complete your bundle is. Missing lines can be sent to Speakvora by the agent itself (see below), and you can ask for any line you want. A banner tells you when a newer version of your bundle exists.
 
-## What it shows
-* **Mode and pause:** DRY RUN or LIVE, and a **Pause all sending** button (the same as creating the STOP file; resume removes it).
-* **Counts:** waiting, need review, failed, provider accepted, delivered, expired.
-* **Needs you:** every job that needs a decision, with the buttons:
-  * *Cancel* a job that has not been sent;
-  * *Try again* a failed or expired job (the safety checks run again);
-  * *It arrived* / *It did not arrive: send again* for a job in review (a timeout or server error: it may already have gone out, so you check with the provider first).
-* **Recent activity:** the last 40 sends with status, where to, and the provider's note.
-* **Your bundle:** how many of the spoken lines your workflows use are in this pack, which ones are missing, and a button to request the missing ones.
-* **Ask for another line:** say when a line is used and write the sentence you want. It is saved in `agent-state/slot-requests.json` and, when `SPEAKVORA_KEY` is set to an API key from your Speakvora dashboard, sent to Speakvora (the same request as `slots --send`). New lines are written, checked and voiced, then arrive in the next version of your pack. No delivery date is promised. A line request needs a clear moment and a plain sentence: no links, email addresses or long numbers.
+## Settings
+* **Ask me first**: switch on texts, calls or emails to see each one on Home before it goes out.
+* **My saved choices**: what you told it to do automatically or never, with "Ask me again".
+* **Pause everything** (the kill switch).
+* **Let the agent ask Speakvora for missing lines**.
+
+## Sharing missing phrases with Speakvora
+When a workflow needs a spoken line your bundle does not have, the agent can tell Speakvora so the line gets written, checked, recorded and added to the next version of every bundle for that industry and language (free for four years). It is **off until you switch it on**. What is sent: the moment the line is for, an example sentence, your industry, language and bundle name. Never customer data, messages or keys. A line you type yourself is always sent. No delivery date is promised.
 
 ## Safety
-* The page is served with a strict content policy (no outside scripts, styles or images); POSTs from other websites are refused; the API token is compared in constant time.
-* By default the agent listens on 127.0.0.1 only. If you change `listen.host` to expose it, put it behind your own HTTPS and access control: the token is the only lock.
-* Job text shown is the first part of the message and the destination, never your keys.
+The page is served with a strict content policy and refuses requests from other websites. By default the agent listens on 127.0.0.1 only. Anything exposed to the internet needs your own HTTPS and access control: the token is the only lock.
