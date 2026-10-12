@@ -53,7 +53,7 @@ def main(argv=None):
             json.dump(doc, open(name, "w", encoding="utf-8"), ensure_ascii=False, indent=1); print("wrote", name)
         print(f"industry profile: {prof}. Next: fill in the YOUR-... values in agent.json, then run:  python -m speakvora_pack_agent check")
         return 0
-    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events", "run") or (a.cmd == "queue" and a.action != "flush") or a.cmd == "jobs" or (a.cmd == "proposals" and a.action != "approve"))
+    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events", "run") or a.cmd in ("queue", "jobs", "proposals"))
     if a.cmd == "doctor":
         from . import doctor
         return doctor.run(cfg)
