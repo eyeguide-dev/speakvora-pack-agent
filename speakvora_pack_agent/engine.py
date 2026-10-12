@@ -1,6 +1,6 @@
 """The agent: receives triggers (an event from your app, a calendar tick, an inbound text or call, a Slack command, a daily schedule), picks the matching workflows from workflows.json, and runs their actions through the connectors,
 always through the safety checks first. Dry-run (the default) records what it WOULD do and sends nothing."""
-import datetime as dt, json, re, threading, time
+import datetime as dt, http.client, json, re, smtplib, ssl, threading, time
 from zoneinfo import ZoneInfo
 
 from . import i18n, safety as S, slots as slots_mod, templating as T
@@ -122,11 +122,11 @@ class Agent:
         return True
 
     # ---- actions -------------------------------------------------------------------------------------------------------------------------------
-    def run_actions(self, wf_name, actions, ctx, out=None):
+    def run_actions(self, wf_name, actions, ctx, out=None, job_prefix=None):
         """Runs actions in order. `out` collects what an inbound text / call / Slack command should answer with: out['reply'], out['play'] (pack lines to play)."""
         out = out if out is not None else {"reply": "", "play": []}
         results = []
-        for a in actions:
+        for idx, a in enumerate(actions):
             kind = a.get("action")
             if a.get("if") and not self._when_ok(a["if"], ctx):                  # per-action condition, e.g. {"if": {"customer.prefers_call": "*"}}
                 continue
@@ -136,7 +136,8 @@ class Agent:
                 a = T.render_obj({k: v for k, v in a.items() if k != "if"}, ctx, self.pack)
                 if "YOUR-" in json.dumps(a):                                  # an example value from the sample config: never send it to a customer
                     raise PackError("Fill in the YOUR-... values in agent.json (for example the review link) before this can be sent.")
-                r = self._do(wf_name, kind, a, ctx, out)
+                jid = f"{job_prefix}:{idx}" if job_prefix else None; ctx["_jid"] = jid or ""
+                r = self._do(wf_name, kind, a, ctx, out, jid)
                 ctx.setdefault("last", {})[kind] = r.get("status", "")      # later actions can say what really happened: {{last.sms}}
                 results.append({"action": kind, **r})
             except (PackError, AudioError, PermissionError) as e:
@@ -154,24 +155,96 @@ class Agent:
             return {"status": "blocked", "reason": why}
         return None
 
-    def _queueable(self, kind, a):
-        q = self.cfg.get("queue") or {}
-        return bool(q.get("enabled", True)) and kind in QUEUEABLE and not (kind == "http" and str(a.get("method", "POST")).upper() == "GET")
+    def _journaled(self, kind, a):
+        """Actions that leave this machine and cannot be taken back are written to the job journal before they are sent. Replies, audio picks, log lines and read-only API calls (GET) are not."""
+        return kind in QUEUEABLE and not (kind == "http" and str(a.get("method", "POST")).upper() == "GET")
 
-    def _do(self, wf, kind, a, ctx, out):
-        """Runs one action. If the network is down (and only if the request provably never left this machine) the action is kept in the outbox and sent when the connection is back."""
-        try:
+    def _queue_on(self):
+        return bool((self.cfg.get("queue") or {}).get("enabled", True))
+
+    def _do(self, wf, kind, a, ctx, out, jid=None):
+        """Runs one action through the job journal: written down first (pending), marked sending just before the network call, then sent / queued (offline) / needs_review (cannot know) / failed / blocked.
+        With a job id from an earlier run (after a restart) an action that already has a job is never started again."""
+        if self.dry or not self._journaled(kind, a):
             return self._do_now(wf, kind, a, ctx, out)
+        jid = jid or self.state.new_job_id(); old = self.state.job_get(jid)
+        if old:
+            if old["status"] == "sending":
+                self.state.job_set(jid, "needs_review", "agent stopped while sending: check with the provider before sending again"); return {"status": "needs_review", "job": jid}
+            return {"status": "queued" if old["status"] in ("pending", "queued") else old["status"], "job": jid, "resumed": True}
+        self.state.job_create(jid, wf, kind, a, {"customer": ctx.get("customer") or {}}, "pending")
+        return self._attempt(jid, wf, kind, a, ctx, out)
+
+    def _attempt(self, jid, wf, kind, a, ctx, out):
+        """One send of a journaled action. Never retries by itself: only a request that provably never left the machine goes back to the queue; anything uncertain waits for a person."""
+        j = self.state.job_get(jid); self.state.job_set(jid, "sending", attempts=(j or {}).get("attempts", 0) + 1)
+        ctx["_jid"] = jid
+        try:
+            r = self._do_now(wf, kind, a, ctx, out)
+        except (PackError, AudioError, PermissionError) as e:
+            self.state.job_set(jid, "failed", str(e)[:200], error=str(e)[:200]); raise
         except Exception as e:  # noqa: BLE001
-            if not (self._queueable(kind, a) and web.is_offline(e)):
-                raise
-            qid = self.state.enqueue({"wf": wf, "kind": kind, "a": a, "ctx": {"customer": ctx.get("customer") or {}}})
-            self.record(wf, kind, "queued", queue_id=qid, reason="offline")
-            return {"status": "queued"}
+            err = type(e).__name__ + ": " + str(e)[:200]
+            if web.is_offline(e):
+                if self._queue_on():
+                    self.state.job_set(jid, "queued", "offline", error=err); self.record(wf, kind, "queued", queue_id=jid, reason="offline"); return {"status": "queued", "job": jid}
+                self.state.job_set(jid, "failed", "offline and the queue is switched off", error=err); raise
+            refused_by_smtp = isinstance(e, (smtplib.SMTPAuthenticationError, smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPConnectError))
+            uncertain = (isinstance(e, web.HttpError) and (e.status == 0 or e.status >= 500)) or (isinstance(e, (OSError, http.client.HTTPException, ssl.SSLError, smtplib.SMTPException)) and not refused_by_smtp)
+            if uncertain:                                               # a timeout, a server error or a dropped connection: it may have arrived, so it is NEVER sent again by itself
+                self.state.job_set(jid, "needs_review", err, error=err); self.record(wf, kind, "needs_review", job=jid, error=err)
+                return {"status": "needs_review", "job": jid, "error": err}
+            self.state.job_set(jid, "failed", err, error=err); raise      # the provider refused it (4xx or an error answer): nothing was sent
+        st = r.get("status")
+        if st == "blocked":
+            self.state.job_set(jid, "blocked", r.get("reason", ""), reason=r.get("reason", ""))
+        elif st in ("sent", "ok", "created"):
+            self.state.job_set(jid, "sent", "provider accepted it", provider_id=r.get("sid") or None, error="")
+        else:
+            self.state.job_set(jid, st or "sent")
+        return {**r, "job": jid}
+
+    def recover(self):
+        """Call once at start-up. A job caught in 'sending' by a crash is NOT sent again (it may have gone out): it waits for a person as needs_review. Jobs that were written but never started are queued.
+        Events accepted from your app but not finished are resumed: actions that already have a job are skipped, the rest run."""
+        n = {"needs_review": 0, "queued": 0, "events": 0}
+        for j in self.state.jobs("sending"):
+            self.state.job_set(j["id"], "needs_review", "agent stopped while sending: check with the provider before sending again"); n["needs_review"] += 1
+        for j in self.state.jobs("pending"):
+            self.state.job_set(j["id"], "queued", "written but never started"); n["queued"] += 1
+        for key, ev in self.state.events_running().items():
+            w = next((w for w in self.workflows if w["name"] == ev["wf"]), None)
+            if w:
+                payload = ev["payload"]; ctx = self.ctx(**{k: v for k, v in payload.items() if k not in ("facts",)})
+                self.run_actions(w["name"], w.get("do", []), ctx, job_prefix=key); n["events"] += 1
+            self.state.event_done(key)
+        return n
+
+    # ---- people controlling jobs (CLI and dashboard) ------------------------------------------------------------------------------------------------
+    def cancel_job(self, jid):
+        j = self.state.job_get(jid)
+        if not j or j["status"] not in ("pending", "queued", "needs_review"):
+            raise PermissionError("Only a job that has not been sent (pending or queued), or one waiting for review, can be cancelled.")
+        self.state.job_set(jid, "cancelled", "cancelled by a person"); return self.state.job_get(jid)
+
+    def retry_job(self, jid, confirm_not_sent=False):
+        """Puts a failed, expired, cancelled or blocked job back in the queue (the safety checks run again when it is sent). A needs_review job may already have arrived, so it needs confirm_not_sent=True: you looked at the provider and it did not."""
+        j = self.state.job_get(jid)
+        if not j or j["status"] not in ("failed", "expired", "cancelled", "blocked", "needs_review"):
+            raise PermissionError("Only a failed, expired, cancelled, blocked or needs_review job can be retried.")
+        if j["status"] == "needs_review" and not confirm_not_sent:
+            raise PermissionError("This job may already have been delivered. Check with the provider; if it did not arrive, retry with confirm_not_sent.")
+        self.state.job_set(jid, "queued", "retried by a person"); return self.state.job_get(jid)
+
+    def mark_job_sent(self, jid):
+        j = self.state.job_get(jid)
+        if not j or j["status"] != "needs_review":
+            raise PermissionError("Only a needs_review job can be marked as sent.")
+        self.state.job_set(jid, "sent", "marked as sent by a person after checking the provider"); return self.state.job_get(jid)
 
     def flush_outbox(self):
-        """Sends what was queued while offline, oldest first. Stops at the first action that still cannot leave (the connection is still down). Old actions expire (a reminder call 15 minutes late is worse than none: queue.max_age_minutes),
-        timing blocks (quiet hours, hourly limit) keep an action waiting, and every other refusal drops it with a log line. The safety checks run again at send time."""
+        """Sends the queued jobs, oldest first. Stops at the first one that still cannot leave (the connection is still down). Old jobs expire (queue.max_age_minutes): a reminder call 15 minutes late is worse than none.
+        Timing blocks (quiet hours, limits) keep a job waiting; any other refusal ends it. The safety checks run again at send time."""
         items = self.state.outbox()
         stats = {"queued": len(items), "sent": 0, "expired": 0, "dropped": 0, "waiting": 0, "offline": False}
         if not items or self.dry or not self._flush_lock.acquire(blocking=False):
@@ -182,8 +255,10 @@ class Agent:
             ages = (self.cfg.get("queue") or {}).get("max_age_minutes") or {}
             for q in items:
                 kind, a, now = q["kind"], q["a"], self.now()
+                if self.state.job_get(q["id"])["status"] != "queued":      # changed by a person meanwhile (cancelled...)
+                    continue
                 if now - q["queued_at"] > float(ages.get(kind, 1440)) * 60:
-                    self.state.dequeue(q["id"]); stats["expired"] += 1
+                    self.state.job_set(q["id"], "expired", "too old to send"); stats["expired"] += 1
                     self.record(q["wf"], kind, "expired", queue_id=q["id"], waited_s=int(now - q["queued_at"])); continue
                 ctx = self.ctx(**(q.get("ctx") or {}))
                 who = S.norm_phone(a.get("to")) if kind in ("sms", "call") else str(a.get("to", ""))
@@ -191,14 +266,13 @@ class Agent:
                 if not ok and why in KEEP_WHILE_BLOCKED:
                     stats["waiting"] += 1; continue
                 try:
-                    r = self._do_now(q["wf"], kind, dict(a), ctx, {"reply": "", "play": []})
+                    r = self._attempt(q["id"], q["wf"], kind, a, ctx, {"reply": "", "play": []})
                 except Exception as e:  # noqa: BLE001
-                    if web.is_offline(e):
-                        stats["offline"] = True; stats["waiting"] += len(items) - items.index(q); break
-                    self.state.dequeue(q["id"]); stats["dropped"] += 1
+                    stats["dropped"] += 1
                     self.record(q["wf"], kind, "failed_from_queue", queue_id=q["id"], error=type(e).__name__ + ": " + str(e)[:200]); continue
-                self.state.dequeue(q["id"])
-                if r.get("status") == "blocked":
+                if r.get("status") == "queued":                              # offline again
+                    stats["offline"] = True; stats["waiting"] += len(items) - items.index(q); break
+                if r.get("status") == "blocked" or r.get("status") == "needs_review":
                     stats["dropped"] += 1
                 else:
                     stats["sent"] += 1; self.record(q["wf"], kind, "delivered_from_queue", queue_id=q["id"], waited_s=int(self.now() - q["queued_at"]))
@@ -226,10 +300,10 @@ class Agent:
                 self.record(wf, kind, "dry_run", to=to, text=text, media=media, channel="whatsapp" if wa else "sms"); return {"status": "dry_run"}
             self._need(self.twilio.configured or self.sms_provider.configured, "Texting", "add the twilio section (or sms_provider) in agent.json")
             if self.sms_provider.configured and not wa:
-                r = self.sms_provider.send(to=to, text=text, media_url=media or "")
+                r = self.sms_provider.send(to=to, text=text, media_url=media or "", _idem=ctx.get("_jid"))
             else:
-                r = self.twilio.sms("whatsapp:" + to if wa else to, text, media, from_=("whatsapp:" + self.cfg["twilio"].get("whatsapp_from", self.twilio.from_number)) if wa else None)
-            self.state.once(f"footer:{to}"); self.safe.sent("sms", to); self.record(wf, kind, "sent", to=to, sid=(r or {}).get("sid"), channel="whatsapp" if wa else "sms"); return {"status": "sent"}
+                r = self.twilio.sms("whatsapp:" + to if wa else to, text, media, from_=("whatsapp:" + self.cfg["twilio"].get("whatsapp_from", self.twilio.from_number)) if wa else None, idem=ctx.get("_jid"))
+            self.state.once(f"footer:{to}"); self.safe.sent("sms", to); self.record(wf, kind, "sent", to=to, sid=(r or {}).get("sid"), channel="whatsapp" if wa else "sms"); return {"status": "sent", "sid": (r or {}).get("sid")}
         if kind == "teams":
             blocked = self._gate(wf, "teams", "teams", ctx)
             if blocked:
@@ -242,9 +316,9 @@ class Agent:
             # staff alert to every team chat you connected (Slack and/or Teams): the workflow does not care which one you use
             res = []
             if self.slack.configured or not self.teams.configured:
-                res.append(self._do(wf, "slack", dict(a), ctx, out)["status"])
+                res.append(self._do(wf, "slack", dict(a), ctx, out, (ctx.get("_jid") + ":slack") if ctx.get("_jid") else None)["status"])
             if self.teams.configured:
-                res.append(self._do(wf, "teams", {"text": a["text"], "title": a.get("title")}, ctx, out)["status"])
+                res.append(self._do(wf, "teams", {"text": a["text"], "title": a.get("title")}, ctx, out, (ctx.get("_jid") + ":teams") if ctx.get("_jid") else None)["status"])
             return {"status": "sent" if "sent" in res else ("queued" if "queued" in res else (res[0] if res else "skipped"))}
         if kind == "call":
             to = S.norm_phone(a["to"]); blocked = self._gate(wf, "call", to, ctx, bool(a.get("urgent")))
@@ -256,8 +330,8 @@ class Agent:
             if self.dry:
                 self.record(wf, kind, "dry_run", to=to, parts=[list(p) for p in parts]); return {"status": "dry_run"}
             self._need(self.twilio.configured or self.call_provider.configured, "Calling", "add the twilio section (or call_provider) in agent.json")
-            r = self.call_provider.send(to=to, twiml=twiml, audio_urls=[v for k, v in parts if k == "play"]) if self.call_provider.configured else self.twilio.call(to, twiml)
-            self.safe.sent("call", to); self.record(wf, kind, "sent", to=to, sid=(r or {}).get("sid")); return {"status": "sent"}
+            r = self.call_provider.send(to=to, twiml=twiml, audio_urls=[v for k, v in parts if k == "play"], _idem=ctx.get("_jid")) if self.call_provider.configured else self.twilio.call(to, twiml, idem=ctx.get("_jid"))
+            self.safe.sent("call", to); self.record(wf, kind, "sent", to=to, sid=(r or {}).get("sid")); return {"status": "sent", "sid": (r or {}).get("sid")}
         if kind == "slack":
             blocked = self._gate(wf, "slack", a.get("channel", ""), ctx)
             if blocked:
@@ -325,7 +399,10 @@ class Agent:
             ctx = self.ctx(**{k: v for k, v in payload.items() if k not in ("facts",)})
             if not self._when_ok(w.get("when"), ctx) or not self.state.once(f"event:{eid}:{w['name']}"):
                 continue
-            results.append({"workflow": w["name"], "results": self.run_actions(w["name"], w.get("do", []), ctx)})
+            key = f"event:{eid}:{w['name']}"
+            self.state.event_begin(key, payload, w["name"])                    # written down BEFORE the app gets its answer: a crash from here on resumes it
+            results.append({"workflow": w["name"], "results": self.run_actions(w["name"], w.get("do", []), ctx, job_prefix=key)})
+            self.state.event_done(key)
         return {"event": name, "matched": len(results), "workflows": results}
 
     def _events(self, start, end):
@@ -408,6 +485,9 @@ class Agent:
         if st in final:
             extra = {"error_code": params["ErrorCode"]} if params.get("ErrorCode") else {}
             self.record("delivery", kind, final[st], sid=sid, provider_status=st, to=params.get("To", ""), **extra)
+            job = self.state.job_by_provider_id(sid)
+            if job:
+                self.state.job_set(job["id"], final[st], f"provider status {st}" + (f", error {params['ErrorCode']}" if params.get("ErrorCode") else ""), **({"error": f"provider error {params['ErrorCode']}"} if params.get("ErrorCode") else {}))
         return {"ok": True}
 
     def handle_sms(self, params):

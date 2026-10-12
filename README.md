@@ -4,7 +4,7 @@ A small agent that turns an offline voice pack into automated work: confirm book
 
 It runs on **your own server**, next to your app, with **your own accounts**. Standard-library Python only. No hosted service, no per-message fee from us, nothing to install in your chat or calendar.
 
-> Speakvora sells offline voice packs (audio you ship once). Every full pack in the 12 pack languages includes this agent (version 0.2.0), so a purchase is audio plus agent for one price. The agent is free software (MIT) and works with any set of audio files laid out like a pack; the pack audio is licensed separately.
+> Speakvora sells offline voice packs (audio you ship once). Every full pack in the 12 pack languages includes this agent (version 0.3.0), so a purchase is audio plus agent for one price. The agent is free software (MIT) and works with any set of audio files laid out like a pack; the pack audio is licensed separately.
 
 ## Try it in two minutes, no accounts
 
@@ -34,6 +34,8 @@ New here? Start with [docs/integrate-in-10-minutes.md](docs/integrate-in-10-minu
 Texts, calls and WhatsApp through Twilio, or any provider's web API (`sms_provider`, `call_provider`); Slack and Microsoft Teams; Google Calendar and Microsoft 365 (ICS link or OAuth); SMTP and IMAP email; any system that sends a webhook (a short mapping, no code); any REST API (`http` action). See [docs/connect-anything.md](docs/connect-anything.md) and [docs/integrate-existing-numbers.md](docs/integrate-existing-numbers.md).
 
 **When the internet goes away:** texts, calls, Slack and Teams posts, email, calendar entries and webhooks wait in an outbox on disk and go out in order when the connection returns (safety checks run again at send time; old actions expire; a timeout is never retried, so nothing is sent twice). See [docs/offline-and-queue.md](docs/offline-and-queue.md).
+
+**Every send is written down first, and there is a small local dashboard.** Each text, call, post, email, calendar entry or webhook becomes a job before it is sent (pending, sending, queued, sent, delivered, needs review, failed, blocked, expired, cancelled), so a crash never loses or repeats one, and a send we cannot be sure about waits for a person instead of being retried. Run the agent and open the address it prints (`/dashboard`): filter what was sent, see what needs you, cancel or send again, check how complete your bundle is and ask for more lines. See [docs/jobs-and-recovery.md](docs/jobs-and-recovery.md) and [docs/dashboard.md](docs/dashboard.md).
 
 ## Safety is on by default
 Dry-run first. Customer messages need consent. STOP is always honoured. Quiet hours and limits (`strict`, `standard`, `open`). Notices your industry must say are added automatically (automated-call line, opt-out footer, emergency and privacy for health, facility notices, debt-collector notice, confidentiality). Signed requests only. A kill switch (create a file named `STOP` in `agent-state/`). See [docs/safety.md](docs/safety.md) and [docs/limits-and-control.md](docs/limits-and-control.md).

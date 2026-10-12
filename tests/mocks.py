@@ -46,6 +46,8 @@ class Mock:
             return 200, {}
         if p.endswith("/files.completeUploadExternal"):
             return 200, {"ok": True}
+        if p.endswith("/packs/slot-requests"):
+            return 200, {"queued": len((r["json"] or {}).get("slots", [])), "already_queued_or_built": 0, "note": "Queued. They arrive in the next pack version."}
         if p == "/token":
             return 200, {"access_token": "ya29.test", "expires_in": 3600}
         if p.endswith("/events") and r["method"] == "GET":

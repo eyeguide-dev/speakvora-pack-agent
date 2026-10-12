@@ -19,6 +19,7 @@ class HttpProvider:
         self.configured = bool(self.cfg.get("url")) and bool(HOST_RX.match(str(self.cfg.get("url", ""))))
 
     def send(self, **values):
+        idem = values.pop("_idem", None)
         c = self.cfg
         def fill(o):
             if isinstance(o, str):
@@ -30,6 +31,8 @@ class HttpProvider:
                 return [fill(v) for v in o]
             return o
         kw = {"headers": fill(c.get("headers", {}))}
+        if idem and c.get("idempotency_header"):                          # providers that document an idempotency header: set "idempotency_header": "Idempotency-Key" in the provider settings
+            kw["headers"][c["idempotency_header"]] = idem
         if "json" in c:
             kw["body"] = fill(c["json"])
         elif "form" in c:

@@ -12,19 +12,22 @@ class Twilio:
         self.configured = bool(self.sid and self.token and self.from_number)
         self.status_url = ""
 
-    def _auth(self):
-        return {"authorization": "Basic " + base64.b64encode(f"{self.sid}:{self.token}".encode()).decode()}
+    def _auth(self, idem=None):
+        h = {"authorization": "Basic " + base64.b64encode(f"{self.sid}:{self.token}".encode()).decode()}
+        if idem:                                                          # best effort: Twilio's idempotency token header. Our own guarantee is the job journal, not this header.
+            h["I-Twilio-Idempotency-Token"] = idem
+        return h
 
-    def sms(self, to, body, media_url=None, from_=None):
+    def sms(self, to, body, media_url=None, from_=None, idem=None):
         form = {"To": to, "From": from_ or self.from_number, "Body": body[:1500]}
         if media_url:
             form["MediaUrl"] = media_url
         if self.status_url:
             form["StatusCallback"] = self.status_url
-        return http.request("POST", f"{self.base}/2010-04-01/Accounts/{self.sid}/Messages.json", self._auth(), form=form)[1]
+        return http.request("POST", f"{self.base}/2010-04-01/Accounts/{self.sid}/Messages.json", self._auth(idem), form=form)[1]
 
-    def call(self, to, twiml):
-        return http.request("POST", f"{self.base}/2010-04-01/Accounts/{self.sid}/Calls.json", self._auth(), form={"To": to, "From": self.from_number, "Twiml": twiml, **({"StatusCallback": self.status_url, "StatusCallbackEvent": "completed"} if self.status_url else {})})[1]
+    def call(self, to, twiml, idem=None):
+        return http.request("POST", f"{self.base}/2010-04-01/Accounts/{self.sid}/Calls.json", self._auth(idem), form={"To": to, "From": self.from_number, "Twiml": twiml, **({"StatusCallback": self.status_url, "StatusCallbackEvent": "completed"} if self.status_url else {})})[1]
 
     def check_signature(self, url, params, signature):
         data = url + "".join(k + str(params[k]) for k in sorted(params))

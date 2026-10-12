@@ -23,6 +23,8 @@ def main(argv=None):
     sl.add_argument("-c", "--config", default="agent.json"); sl.add_argument("--all", action="store_true", help="every line the industry normally needs, not only the ones your workflows use")
     sl.add_argument("--write", action="store_true", help="write slot-requests.json"); sl.add_argument("--send", action="store_true", help="send the request to Speakvora (needs SPEAKVORA_KEY)")
     qu = sub.add_parser("queue", help="actions waiting for the internet: list them, send them now, or drop them"); qu.add_argument("action", choices=["list", "flush", "drop"]); qu.add_argument("id", nargs="?", help="a queue id, or 'all' for drop"); qu.add_argument("-c", "--config", default="agent.json")
+    jb = sub.add_parser("jobs", help="every send the agent made or waits to make: list, cancel, retry, mark sent"); jb.add_argument("action", choices=["list", "cancel", "retry", "mark-sent"]); jb.add_argument("id", nargs="?"); jb.add_argument("-c", "--config", default="agent.json")
+    jb.add_argument("--status", default="", help="list only this status (pending, sending, queued, sent, delivered, undelivered, needs_review, failed, blocked, expired, cancelled)"); jb.add_argument("--confirm-not-sent", action="store_true", help="for retry of a needs_review job: you checked with the provider and it did NOT arrive")
     e = sub.add_parser("event", help="send a signed test event to a running agent"); e.add_argument("-c", "--config", default="agent.json"); e.add_argument("file"); e.add_argument("--url", default="")
     a = ap.parse_args(argv)
     if a.cmd == "phrases":
@@ -50,7 +52,7 @@ def main(argv=None):
             json.dump(doc, open(name, "w", encoding="utf-8"), ensure_ascii=False, indent=1); print("wrote", name)
         print(f"industry profile: {prof}. Next: fill in the YOUR-... values in agent.json, then run:  python -m speakvora_pack_agent check")
         return 0
-    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events") or (a.cmd == "queue" and a.action != "flush"))
+    cfg = config.load(a.config, lazy_secrets=a.cmd in ("check", "slots", "doctor", "events") or (a.cmd == "queue" and a.action != "flush") or a.cmd == "jobs")
     if a.cmd == "doctor":
         from . import doctor
         return doctor.run(cfg)
@@ -76,6 +78,8 @@ def main(argv=None):
             cfg["dry_run"] = False
         ag = Agent(cfg)
         srv = serve(ag)
+        from . import dashboard
+        print(f"dashboard: http://{cfg['listen']['host']}:{cfg['listen']['port']}/dashboard#token={dashboard.token(ag)}   (open this address on this machine; the part after # is your access token)")
         print(f"speakvora-pack-agent {__version__} listening on {cfg['listen']['host']}:{cfg['listen']['port']}  | {'LIVE: sending for real' if not ag.dry else 'DRY RUN: nothing is sent'}  | log: {ag.state.log_path}")
         try:
             srv.serve_forever()
@@ -84,6 +88,21 @@ def main(argv=None):
         return 0
     if a.cmd == "slots":
         return slots_cli(cfg, a)
+    if a.cmd == "jobs":
+        ag = Agent(cfg)
+        if a.action == "list":
+            rows = ag.state.jobs(a.status or None)
+            for j in rows:
+                to = str(j["a"].get("to") or j["a"].get("channel") or j["a"].get("url") or "")[:32]
+                print(f"{j['id']:<28} {j['status']:<13} {j['kind']:<16} {j['wf']:<22} {to:<32} {int(ag.now() - j['updated'])} s ago" + (f"  {j['error'][:60]}" if j.get("error") else ""))
+            print(json.dumps(ag.state.job_counts()) if rows else "no jobs"); return 0
+        if not a.id:
+            print("give a job id"); return 1
+        try:
+            j = ag.cancel_job(a.id) if a.action == "cancel" else ag.retry_job(a.id, a.confirm_not_sent) if a.action == "retry" else ag.mark_job_sent(a.id)
+        except PermissionError as e:
+            print(e); return 1
+        print(a.id, "->", j["status"]); return 0
     if a.cmd == "queue":
         ag = Agent(cfg); items = ag.state.outbox()
         if a.action == "list":

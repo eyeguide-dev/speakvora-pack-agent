@@ -118,7 +118,7 @@ class Safety(unittest.TestCase):
 
     def test_one_failing_service_does_not_stop_the_rest(self):
         r = Rig(); r.mock.fail["Messages.json"] = 500; out = r.event("order.ready", customer=CUST, order={"number": 3})
-        st = {x["action"]: x["status"] for x in out["workflows"][0]["results"]}; self.assertEqual(st["sms"], "error"); self.assertEqual(st["slack"], "sent"); r.close()
+        st = {x["action"]: x["status"] for x in out["workflows"][0]["results"]}; self.assertEqual(st["sms"], "needs_review"); self.assertEqual(st["slack"], "sent"); r.close()   # a server error may still have queued the text: a person decides
 
     def test_slack_reports_what_really_happened_to_the_text(self):
         r = Rig(); r.event("order.ready", customer=dict(CUST, sms_consent=False), order={"number": 5}); r.event("order.ready", customer=CUST, order={"number": 6})
@@ -399,6 +399,139 @@ class OfflineQueue(unittest.TestCase):
     def test_call_is_queued_with_a_short_life_and_health_reports_the_queue(self):
         r = Rig(); self.offline(r); out = r.agent.run_actions("t", [{"action": "call", "to": "+16465550101", "play": "w01", "urgent": True}], r.agent.ctx(customer=CUST))
         self.assertEqual(out[0]["status"], "queued"); self.assertEqual(r.agent.cfg["queue"]["max_age_minutes"]["call"], 15); r.close()
+
+
+class JobJournal(unittest.TestCase):
+    """Every send is written down before it happens. A crash never loses it and never repeats it; an uncertain send waits for a person."""
+    def sms_jobs(self, r):
+        return [j for j in r.agent.state.jobs() if j["kind"] == "sms"]
+
+    def test_a_sent_text_is_a_job_with_the_provider_id_and_the_delivery_report_updates_it(self):
+        r = Rig(); r.event("order.ready", customer=CUST, order={"number": 81}); j = self.sms_jobs(r)[0]
+        self.assertEqual(j["status"], "sent"); self.assertTrue(j["provider_id"].startswith("SM")); self.assertEqual(j["attempts"], 1)
+        r.agent.handle_delivery({"MessageSid": j["provider_id"], "MessageStatus": "delivered"}); self.assertEqual(self.sms_jobs(r)[0]["status"], "delivered")
+        r.agent.handle_delivery({"MessageSid": j["provider_id"], "MessageStatus": "undelivered", "ErrorCode": "30034"}); j = self.sms_jobs(r)[0]
+        self.assertEqual(j["status"], "undelivered"); self.assertIn("30034", j["error"]); r.close()
+
+    def test_a_crash_while_sending_is_never_sent_again(self):
+        r = Rig()
+        def boom(*a, **k): raise KeyboardInterrupt()
+        r.agent.twilio.sms = boom
+        with self.assertRaises(KeyboardInterrupt): r.event("order.ready", customer=CUST, order={"number": 82})
+        self.assertEqual(self.sms_jobs(r)[0]["status"], "sending")
+        a2 = Agent(config.load(os.path.join(r.tmp, "agent.json")), now=lambda: r.now[0]); res = a2.recover()
+        self.assertEqual(res["needs_review"], 1); self.assertEqual(a2.flush_outbox()["sent"], 0); self.assertEqual(r.mock.calls("Messages.json"), [])
+        self.assertEqual([j["status"] for j in a2.state.jobs() if j["kind"] == "sms"], ["needs_review"]); r.close()
+
+    def test_a_server_error_or_timeout_needs_review_and_is_not_retried_by_itself(self):
+        import socket
+        r = Rig(); r.mock.fail["Messages.json"] = 503; r.event("order.ready", customer=CUST, order={"number": 83}); j = self.sms_jobs(r)[0]
+        self.assertEqual(j["status"], "needs_review"); r.mock.fail.clear(); self.assertEqual(r.agent.flush_outbox()["sent"], 0); self.assertEqual(r.mock.calls("Messages.json")[1:], [])
+        with self.assertRaises(PermissionError): r.agent.retry_job(j["id"])
+        r.agent.retry_job(j["id"], confirm_not_sent=True); self.assertEqual(r.agent.flush_outbox()["sent"], 1); self.assertEqual(self.sms_jobs(r)[0]["status"], "sent"); r.close()
+        r = Rig()
+        def slow(*a, **k): raise socket.timeout("timed out")
+        r.agent.twilio.sms = slow; r.event("order.ready", customer=CUST, order={"number": 84}); self.assertEqual(self.sms_jobs(r)[0]["status"], "needs_review"); r.close()
+
+    def test_a_refusal_is_failed_and_can_be_retried_after_the_fix(self):
+        r = Rig(); r.mock.fail["Messages.json"] = 400; r.event("order.ready", customer=CUST, order={"number": 85}); j = self.sms_jobs(r)[0]
+        self.assertEqual(j["status"], "failed"); r.mock.fail.clear(); r.agent.retry_job(j["id"]); self.assertEqual(r.agent.flush_outbox()["sent"], 1); self.assertEqual(self.sms_jobs(r)[0]["status"], "sent"); r.close()
+
+    def test_a_person_can_cancel_a_queued_job_and_it_is_not_sent(self):
+        r = Rig(); r.live = (r.agent.twilio.base, r.agent.slack.base); r.agent.twilio.base = r.agent.slack.base = "http://127.0.0.1:9"
+        r.event("order.ready", customer=CUST, order={"number": 86}); j = self.sms_jobs(r)[0]; self.assertEqual(j["status"], "queued")
+        r.agent.cancel_job(j["id"]); r.agent.twilio.base, r.agent.slack.base = r.live; r.agent.flush_outbox()
+        self.assertEqual(r.mock.calls("Messages.json"), []); self.assertEqual(self.sms_jobs(r)[0]["status"], "cancelled")
+        with self.assertRaises(PermissionError): r.agent.cancel_job(self.sms_jobs(r)[0]["id"]); r.close()
+
+    def test_an_accepted_event_resumes_after_a_crash_without_repeating_what_was_done(self):
+        r = Rig(); orig = r.agent.state.job_create
+        def create(jid, wf, kind, *a, **k):
+            if kind == "slack": raise KeyboardInterrupt()
+            return orig(jid, wf, kind, *a, **k)
+        r.agent.state.job_create = create
+        with self.assertRaises(KeyboardInterrupt): r.event("order.ready", customer=CUST, order={"number": 87}, id="crash-1")
+        self.assertEqual(len(r.mock.calls("Messages.json")), 1); self.assertEqual(r.mock.calls("chat.postMessage"), []); self.assertEqual(len(r.agent.state.events_running()), 1)
+        a2 = Agent(config.load(os.path.join(r.tmp, "agent.json")), now=lambda: r.now[0]); self.assertEqual(a2.recover()["events"], 1)
+        self.assertEqual(len(r.mock.calls("Messages.json")), 1); self.assertEqual(len(r.mock.calls("chat.postMessage")), 1); self.assertEqual(a2.state.events_running(), {})
+        self.assertEqual(a2.recover()["events"], 0); self.assertEqual(len(r.mock.calls("chat.postMessage")), 1); r.close()
+
+    def test_0_2_0_outbox_entries_become_queued_jobs_and_old_finished_jobs_are_pruned(self):
+        from speakvora_pack_agent.state import State
+        d = tempfile.mkdtemp(); json.dump({"outbox": [{"id": "q1-0", "wf": "w", "kind": "slack", "a": {"text": "x"}, "ctx": {}, "queued_at": 100}]}, open(os.path.join(d, "state.json"), "w"))
+        s = State(d, now=lambda: 100); self.assertEqual([j["status"] for j in s.jobs()], ["queued"]); self.assertEqual(s.data["outbox"], [])
+        t = [100]; s2 = State(tempfile.mkdtemp(), now=lambda: t[0]); s2.job_create("old", "w", "sms", {}, {}, "sent"); s2.job_set("old", "delivered"); t[0] += 31 * 86400; s2.job_create("new", "w", "sms", {}, {}, "pending")
+        self.assertEqual([j["id"] for j in s2.jobs()], ["new"])
+
+    def test_jobs_command_lists_cancels_and_marks_sent_without_the_service_keys(self):
+        import contextlib, io
+        from speakvora_pack_agent import cli
+        r = Rig(); r.mock.fail["Messages.json"] = 503; r.event("order.ready", customer=CUST, order={"number": 88}); jid = self.sms_jobs(r)[0]["id"]; cfgp = os.path.join(r.tmp, "agent.json"); buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["jobs", "list", "-c", cfgp]); cli.main(["jobs", "list", "--status", "needs_review", "-c", cfgp]); code = cli.main(["jobs", "retry", jid, "-c", cfgp]); cli.main(["jobs", "mark-sent", jid, "-c", cfgp])
+        out = buf.getvalue(); self.assertIn("needs_review", out); self.assertEqual(code, 1); self.assertIn("may already have been delivered", out); self.assertIn("-> sent", out); r.close()
+
+
+class Dashboard(unittest.TestCase):
+    """The tiny local dashboard: needs its token, shows what is waiting and what needs a person, lets a person act, and requests more lines."""
+    def setUp(self):
+        self.r = Rig(); self.srv = serve(self.r.agent, "127.0.0.1", 0); self.port = self.srv.server_address[1]; threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        from speakvora_pack_agent import dashboard
+        self.tok = dashboard.token(self.r.agent)
+
+    def tearDown(self):
+        self.srv.shutdown(); self.srv.server_close(); self.r.close()
+
+    def call(self, method, path, body=None, tok=True, headers=None):
+        h = {"x-dashboard-token": self.tok} if tok else {}; h.update(headers or {})
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=json.dumps(body).encode() if body is not None else (b"{}" if method == "POST" else None), method=method, headers=h)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as x:
+                raw = x.read(); return x.status, (json.loads(raw) if x.headers.get_content_type() == "application/json" else raw.decode()), dict(x.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}"), dict(e.headers)
+
+    def test_page_is_public_but_every_api_call_needs_the_token(self):
+        st, page, hdr = self.call("GET", "/dashboard", tok=False); self.assertEqual(st, 200); self.assertIn("Pack agent", page); self.assertIn("default-src 'none'", hdr["content-security-policy"]); self.assertNotIn("http://", page.replace("http://127", ""))
+        self.assertEqual(self.call("GET", "/dash/api/summary", tok=False)[0], 401); self.assertEqual(self.call("GET", "/dash/api/summary", tok=False, headers={"x-dashboard-token": "nope"})[0], 401)
+        st, s, _ = self.call("GET", "/dash/api/summary"); self.assertEqual(st, 200); self.assertEqual(s["mode"], "live"); self.assertNotIn(TOKEN, json.dumps(s)); self.assertNotIn("xoxb-1", json.dumps(s))
+
+    def test_shows_jobs_and_a_person_can_act_on_them(self):
+        self.r.mock.fail["Messages.json"] = 503; self.r.event("order.ready", customer=CUST, order={"number": 91})
+        s = self.call("GET", "/dash/api/summary")[2 - 1]; self.assertEqual(s["counts"]["needs_review"], 1); self.assertEqual(s["attention"][0]["kind"], "sms"); self.assertEqual(s["attention"][0]["status"], "needs_review")
+        jid = s["attention"][0]["id"]; self.r.mock.fail.clear()
+        st, j, _ = self.call("POST", f"/dash/api/jobs/{jid}/retry"); self.assertEqual(st, 409); self.assertIn("may already have been delivered", j["message"]); self.assertEqual(len(self.r.mock.calls("Messages.json")), 1)
+        st, j, _ = self.call("POST", f"/dash/api/jobs/{jid}/retry", {"confirm_not_sent": True}); self.assertEqual(st, 200); self.assertEqual(j["job"]["status"], "sent"); self.assertEqual(len(self.r.mock.calls("Messages.json")), 2)
+        self.assertEqual(self.call("POST", "/dash/api/jobs/nope/cancel")[0], 409)
+
+    def test_jobs_can_be_filtered_by_status_type_and_search(self):
+        self.r.event("order.ready", customer=CUST, order={"number": 94}); self.r.event("order.ready", customer=dict(CUST, name="Bo Chen", phone="646-555-0177"), order={"number": 95})
+        allj = self.call("GET", "/dash/api/jobs")[1]["jobs"]; self.assertGreaterEqual(len(allj), 4)
+        self.assertTrue(all(j["kind"] == "sms" for j in self.call("GET", "/dash/api/jobs?kind=sms")[1]["jobs"]))
+        self.assertTrue(all(j["kind"] == "slack" for j in self.call("GET", "/dash/api/jobs?kind=slack")[1]["jobs"]))
+        one = self.call("GET", "/dash/api/jobs?kind=sms&q=0177")[1]["jobs"]; self.assertEqual(len(one), 1); self.assertIn("0177", one[0]["to"])
+        self.assertEqual(self.call("GET", "/dash/api/jobs?status=needs_review")[1]["jobs"], [])
+
+    def test_pause_is_the_kill_switch(self):
+        self.assertTrue(self.call("POST", "/dash/api/pause", {"on": True})[1]["paused"]); self.r.event("order.ready", customer=CUST, order={"number": 92}); self.assertEqual(self.r.mock.calls("Messages.json"), [])
+        self.assertFalse(self.call("POST", "/dash/api/pause", {"on": False})[1]["paused"]); self.r.event("order.ready", customer=CUST, order={"number": 93}); self.assertEqual(len(self.r.mock.calls("Messages.json")), 1)
+
+    def test_other_websites_cannot_drive_it(self):
+        self.assertEqual(self.call("POST", "/dash/api/pause", {"on": True}, headers={"Origin": "https://evil.example"})[0], 403)
+
+    def test_phrase_requests_are_saved_and_sent_with_the_api_key(self):
+        st, s, _ = self.call("GET", "/dash/api/summary"); self.assertFalse(s["can_send_requests"])
+        st, r, _ = self.call("POST", "/dash/api/phrases", {"custom": {"when": "when a customer asks about a late delivery refund", "text": "I am sorry your delivery was late, a refund is on its way."}})
+        self.assertEqual(st, 200); self.assertFalse(r["sent"]); self.assertTrue(os.path.exists(os.path.join(self.r.agent.state.dir, "slot-requests.json")))
+        os.environ["SPEAKVORA_KEY"] = "k"; os.environ["SPEAKVORA_HOST"] = self.r.mock.url
+        try:
+            st, r, _ = self.call("POST", "/dash/api/phrases", {"custom": {"when": "when a customer asks about a late delivery refund", "text": "I am sorry your delivery was late, a refund is on its way."}})
+            self.assertTrue(r["sent"]); req = self.r.mock.calls("slot-requests")[-1]; self.assertEqual(req["json"]["kind"], "workflow_line_request"); self.assertTrue(req["json"]["slots"][0]["slot"].startswith("custom_"))
+            self.assertEqual(self.call("POST", "/dash/api/phrases", {"custom": {"when": "short", "text": "x"}})[0], 400); self.assertEqual(self.call("POST", "/dash/api/phrases", {"custom": {"when": "when asked about links", "text": "Visit https://x.example now please"}})[0], 400)
+            self.assertEqual(self.call("POST", "/dash/api/phrases", {"slots": ["not_a_slot"]})[0], 400)
+            st, s, _ = self.call("GET", "/dash/api/summary"); self.assertTrue(s["can_send_requests"]); self.assertEqual(len(s["requests"]), 2)
+        finally:
+            os.environ.pop("SPEAKVORA_KEY", None); os.environ.pop("SPEAKVORA_HOST", None)
 
 
 class Languages(unittest.TestCase):
