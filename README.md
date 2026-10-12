@@ -4,7 +4,7 @@ A small agent that turns an offline voice pack into automated work: confirm book
 
 It runs on **your own server**, next to your app, with **your own accounts**. Standard-library Python only. No hosted service, no per-message fee from us, nothing to install in your chat or calendar.
 
-> Speakvora sells offline voice packs (audio you ship once). The packs are being rebuilt to include this agent, English first, so a purchase is audio plus agent for one price. The agent is free software (MIT) and works with any set of audio files laid out like a pack; the pack audio is licensed separately.
+> Speakvora sells offline voice packs (audio you ship once). Every full pack in the 12 pack languages includes this agent (version 0.2.0), so a purchase is audio plus agent for one price. The agent is free software (MIT) and works with any set of audio files laid out like a pack; the pack audio is licensed separately.
 
 ## Try it in two minutes, no accounts
 
