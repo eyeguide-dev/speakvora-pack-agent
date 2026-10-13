@@ -4,7 +4,18 @@ A small agent that turns an offline voice pack into automated work: confirm book
 
 It runs on **your own server**, next to your app, with **your own accounts**. Standard-library Python only. No hosted service, no per-message fee from us, nothing to install in your chat or calendar.
 
-> Speakvora sells offline voice packs (audio you ship once). Every full pack in the 12 pack languages includes this agent (version 0.3.0), so a purchase is audio plus agent for one price. The agent is free software (MIT) and works with any set of audio files laid out like a pack; the pack audio is licensed separately.
+> Speakvora sells offline voice packs (audio you ship once). Every full pack in the 12 pack languages includes this agent (current release 0.5.x), so a purchase is audio plus agent for one price. The agent is free software (MIT) and works with any set of audio files laid out like a pack; the pack audio is licensed separately.
+
+## See it first
+**Live demo in your browser, nothing to install:** https://speakvora.com/#demo . A made-up clinic's app on one side and the dashboard this agent ships with on the other. Tap an action, switch the internet off, tap again, and watch sends wait in a queue and go out in order when the connection returns.
+
+| Home: approve, decline or automate | Connect: your tools, tested |
+|---|---|
+| ![Home](docs/img/dashboard-home.jpg) | ![Connect](docs/img/dashboard-connect.jpg) |
+| **+ Add: any app by API key or webhook** | **Library: ask for missing phrases** |
+| ![Add](docs/img/dashboard-add.jpg) | ![Library](docs/img/dashboard-library.jpg) |
+
+(Screenshots use demo data from a made-up business.)
 
 ## Try it in two minutes, no accounts
 
@@ -12,6 +23,7 @@ It runs on **your own server**, next to your app, with **your own accounts**. St
 git clone https://github.com/eyeguide-dev/speakvora-pack-agent && cd speakvora-pack-agent
 python3 examples/restaurant/demo.py
 ```
+Or, in any unzipped bundle (or the restaurant sample on the releases page): `./sv-agent demo`, which shows the text it would send and plays the recorded line.
 It runs a restaurant's day against fake Twilio, Slack and Google servers on your machine and prints what the agent did, and what it refused to do (no consent, opted out).
 
 ## Use it with a pack
