@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.3
+Security hardening. The dashboard now opens only on the computer running the agent: a request that arrives through a tunnel or reverse proxy (forwarding headers, or a public Host name) is refused, so putting the agent's webhook routes on the internet no longer exposes the dashboard (set `dashboard.allow_remote` to true to turn this off on purpose). Webhook routes accept at most 240 requests a minute per sender. New tests: hostile model output and injected customer messages cannot add recipients, actions, channels or destinations beyond what the workflow allows; unsigned events are refused; logs never contain keys. See docs/security.md.
+
 ## 0.5.2
 New `sv-agent demo`: a 30-second tour that needs no keys, no placeholders and no internet. It fires a sample "order ready" event in dry run, prints the text it would send, and plays the recorded line (afplay on macOS, ffplay/mpv/paplay/aplay on Linux, PowerShell on Windows). It works at any time of day (quiet hours are off for the demo) and changes nothing on disk. Docs now say plainly that dry run never queues; the offline queue fills only in live mode when the internet is down, and anything that may have arrived is held for review rather than sent again.
 

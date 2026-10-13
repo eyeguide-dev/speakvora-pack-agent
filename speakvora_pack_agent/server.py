@@ -11,6 +11,8 @@ from .connectors import signing
 def make_handler(agent):
     cfg = agent.cfg
 
+    hits_by = {}
+
     class H(BaseHTTPRequestHandler):
         server_version = "SpeakvoraPackAgent/0.1"
 
@@ -31,7 +33,28 @@ def make_handler(agent):
         def _public(self):
             return cfg.get("public_base_url", "").rstrip("/") + self.path.split("?")[0]
 
+        def _local_only(self):
+            """The dashboard is for the person at this computer. A request that came through a tunnel or reverse proxy (it carries forwarding headers or a public Host name) is refused, so exposing the webhook routes to the internet never exposes the dashboard. Set dashboard.allow_remote to true in agent.json to turn this off on purpose."""
+            if (cfg.get("dashboard") or {}).get("allow_remote"):
+                return True
+            h = {k.lower(): v for k, v in self.headers.items()}
+            if any(k in h for k in ("x-forwarded-for", "x-forwarded-host", "forwarded", "x-real-ip", "cf-connecting-ip", "cf-ray", "x-forwarded-proto")):
+                return False
+            host = h.get("host", "").rsplit(":", 1)[0].strip("[]").lower() if not h.get("host", "").startswith("[") else h.get("host", "").split("]")[0].strip("[").lower()
+            return host in ("127.0.0.1", "localhost", "::1", "") or host.endswith(".localhost")
+
+        def _limited(self):
+            """Webhook routes accept at most 240 requests a minute per sender (by the forwarded address when behind a tunnel). Returns True when this request is over the limit."""
+            now = time.time(); h = {k.lower(): v for k, v in self.headers.items()}
+            who = (h.get("cf-connecting-ip") or h.get("x-forwarded-for", "").split(",")[0].strip() or self.client_address[0])
+            hits = [t for t in hits_by.get(who, []) if now - t < 60]; hits.append(now); hits_by[who] = hits
+            if len(hits_by) > 5000:
+                hits_by.clear()
+            return len(hits) > 240
+
         def _dash(self, method):
+            if not self._local_only():
+                return self._send(403, {"error": "dashboard_is_local_only", "message": "The dashboard only opens on the computer running the agent. Open http://127.0.0.1:8787/dashboard there."})
             raw = self._body() if method == "POST" else b""
             origin = self.headers.get("Origin")
             if method == "POST" and origin and urlparse(origin).netloc != self.headers.get("Host", ""):      # a page on another site cannot drive the dashboard
@@ -57,6 +80,8 @@ def make_handler(agent):
             if self.path.split("?")[0].startswith("/dash/api/"):
                 return self._dash("POST")
             p, raw = self.path.split("?")[0], self._body()
+            if self._limited():
+                return self._send(429, {"error": "slow_down", "message": "Too many requests from one sender; wait a minute."})
             try:
                 if p == "/event":
                     if not signing.verify(cfg["events"].get("secret", ""), raw, dict(self.headers)):

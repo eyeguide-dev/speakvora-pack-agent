@@ -1,0 +1,7 @@
+# Security notes for people who run the agent
+
+* **Keep the dashboard private.** It opens at http://127.0.0.1:8787/dashboard on the computer running the agent and needs the private token. From 0.5.3 it refuses requests that come through a tunnel or reverse proxy. Expose only the routes your providers need: `/event` (signed by your app), `/twilio/*` (Twilio signature checked), `/slack/command` (Slack signature checked) and `/hook/*` (your own sources). Put HTTPS in front of them (a tunnel, Caddy, nginx or your cloud load balancer) and add your own rate limit there too; the agent limits each sender to 240 requests a minute.
+* **Keys.** Keep keys in environment variables or the dashboard's private key store (agent-state/secrets.json, readable only by you). Never put them in agent.json that you commit. Logs do not contain keys.
+* **Recipients.** Texts, calls and emails need consent unless the person is in `recipients.allow`. STOP is honoured. Quiet hours, per-person limits and the kill switch (a file named STOP in agent-state) are always checked at send time, including for approved AI suggestions.
+* **AI suggestions.** The model only proposes. Customers are named by ids from the workflow's own contact list, so it cannot invent a recipient; actions, channels and URLs are checked against what the workflow allows; everything waits for a person's approval; and personal details are replaced before text leaves your machine.
+* **Report a problem:** speakvora@gmail.com. This is a hardening list, not a penetration-test report.
