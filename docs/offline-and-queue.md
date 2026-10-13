@@ -10,7 +10,7 @@ The voice lines in your pack are files on your own machine, so they keep playing
 
 ## What is queued, and what is not
 * Queued only when the request provably never left your machine (no network route, DNS failed, connection refused). That is what makes it safe to send again without ever sending twice.
-* NOT queued: a timeout or a server error. The other side may already have received it, so the agent logs the error and does not retry. A text is never sent twice.
+* NOT queued: a timeout or a server error. The other side may already have received it, so the agent logs the error and does not retry. The agent never re-sends it by itself: it is held for your review (needs review) so you can check with the provider and retry or mark it sent.
 * Reading from a calendar or inbox while offline is skipped and logged; the next tick tries again.
 * Inbound texts and calls reach the agent only when your internet and Twilio can reach it. Nothing can answer an inbound call while the line is down.
 
@@ -35,3 +35,7 @@ python -m speakvora_pack_agent check               # also shows how many are wai
 * Dry-run never queues (it never sends).
 * A queued action is stored as the workflow rendered it. Keep secrets in `env:NAME` values in `agent.json`, not written into workflow files.
 * The STOP file (kill switch) pauses the queue; removing it lets the queue go out (and anything past its life still expires).
+
+
+## Dry run never queues
+In dry run (the default) nothing is sent and nothing is queued: the agent only records what it would do. The queue fills only in live mode, when a send fails because the internet is down. To see the queue work, go live with a connected service, turn your Wi-Fi off, send an event, check `sv-agent queue list`, and turn Wi-Fi back on.

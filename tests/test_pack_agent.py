@@ -1208,5 +1208,30 @@ class Web(unittest.TestCase):
         self.assertEqual(self.r.mock.calls("Messages.json")[0]["form"]["To"], "+16465550177")
 
 
+
+class DemoCommand(unittest.TestCase):
+    def test_demo_needs_no_keys_and_shows_the_text_with_placeholders_and_at_night(self):
+        import io, contextlib
+        from speakvora_pack_agent import demo, recipes
+        r = Rig(dry=True, now=dt.datetime(2026, 10, 12, 3, 0, tzinfo=dt.timezone.utc).timestamp())            # 11 PM in New York, inside quiet hours
+        try:
+            raw = json.load(open(os.path.join(r.tmp, "agent.json")))
+            raw["business"] = "YOUR-BUSINESS-NAME"; raw["facts"] = {"hours": "YOUR-OPENING-HOURS", "address": "YOUR-ADDRESS", "review_url": "YOUR-REVIEW-LINK", "oncall_phone": "YOUR-ONCALL-PHONE"}
+            raw.pop("twilio", None); raw.pop("slack", None); raw.pop("google_calendar", None)
+            json.dump(raw, open(os.path.join(r.tmp, "agent.json"), "w"))
+            before = os.listdir(r.tmp)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                demo.run(os.path.join(r.tmp, "agent.json"), speak=False)
+            out = buf.getvalue()
+            self.assertIn("WOULD SEND a text message", out)
+            self.assertIn("Demo Bistro", out)
+            self.assertNotIn("YOUR-", out)
+            self.assertIn("dry run never queues", out.lower().replace("dry run never queues", "dry run never queues"))
+            self.assertEqual(sorted(os.listdir(r.tmp)), sorted(before))                                       # nothing written next to agent.json
+            self.assertEqual(r.mock.requests, [])                                                             # nothing sent anywhere
+        finally:
+            r.close()
+
 if __name__ == "__main__":
     unittest.main()

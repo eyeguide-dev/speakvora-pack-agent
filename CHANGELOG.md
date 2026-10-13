@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.2
+New `sv-agent demo`: a 30-second tour that needs no keys, no placeholders and no internet. It fires a sample "order ready" event in dry run, prints the text it would send, and plays the recorded line (afplay on macOS, ffplay/mpv/paplay/aplay on Linux, PowerShell on Windows). It works at any time of day (quiet hours are off for the demo) and changes nothing on disk. Docs now say plainly that dry run never queues; the offline queue fills only in live mode when the internet is down, and anything that may have arrived is held for review rather than sent again.
+
 ## 0.5.1
 Fix: `queue flush`, `jobs retry` and `proposals approve` no longer stop with "Environment variable ... is not set" when an optional key you never needed (for example a Slack signing secret) is not filled in. They now work like the dashboard and `run`. The running agent already sent its queue by itself; this fixes the manual command.
 
