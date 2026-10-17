@@ -1,7 +1,7 @@
 """Order tracking links, like the ones pizza chains send. The customer gets ONE text with a private link; the page behind it shows the order moving through its steps (received, preparing, ready, picked up; or on its way, delivered) and refreshes by itself. No further texts are needed.
-The page shows the business name, the order number you give it and the step. Nothing about the customer or what was ordered. The link holds a long random code that cannot be guessed, and it stops working a few days after the order is finished.
+The page shows the business name, the order number you give it and the step. Nothing about the customer or what was ordered. The link holds a long random code that cannot be guessed. Every link is saved in agent-state/orders.db when it is made and keeps working (showing the final step) for as long as the agent runs; set tracking.keep_days in agent.json only if you want old ones cleared. Nothing about the customer is saved there: just the order number, the steps and the times.
 The page is served by this agent at public_base_url + /track/<code> (the same public address Twilio already uses for audio)."""
-import html, json, secrets
+import html, json, os, secrets, sqlite3, threading, time
 
 KIND = {"food": ("Restaurant", "restaurant"), "retail": ("Retail", "store"), "laundry": ("Laundry", "laundry"), "pharmacy": ("Pharmacy", "pharmacy")}
 SHORT = {"received": "Received", "preparing": "Preparing", "ready": "Ready", "picked_up": "Collected", "out_for_delivery": "On the way", "delivered": "Delivered", "cancelled": "Cancelled"}
@@ -15,11 +15,40 @@ PICKUP = ["received", "preparing", "ready", "picked_up"]
 DELIVERY = ["received", "preparing", "out_for_delivery", "delivered"]
 LABEL = {"received": "Order received", "preparing": "Being prepared", "ready": "Ready for pickup", "picked_up": "Picked up", "out_for_delivery": "Out for delivery", "delivered": "Delivered", "cancelled": "Cancelled"}
 FINAL = ("picked_up", "delivered", "cancelled")
-KEEP_DAYS_AFTER_FINISH, KEEP_DAYS_MAX = 3, 14
 
 
-def _db(agent):
-    return agent.state.data.setdefault("tracks", {})
+_conns, _lock = {}, threading.RLock()
+
+
+def _conn(agent):
+    """The permanent order list (SQLite, standard library). Created on first use; tracker links from earlier versions are moved in."""
+    path = os.path.join(agent.state.dir, "orders.db")
+    with _lock:
+        c = _conns.get(path)
+        if c is None:
+            os.makedirs(agent.state.dir, exist_ok=True)
+            c = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+            c.execute("pragma journal_mode=wal")
+            c.execute("create table if not exists orders (token text primary key, order_no text not null, steps text not null, status text not null, created integer not null, updated integer not null, eta text default '', delayed integer default 0, base text default '', history text default '[]')")
+            c.execute("create index if not exists orders_no on orders(order_no)"); c.execute("create index if not exists orders_updated on orders(updated)")
+            _conns[path] = c
+            old = agent.state.data.get("tracks") or {}
+            for tok, r in old.items():
+                c.execute("insert or ignore into orders values (?,?,?,?,?,?,?,?,?,?)", (tok, r["order"], json.dumps(r["steps"]), r["status"], r.get("created", 0), r.get("updated", 0), r.get("eta", ""), int(bool(r.get("delayed"))), "", json.dumps(r.get("history", []))))
+            if old:
+                with agent.state.lock:
+                    agent.state.data.pop("tracks", None); agent.state.save()
+        return c
+
+
+def _row(r):
+    return {"token": r[0], "order": r[1], "steps": json.loads(r[2]), "status": r[3], "created": r[4], "updated": r[5], "eta": r[6] or "", "delayed": bool(r[7]), "base": r[8] or "", "history": json.loads(r[9] or "[]")}
+
+
+def _find(agent, token=None, order=None):
+    c = _conn(agent)
+    r = c.execute("select * from orders where token=?", (str(token),)).fetchone() if token is not None else c.execute("select * from orders where order_no=? order by created desc limit 1", (str(order),)).fetchone()
+    return _row(r) if r else None
 
 
 def set_status(agent, order, status, delivery=False, delayed=None, eta=None):
@@ -32,23 +61,35 @@ def set_status(agent, order, status, delivery=False, delayed=None, eta=None):
     order = str(order or "").strip()[:40]
     if not order:
         raise ValueError("The tracker needs an order number.")
-    db = _db(agent); now = int(agent.now())
-    with agent.state.lock:
-        tok = next((t for t, r in db.items() if r["order"] == order), None)
-        if not tok:
+    now = int(agent.now())
+    with _lock:
+        c = _conn(agent); r = _find(agent, order=order)
+        if not r:
             tok = secrets.token_urlsafe(16)
-            db[tok] = {"order": order, "steps": DELIVERY if delivery else PICKUP, "status": "received", "created": now, "history": []}
-        r = db[tok]
-        if delivery and r["steps"] != DELIVERY and status in DELIVERY:
-            r["steps"] = DELIVERY
-        r.update(status=status, updated=now)
-        if delayed is not None:
-            r["delayed"] = bool(delayed)
-        if eta is not None:                                                         # the business's own estimate, shown as "provided by the business"; an empty value clears it
-            r["eta"] = " ".join(str(eta).split())[:40]
-        r["history"].append([now, status]); r["history"] = r["history"][-12:]
-        agent.state.save()
-    return {"token": tok, "url": f"{base}/track/{tok}"}
+            c.execute("insert into orders values (?,?,?,?,?,?,?,?,?,?)", (tok, order, json.dumps(DELIVERY if delivery else PICKUP), "received", now, now, "", 0, base, "[]")); r = _find(agent, token=tok)
+        steps = DELIVERY if (delivery and status in DELIVERY) else r["steps"]
+        hist = (r["history"] + [[now, status]])[-12:]
+        d = r["delayed"] if delayed is None else bool(delayed)
+        e = r["eta"] if eta is None else " ".join(str(eta).split())[:40]            # the business's own estimate; an empty value clears it
+        c.execute("update orders set steps=?, status=?, updated=?, eta=?, delayed=?, history=? where token=?", (json.dumps(steps), status, now, e, int(d), json.dumps(hist), r["token"]))
+        return {"token": r["token"], "url": f"{r['base'] or base}/track/{r['token']}"}
+
+
+def orders(agent, q="", offset=0, limit=50):
+    """The dashboard's order list, newest first: {'total', 'orders': [{order, status, label, url, created, updated, history, stale}]}. stale = the link was made with an address that is no longer this agent's public address."""
+    c = _conn(agent); base = str(agent.cfg.get("public_base_url", "")).rstrip("/"); like = "%" + str(q or "").strip()[:40] + "%"
+    total = c.execute("select count(*) from orders where order_no like ?", (like,)).fetchone()[0]
+    rows = [_row(r) for r in c.execute("select * from orders where order_no like ? order by updated desc limit ? offset ?", (like, int(limit), int(offset))).fetchall()]
+    return {"total": total, "orders": [{"order": r["order"], "status": r["status"], "label": LABEL.get(r["status"], r["status"]), "url": f"{r['base'] or base}/track/{r['token']}", "created": r["created"], "updated": r["updated"], "history": [[t, LABEL.get(s, s)] for t, s in r["history"]],
+                                         "stale": bool(r["base"] and base and r["base"] != base)} for r in rows]}
+
+
+def export_csv(agent):
+    c = _conn(agent); base = str(agent.cfg.get("public_base_url", "")).rstrip("/"); out = ["order,status,link,created,updated"]
+    for r in c.execute("select * from orders order by created").fetchall():
+        r = _row(r); q = lambda v: '"' + str(v).replace('"', '""') + '"'   # noqa: E731
+        out.append(",".join([q(r["order"]), q(LABEL.get(r["status"], r["status"])), q(f"{r['base'] or base}/track/{r['token']}"), q(time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(r["created"]))), q(time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(r["updated"])))]))
+    return "\n".join(out) + "\n"
 
 
 def _contact(agent):
@@ -61,7 +102,7 @@ def _contact(agent):
 
 
 def get(agent, token):
-    r = _db(agent).get(str(token or ""))
+    r = _find(agent, token=str(token or ""))
     if not r:
         return None
     prof = getattr(agent, "profile", "generic"); kind, noun = KIND.get(prof, ("", "business"))
@@ -74,13 +115,13 @@ def get(agent, token):
 
 
 def purge(agent):
-    db, now = _db(agent), agent.now(); n = 0
-    with agent.state.lock:
-        for t in [t for t, r in db.items() if (r["status"] in FINAL and now - r.get("updated", 0) > KEEP_DAYS_AFTER_FINISH * 86400) or now - r.get("created", 0) > KEEP_DAYS_MAX * 86400]:
-            del db[t]; n += 1
-        if n:
-            agent.state.save()
-    return n
+    """Links never expire by default. Only with tracking.keep_days in agent.json are finished orders older than that many days removed."""
+    days = int((agent.cfg.get("tracking") or {}).get("keep_days") or 0)
+    if days <= 0:
+        return 0
+    c = _conn(agent)
+    cur = c.execute("delete from orders where status in ('picked_up','delivered','cancelled') and updated < ?", (int(agent.now()) - days * 86400,))
+    return cur.rowcount
 
 
 LOGO = ('<svg viewBox="0 0 32 32" aria-hidden="true" width="34" height="34"><defs><linearGradient id="tl" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#ff6a4d"/><stop offset=".55" stop-color="#ffb454"/><stop offset="1" stop-color="#ff4f8b"/></linearGradient></defs>'

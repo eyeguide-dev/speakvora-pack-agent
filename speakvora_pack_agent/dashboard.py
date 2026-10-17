@@ -5,7 +5,7 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import brain as BR, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
+from . import brain as BR, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
@@ -250,6 +250,10 @@ def handle(agent, method, path, headers, raw):
             out = BR.edit(agent, json.loads(raw or b"{}").get("profile"))
         elif p == "/dash/api/brain/forget" and method == "POST":
             out = BR.forget(agent)
+        elif p == "/dash/api/orders" and method == "GET":
+            qs = parse_qs(u.query); out = TK.orders(agent, (qs.get("q") or [""])[0], int((qs.get("offset") or ["0"])[0] or 0))
+        elif p == "/dash/api/orders/export" and method == "GET":
+            out = {"csv": TK.export_csv(agent), "filename": "speakvora-orders.csv"}
         elif p == "/dash/api/controls" and method == "GET":
             out = CT.view(agent)
         elif p == "/dash/api/controls/rules" and method == "GET":

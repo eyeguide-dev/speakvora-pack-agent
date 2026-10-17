@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.11.0
+Orders tab: every tracking link is saved permanently from the first order (SQLite, order number, steps and times only) with search, copy and open, step history, spreadsheet export, and a warning when a link was made with an address that is no longer your public address. Links no longer expire by default. Setup now asks for the business website, customer service phone, other service numbers, hours and address, and order links cannot go live until those are filled in and the public address has been tested. See docs/orders-and-private-records.md.
+
 ## 0.10.0
 New order tracking page: Speakvora logo, your business name and initials badge, a headline for each step, a step bar worded for your industry, your own pickup or delivery estimate, the time of the latest update, and Call / Text buttons so a customer can reach your business straight from the page. Pharmacy and dispensary orders get the page too (never showing what was ordered) and keep their texts at placed, ready and picked up. See docs/orders-and-private-records.md.
 

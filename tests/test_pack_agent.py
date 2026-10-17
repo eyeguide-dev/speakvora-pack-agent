@@ -1705,7 +1705,8 @@ class OrderTrackerAndRecords(unittest.TestCase):
             page = tracker.page(r.agent, tok).decode(); self.assertIn("A17", page); self.assertNotIn("Ann", page); self.assertNotIn("6465550101", page)
             self.assertIsNone(tracker.get(r.agent, "not-a-real-code"))
             r.now[0] += 5 * 86400; r.agent.run_actions("t", [{"action": "track", "status": "delivered", "delivery": True}], r.agent.ctx(order={"number": "A17"}))
-            r.now[0] += 5 * 86400; self.assertEqual(tracker.purge(r.agent), 1); self.assertIsNone(tracker.get(r.agent, tok))
+            r.now[0] += 400 * 86400; self.assertEqual(tracker.purge(r.agent), 0); self.assertEqual(tracker.get(r.agent, tok)["status"], "delivered")      # links never expire by default
+            r.agent.cfg["tracking"] = {"keep_days": 30}; self.assertEqual(tracker.purge(r.agent), 1); self.assertIsNone(tracker.get(r.agent, tok))
         finally:
             r.close()
 
@@ -1748,6 +1749,47 @@ class OrderTrackerAndRecords(unittest.TestCase):
         r = Rig()
         try:
             self.assertEqual(templating.render("Bella: {{slot:not_a_real_slot}} {{fact:hours}}", {"facts": {"hours": "9-5"}}, r.agent.pack), "Bella: 9-5")
+        finally:
+            r.close()
+
+    def test_orders_are_saved_listed_searched_and_exported_and_old_links_flagged(self):
+        from speakvora_pack_agent import tracker
+        r = Rig()
+        try:
+            for n in ("5001", "5002", "6001"):
+                r.agent.run_actions("t", [{"action": "track", "status": "received"}], r.agent.ctx(order={"number": n})); r.now[0] += 60
+            r.agent.run_actions("t", [{"action": "track", "status": "ready"}], r.agent.ctx(order={"number": "5001"}))
+            allo = tracker.orders(r.agent); self.assertEqual(allo["total"], 3); self.assertEqual(allo["orders"][0]["order"], "5001"); self.assertEqual(allo["orders"][0]["label"], "Ready for pickup")
+            self.assertEqual(tracker.orders(r.agent, "500")["total"], 2); self.assertFalse(any(o["stale"] for o in allo["orders"]))
+            csv = tracker.export_csv(r.agent); self.assertEqual(len(csv.strip().splitlines()), 4); self.assertIn("/track/", csv); self.assertNotIn("Ann", csv)
+            r.agent.cfg["public_base_url"] = "https://new-address.example"
+            self.assertTrue(all(o["stale"] for o in tracker.orders(r.agent)["orders"]))                                    # made with the old address: flagged
+            self.assertTrue(tracker.orders(r.agent)["orders"][0]["url"].startswith("https://agent.test"))                  # but each link keeps the address it was sent with
+        finally:
+            r.close()
+
+    def test_old_in_memory_links_move_into_the_permanent_list(self):
+        from speakvora_pack_agent import tracker
+        r = Rig()
+        try:
+            r.agent.state.data["tracks"] = {"oldtoken1234567890": {"order": "77", "steps": ["received", "preparing", "ready", "picked_up"], "status": "ready", "created": 1, "updated": 2, "history": [[2, "ready"]]}}
+            self.assertEqual(tracker.get(r.agent, "oldtoken1234567890")["status"], "ready"); self.assertNotIn("tracks", r.agent.state.data)
+        finally:
+            r.close()
+
+    def test_order_links_need_real_business_details_and_a_tested_public_address_before_going_live(self):
+        from speakvora_pack_agent import connect
+        r = Rig()
+        try:
+            wf = json.load(open(r.agent.cfg["workflows"])); wf["workflows"].append({"name": "order_received", "on": {"event": "order.received"}, "do": [{"action": "track", "status": "received"}]}); json.dump(wf, open(r.agent.cfg["workflows"], "w")); r.agent._load_workflows()
+            miss = [c["text"] for c in connect.readiness(r.agent)["checks"] if not c["ok"]]
+            self.assertTrue(any("website, customer service phone" in m for m in miss)); self.assertTrue(any("public address" in m for m in miss))
+            connect.save(r.agent, "business", {"website": "https://bella.example", "phone": "+16465550199"})
+            with self.assertRaises(connect.SetupError):
+                connect.save(r.agent, "business", {"phone": "646-555"})
+            with self.assertRaises(connect.SetupError):
+                connect.save(r.agent, "business", {"service_numbers": "Billing, call us"})
+            connect.save(r.agent, "business", {"service_numbers": "Billing +16465550001, Returns +16465550002"})
         finally:
             r.close()
 

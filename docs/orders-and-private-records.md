@@ -11,6 +11,10 @@ The page carries the Speakvora logo, your business name (with an initials badge)
 ### Estimate and contact buttons
 Send `"order": {"number": "1042", "eta": "6:15 - 6:25 PM"}` (or `"eta"` on any order event) to show the estimate card, "provided by the restaurant"; send an empty `eta` to clear it. The **Call** button uses `facts.phone` (or `tracking.contact_phone`) in `agent.json`: set it to the number customers should ring. The **Text** button opens a text to your agent's sending number with the order number filled in, and your agent passes it to your team like any other message.
 
+### Setting up so links are real and saved from the first order
+In the dashboard, **Connect, Your business** asks for: business name, **website**, **customer service phone**, other customer service numbers (with labels), opening hours, address, and the **public address** of this agent. When order links are switched on, the go-live checklist will not pass until those are filled in and the **Test** button confirms the public address reaches this agent. Use a permanent address (your own domain, or a named tunnel): the link a customer gets starts with it, and a temporary address stops working when it changes.
+Every link is saved the moment it is made in `agent-state/orders.db` and listed under the **Orders** tab (search by order number, copy or open the link, see the step history, export everything to a spreadsheet). Links never expire by default; set `"tracking": {"keep_days": 365}` only if you want finished orders cleared. The list holds the order number, steps and times only, never the customer's name or number. If a link was made with an address that is no longer your public address, the Orders tab flags it.
+
 ## Pharmacy and dispensary
 Customers get a plain text when an order is **placed** (with the tracking link), **ready for pickup** and **picked up**, and the same page shows the steps. The texts and the page never say what is in the order. A customer who texts or calls can reach staff (press 0 or say "person").
 

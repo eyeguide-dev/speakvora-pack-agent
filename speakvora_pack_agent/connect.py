@@ -16,13 +16,16 @@ TIMEZONES = ["America/New_York", "America/Chicago", "America/Denver", "America/L
 CARDS = {
     "business": {"title": "Your business", "blurb": "What the agent says about you in texts and messages. Fill in what applies; leave the rest empty.", "fields": [
         ("business", "Business name", "text", "business", None, "Used in messages, for example \"Bella: your order is ready\"."),
+        ("website", "Business website", "url", "facts.website", None, "Your own website address. Customers see it on their order page and it is saved with your business details."),
+        ("phone", "Customer service phone", "text", "facts.phone", None, "The number customers should call with a question, with the country code, for example +15551234567. It becomes the Call button on every order page."),
+        ("service_numbers", "Other customer service numbers (optional)", "text", "facts.service_numbers", None, "One or more, with a label, for example: Billing +15551230001, Returns +15551230002."),
         ("hours", "Opening hours", "text", "facts.hours", None, "For example: Tue to Sun, 5 to 10 PM. Sent when someone texts \"hours\"."),
         ("address", "Address", "text", "facts.address", None, "Sent when someone texts \"where are you\"."),
         ("review_url", "Review link (optional)", "url", "facts.review_url", None, "Where happy customers are asked to leave a review."),
         ("oncall_phone", "Your own phone for urgent alerts (optional)", "text", "facts.oncall_phone", None, "Include the country code, for example +15551234567."),
         ("timezone", "Time zone", "select", "timezone", None, "Quiet hours and reminders use this."),
         ("mode", "How careful", "select", "mode", None, "Careful sends the fewest messages and keeps longer quiet hours. Normal is the default. Open removes the per-person and hourly limits (STOP replies and required notices stay on)."),
-        ("public_base_url", "Public address of this agent (optional)", "url", "public_base_url", None, "Needed only for phone calls that play your recordings and for replies to inbound texts: a web address that reaches this machine, such as the one a tunnel service gives you."),
+        ("public_base_url", "Public address of this agent", "url", "public_base_url", None, "Needed for order tracking links, for phone calls that play your recordings and for replies to inbound texts: a permanent web address that reaches this machine, such as your own domain or a named tunnel. Customers' links start with this address, so keep it the same."),
     ]},
     "twilio": {"title": "Texts and calls (Twilio)", "blurb": "Sends texts and places calls that play your recordings, from your own Twilio number. Twilio bills you directly.", "fields": [
         ("account_sid", "Account SID", "secret", "twilio.account_sid", "TWILIO_ACCOUNT_SID", "Twilio console > Account info. It starts with AC."),
@@ -184,9 +187,13 @@ def save(agent, card, values):
             if val and not val.isdigit():
                 raise SetupError(f"{label} must be a number.")
             _set(raw, path, int(val) if val else None); continue
-        if key in ("from_number", "oncall_phone") and val and not re.fullmatch(r"\+\d{8,15}", val.replace(" ", "")):
+        if key == "service_numbers" and val:
+            for part in re.split(r"[;,\n]+", val):
+                if part.strip() and not re.search(r"\+\d{8,15}", part.replace(" ", "").replace("-", "")):
+                    raise SetupError(f"{label}: each entry needs a number with the country code, for example Billing +15551230001.")
+        if key in ("from_number", "oncall_phone", "phone") and val and not re.fullmatch(r"\+\d{8,15}", val.replace(" ", "")):
             raise SetupError(f"{label}: include the country code and digits only, for example +15551234567.")
-        if key in ("review_url", "public_base_url", "base_url") and val and not re.match(r"^https?://[^\s]+$", val):
+        if key in ("review_url", "public_base_url", "base_url", "website") and val and not re.match(r"^https?://[^\s]+$", val):
             raise SetupError(f"{label} must start with http:// or https://.")
         if key == "timezone" and val and val not in TIMEZONES:
             try:
@@ -317,6 +324,7 @@ def check_public(agent):
     try:
         _st, r = web.request("GET", base + "/health", timeout=10)
         if isinstance(r, dict) and r.get("pack") == agent.pack.meta.get("pack"):
+            agent.state.data.setdefault("tested", {})["public_address"] = int(agent.now()); agent.state.save()
             return {"ok": True, "message": "That address reaches this agent."}
         return {"ok": False, "message": "That address answered, but it is not this agent."}
     except Exception as e:  # noqa: BLE001
@@ -374,6 +382,10 @@ def readiness(agent):
               {"ok": bool(live_services) and all(tested.get(n) for n in live_services), "text": "Every connected service passed its test."},
               {"ok": bool(on), "text": "At least one workflow is switched on."},
               {"ok": not [w for w in on if w["missing"] and set(w["missing"]) - {"ai"}], "text": "Every workflow that is switched on has what it needs connected (otherwise it will be skipped and logged)."}]
+    if any(w.get("enabled", True) and "track" in _kinds(w) for w in _workflow_file(agent).get("workflows", [])):           # order links are on: the business details and a permanent public address must be real
+        f = agent.cfg.get("facts") or {}
+        checks += [{"ok": all(_real(f.get(k)) for k in ("website", "phone", "hours", "address")), "text": "Order tracking links need your business website, customer service phone, opening hours and address (Connect, Your business)."},
+                   {"ok": bool(tested.get("public_address")) and _real(agent.cfg.get("public_base_url")), "text": "Your public address is set and the Test button confirmed it reaches this agent: customers open their order link on it, so it must stay the same."}]
     return {"ok": all(c["ok"] for c in checks), "checks": checks}
 
 
