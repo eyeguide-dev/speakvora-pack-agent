@@ -29,17 +29,43 @@ def localize(doc, lang):
 
 
 TRACK_PROFILES = ('food', 'retail', 'laundry', 'pharmacy', 'dispensary')                                       # businesses whose customers watch an order move through steps
-LOOKUP_PROFILES = ('clinic', 'pharmacy', 'dispensary')
-PERSON_WORDS = {   # words that mean the caller needs a person, not the assistant: health, dose, condition, results, medicines
+LOOKUP_PROFILES = ('clinic', 'pharmacy', 'dispensary', 'legal', 'finance', 'education', 'lodging', 'public')       # private status (a booking, a matter, an account, a record) comes only from the business's own verified system
+GLOBAL_PERSON = ['complaint', 'complain', 'lawyer', 'attorney', 'lawsuit', 'scam', 'stolen']      # a person takes these in every industry
+PERSON_WORDS = {   # words that mean the caller needs a person, not the assistant (from what each industry's staff must decide: see docs/call-controls)
     'clinic': ['symptom', 'symptoms', 'results', 'result', 'medication', 'medicine', 'prescription', 'pain', 'doctor', 'nurse', 'treatment', 'diagnosis', 'pregnant', 'bleeding'],
     'pharmacy': ['dose', 'dosage', 'interaction', 'interactions', 'side', 'effects', 'reaction', 'pregnant', 'substitute', 'generic', 'pharmacist', 'symptom', 'symptoms'],
-    'dispensary': ['dose', 'dosage', 'strength', 'potency', 'treat', 'treats', 'condition', 'pregnant', 'medical', 'certification', 'caregiver', 'reaction', 'pharmacist']}                                               # private status comes only from the business's own connected records system
+    'dispensary': ['dose', 'dosage', 'strength', 'potency', 'treat', 'treats', 'condition', 'pregnant', 'medical', 'certification', 'caregiver', 'reaction', 'pharmacist'],
+    'food': ['allergy', 'allergic', 'allergen', 'allergens', 'celiac', 'intolerance', 'refund', 'poisoning'],
+    'retail': ['refund', 'refunds', 'fraud', 'dispute', 'chargeback', 'damaged', 'defective'],
+    'laundry': ['damaged', 'ruined', 'lost', 'missing', 'refund', 'claim'],
+    'lodging': ['guest', 'staying', 'accessible', 'accessibility', 'wheelchair', 'accommodation', 'refund'],
+    'beauty': ['reaction', 'allergic', 'burn', 'injury', 'injured', 'infection', 'pregnant', 'medical'],
+    'trades': ['gas', 'sparks', 'sparking', 'flooding', 'flooded', 'asbestos', 'mold', 'permit', 'overcharged', 'damage'],
+    'auto': ['diagnosis', 'roadworthy', 'recall', 'accident', 'warranty', 'overcharged', 'authorize', 'authorise', 'approve', 'approval'],
+    'education': ['grades', 'gpa', 'transcript', 'records', 'custody', 'pickup', 'bullying', 'suspended', 'expelled', 'safeguarding', 'iep'],
+    'legal': ['advice', 'deadline', 'deadlines', 'case', 'court', 'represent', 'representation', 'privileged', 'settlement', 'sue'],
+    'finance': ['balance', 'transfer', 'wire', 'fraud', 'loan', 'mortgage', 'dispute', 'chargeback', 'locked', 'unauthorized'],
+    'collections': ['dispute', 'disputed', 'hardship', 'garnish', 'garnishment', 'sue', 'validation'],
+    'corrections': ['inmate', 'detainee', 'charged', 'charges', 'sentence', 'release', 'bail', 'visitation'],
+    'public': ['case', 'benefits', 'immigration', 'appeal', 'eligibility', 'visa', 'citizenship'],
+    'support': ['breach', 'hacked', 'compromised', 'security', 'incident', 'admin', 'administrator', 'delete', 'outage'],
+    'devops': ['breach', 'hacked', 'compromised', 'security', 'incident', 'admin', 'administrator', 'delete', 'production'],
+    'generic': [],
+}
 
 
 def _workflows_for(profile):
     reg = SL.registry(profile)
     if profile == "food":
-        return json.load(open(os.path.join(HERE, "data", "food.workflows.json"), encoding="utf-8"))
+        doc = json.load(open(os.path.join(HERE, "data", "food.workflows.json"), encoding="utf-8")); pw = PERSON_WORDS["food"] + GLOBAL_PERSON
+        for wf in doc["workflows"]:
+            if wf["name"] == "phone_menu":
+                wf["on"]["call"]["menu"] = {"person_words": pw, **wf["on"]["call"]["menu"]}
+        extra = [{"name": "sms_clinical", "on": {"sms": {"keywords": pw}}, "do": [{"action": "reply", "text": "{{slot:handoff_received}}"}, {"action": "notify", "text": "A customer asked something that needs a person, by text ({{sms.from}}). Please call them."}]},
+                             {"name": "sms_info", "on": {"sms": {"keywords": ["parking", "visiting", "visitor", "visitors", "departments", "department", "billing", "directory"]}}, "do": [{"action": "reply", "text": "{{fact:info}}"}]}]
+        at = next((i for i, x in enumerate(doc["workflows"]) if x["name"] == "sms_hours"), len(doc["workflows"]))           # before the general hours and directions texts, so "where is the parking" finds the parking answer
+        doc["workflows"][at:at] = extra
+        return doc
     has = lambda s: s in reg  # noqa: E731
     w = []
     if has("order_ready"):
@@ -98,9 +124,9 @@ def _workflows_for(profile):
         w += [{"name": "ticket_created", "on": {"event": "ticket.created"}, "do": [kt("received"), _sms(None, "{{business}}: {{slot:ticket_created}} {{track.line}}")]},
               {"name": "ticket_in_progress", "on": {"event": "ticket.in_progress"}, "do": [kt("in_progress")]},
               {"name": "ticket_resolved", "on": {"event": "ticket.resolved"}, "do": [kt("resolved"), dict(_sms(None, "{{business}}: {{slot:ticket_update}}"), each_step=True)]}]
-    if profile in PERSON_WORDS:                                                      # health: questions about symptoms, doses, conditions or results are never answered by text; a person is told
-        w += [{"name": "sms_clinical", "on": {"sms": {"keywords": PERSON_WORDS[profile]}}, "do": [{"action": "reply", "text": "{{slot:handoff_received}}"}, {"action": "notify", "text": "A customer asked a health or product question by text ({{sms.from}}). Please call them."}]}]
-        w += [{"name": "sms_info", "on": {"sms": {"keywords": ["parking", "visiting", "visitor", "visitors", "departments", "department", "billing", "directory"]}}, "do": [{"action": "reply", "text": "{{fact:info}}"}]}]
+    pw = PERSON_WORDS.get(profile, []) + GLOBAL_PERSON                             # a text with any of these words is never answered by the assistant: a person is told
+    w += [{"name": "sms_clinical", "on": {"sms": {"keywords": pw}}, "do": [{"action": "reply", "text": "{{slot:handoff_received}}"}, {"action": "notify", "text": "A customer asked something that needs a person, by text ({{sms.from}}). Please call them."}]},
+          {"name": "sms_info", "on": {"sms": {"keywords": ["parking", "visiting", "visitor", "visitors", "departments", "department", "billing", "directory"]}}, "do": [{"action": "reply", "text": "{{fact:info}}"}]}]
     if profile == "pharmacy" and has("refill_help"):
         w += [{"name": "sms_refill", "on": {"sms": {"keywords": ["refill", "refills", "renew"]}}, "do": [{"action": "reply", "text": "{{slot:refill_help}}"}, {"action": "notify", "text": "Refill question by text from {{sms.from}}. No details were taken."}]}]
     w += [{"name": "thanks_review", "on": {"event": "visit.completed"}, "do": [_sms(None, "{{business}}: {{slot:thanks_review}} {{fact:review_url}}")]},
@@ -109,7 +135,7 @@ def _workflows_for(profile):
           {"name": "sms_status", "on": {"sms": {"topic": "status"}}, "do": ([{"action": "lookup", "connection": "records", "deliver": "reply", "fallback_slot": "handoff_received"}] if profile in LOOKUP_PROFILES else [{"action": "reply", "text": "{{slot:status_help}}"}]) + [{"action": "notify", "text": "Status question by text from {{sms.from}}"}]},
           {"name": "sms_person", "on": {"sms": {"topic": "person"}}, "do": [
               {"action": "reply", "text": "{{slot:handoff_received}}"}, {"action": "notify", "text": "Someone needs a person: {{sms.from}} says \"{{sms.body}}\""}]},
-          {"name": "phone_menu", "on": {"call": {"menu": {**({"person_words": PERSON_WORDS[profile]} if profile in PERSON_WORDS else {}), "prompt": "menu_prompt", "fallback_say": "Press 1 for opening hours, 2 to book, 3 to check on something, or 0 for a person.", "options": {
+          {"name": "phone_menu", "on": {"call": {"menu": {"person_words": PERSON_WORDS.get(profile, []) + GLOBAL_PERSON, "prompt": "menu_prompt", "fallback_say": "Press 1 for opening hours, 2 to book, 3 to check on something, or 0 for a person.", "options": {
               "1": [{"action": "play", "audio": ["hours_intro"]}, {"action": "reply", "text": "{{fact:hours}}"}],
               "2": [{"action": "notify", "text": "Caller {{call.from}} wants to book or change a booking."}, {"action": "reply", "text": "Thanks, the team will call you back."}],
               "3": ([{"action": "lookup", "connection": "records", "deliver": "sms", "fallback_slot": "handoff_received"}] if profile in LOOKUP_PROFILES else [{"action": "play", "audio": ["status_help"]}]) + [{"action": "notify", "text": "Caller {{call.from}} asked for a status update."}],

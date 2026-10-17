@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.17.0
+Every industry now has its own phone and text behaviour, not just the health ones: words that hand a question to a person (allergy, refunds, guests, grades, advice, balances, disputes, security...), industry rules for all 19 profiles, private status lookups (verified, from your own system) for legal, finance, education, hotels and public services as well as health, and a spoken opt-out ("stop calling me") applied at once. Pressing 0 now connects staff in restaurant bundles too (it did not before). A simulated caller and texter are run against every industry one by one in the test suite. See docs/industry-rules.md.
+
 ## 0.16.0
 Calls now open with "You can speak, or use your keypad", then give the options; "anything else?" waits up to 10 seconds, "yes" reads the options again, and a pause mid-sentence is no longer cut off on health bundles (they wait 2 seconds). Every line the agent speaks on a call (greeting, re-ask, anything else, goodbye, staff unavailable, transfer busy, emergency 911, poison control, secret refused) is now a recordable line: when your bundle has the recording, calls play it; otherwise the phone provider's voice is used. 25 new lines are being voiced for all bundles. Tested on real calls and texts to a clinic bundle: hours, goodbye, test results to staff, chest pain (911), order status without a records system, a parking text answered from your facts, and a clinical text handed to staff.
 

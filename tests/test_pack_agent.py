@@ -2061,11 +2061,62 @@ class HealthIndustries(unittest.TestCase):
         r = self._agent("pharmacy")
         try:
             r.agent.handle_sms({"From": "+16465550101", "Body": "what are the side effects and dosage"})
-            posts = [str(c) for c in r.mock.calls("chat.postMessage")]; self.assertTrue(any("health or product question" in p for p in posts))
+            posts = [str(c) for c in r.mock.calls("chat.postMessage")]; self.assertTrue(any("needs a person" in p for p in posts))
             self.assertEqual(r.agent.handle_sms({"From": "+16465550101", "Body": "where is the parking"}).count("Parking"), 1)                  # general information comes from the facts you typed
             r.agent.handle_sms({"From": "+16465550101", "Body": "can I get a refill"}); self.assertTrue(any("Refill question" in str(c) for c in r.mock.calls("chat.postMessage")))
         finally:
             r.close()
+
+
+class EveryIndustryOneByOne(unittest.TestCase):
+    """A simulated caller and texter run against EVERY industry profile, one at a time: hours, a person, the industry's own person words, emergencies, poison, secrets, opt-out by voice, goodbye, status, texts."""
+    CALLER = {"From": "+16465550101"}
+
+    def _agent(self, profile):
+        from speakvora_pack_agent import recipes
+        r = Rig(extra={"twilio": {"speech_input": True}, "facts": {"oncall_phone": "+16465550123", "info": "Parking is free.", "hours": "Tue-Sun 5-10 PM."}})
+        json.dump(recipes.workflows_for(profile), open(r.agent.cfg["workflows"], "w")); r.agent._load_workflows(); r.agent.profile = profile
+        return r
+
+    def say(self, r, said, step="menu", digits=""):
+        return r.agent.handle_call(dict(self.CALLER, SpeechResult=said), step, digits)
+
+    def test_every_profile(self):
+        from speakvora_pack_agent import recipes, slots, industry_rules as IR
+        profiles = sorted(slots.PROFILES); self.assertGreaterEqual(len(profiles), 19)
+        for prof in profiles:
+            with self.subTest(profile=prof):
+                r = self._agent(prof)
+                try:
+                    menu = next(w for w in r.agent.workflows if w["name"] == "phone_menu")["on"]["call"]["menu"]
+                    self.assertTrue(menu["person_words"], "person words")
+                    xml = r.agent.handle_call(self.CALLER, "start"); self.assertIn("You can speak, or use your keypad", xml)                                      # the greeting
+                    self.assertIn("Dial", r.agent.handle_call(self.CALLER, "menu", "0"))                                                                       # press 0
+                    self.assertIn("Dial", self.say(r, "I want to speak to a manager"))                                                                        # say a person
+                    self.assertIn("Dial", self.say(r, "I have a complaint"))                                                                                   # words every industry hands to a person
+                    word = (recipes.PERSON_WORDS.get(prof) or [""])[0]
+                    if word:
+                        self.assertIn("Dial", self.say(r, "I have a question about " + word), word)                                                           # this industry's own words
+                    hours = self.say(r, "what are your hours"); self.assertNotIn("Dial", hours); self.assertIn("Tue-Sun 5-10 PM", hours)
+                    self.assertIn("nine one one", self.say(r, "he is not breathing"))
+                    self.assertIn("Poison Control", self.say(r, "my toddler ate an edible"))
+                    self.assertIn("cannot take them", self.say(r, "my card number is"))
+                    self.assertIn("Goodbye", self.say(r, "no thanks"))
+                    again = self.say(r, "yes"); self.assertIn("Say or press one for hours", again)
+                    st = r.agent.handle_call(self.CALLER, "menu", "3"); self.assertIn("<Response>", st); self.assertNotIn("Traceback", st)               # status never crashes, with or without a records system
+                    if prof in recipes.LOOKUP_PROFILES:
+                        self.assertTrue(any(x.get("action") == "lookup" and x.get("status") == "not_connected" for x in r.log()), "private status needs the records system")
+                    opt = self.say(r, "please stop calling me"); self.assertTrue("unsubscribed" in opt or "<Play>" in opt); self.assertIn("Hangup", opt); self.assertTrue(r.agent.state.is_opted_out("+16465550101"))        # a spoken opt-out is applied at once
+                    r.agent.state.opt_in("+16465550101")
+                    self.assertIn("Tue-Sun 5-10 PM", r.agent.handle_sms({"From": "+16465550102", "Body": "what are your hours"}))                            # texts
+                    self.assertIn("Parking is free.", r.agent.handle_sms({"From": "+16465550102", "Body": "where is the parking"}))
+                    r.agent.handle_sms({"From": "+16465550102", "Body": "I want to file a complaint"}); self.assertTrue(any("needs a person" in str(c) for c in r.mock.calls("chat.postMessage")), "the team is told")
+                    r.agent.handle_sms({"From": "+16465550103", "Body": "STOP"}); self.assertTrue(r.agent.state.is_opted_out("+16465550103"))
+                    self.assertGreater(len(r.agent.workflows), 6); self.assertTrue(IR.prompt(r.agent).startswith("INDUSTRY RULES"))
+                    if prof != "generic":
+                        self.assertNotEqual(IR.for_profile(prof)["label"], "General", prof)
+                finally:
+                    r.close()
 
 
 if __name__ == "__main__":

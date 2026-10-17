@@ -410,6 +410,10 @@
          "action": "slack",
          "channel": "#front",
          "text": "Caller {{call.from}} wants a person."
+        },
+        {
+         "action": "transfer",
+         "to": "{{fact:oncall_phone}}"
         }
        ]
       }

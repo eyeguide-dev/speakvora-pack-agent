@@ -917,6 +917,9 @@ class Agent:
         if guard == "secret":                                                      # passwords, codes and card numbers are never taken on this line
             self.record(wf["name"], "secret_refused", "said")
             return twiml_menu([], f"{base}/twilio/call/menu2", "", inner=self._vp("call_secret_refused", "Please do not say passwords, codes or card numbers on this call. I cannot take them. Press zero or say person for a team member, or press one for hours."), speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
+        if re.search(r"\b(stop calling|do not call|don't call|dont call|remove my number|take me off|take my number off|unsubscribe)\b", said):      # a spoken opt-out is applied at once, with no staff approval (the same as replying STOP)
+            who = S.norm_phone(params.get("From", "")); self.state.opt_out(who); self.record(wf["name"], "opt_out", "voice")
+            return "<Response>" + self._vp("opt_out_ack", "You have been unsubscribed and will not receive more messages or calls from us.") + "<Hangup/></Response>"
         bye = bool(re.search(r"\b(bye|goodbye|nope|nah|nothing|no thank you|no thanks|that's all|that is all|that's it|that is it|all done|all set|i'm good|im good|i am good)\b", said)) or said == "no"
         if step == "menu" and not (digits or "").strip() and re.fullmatch(r"(yes|yeah|yep|yup|sure|please|ok|okay|yes please|i do|i have)", said or "x") and self._speech_on():      # "yes" to "anything else?": give the options again
             return twiml_menu([], f"{base}/twilio/call/menu", "", inner=self._vp("menu_ask_speech", self.SPEECH_ASK), speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
