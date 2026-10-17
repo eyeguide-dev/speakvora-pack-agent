@@ -5,7 +5,7 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import brain as BR, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
+from . import brain as BR, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
@@ -250,6 +250,18 @@ def handle(agent, method, path, headers, raw):
             out = BR.edit(agent, json.loads(raw or b"{}").get("profile"))
         elif p == "/dash/api/brain/forget" and method == "POST":
             out = BR.forget(agent)
+        elif p == "/dash/api/learned" and method == "GET":
+            out = LN.view(agent)
+        elif p == "/dash/api/learned/add" and method == "POST":
+            LN.add(agent, str(json.loads(raw or b"{}").get("id") or "")); out = LN.view(agent)
+        elif p == "/dash/api/learned/lines" and method == "POST":
+            out = LN.add_lines(agent, json.loads(raw or b"{}").get("text")) | {"view": LN.view(agent)}
+        elif p == "/dash/api/learned/suggest" and method == "POST":
+            out = LN.suggest(agent, json.loads(raw or b"{}").get("text"))
+        elif p == "/dash/api/learned/dismiss" and method == "POST":
+            out = LN.dismiss(agent, str(json.loads(raw or b"{}").get("id") or ""))
+        elif p == "/dash/api/learned/remove" and method == "POST":
+            out = LN.remove(agent, str(json.loads(raw or b"{}").get("id") or ""))
         elif p == "/dash/api/guardrails" and method == "GET":
             out = GR.view(agent)
         elif p == "/dash/api/guardrails" and method == "POST":

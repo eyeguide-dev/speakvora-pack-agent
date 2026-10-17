@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.7.1
+Library now has an Add your own phrases box (one phrase per line, each voiced once and added to your library) and Suggest more with my AI. Lines your AI keeps saying become library lines: when your connected AI writes the same generic customer line several times, you can add it to your library (voiced once, then instant, free and offline), or switch on automatic adding inside a monthly character budget. Digits, emails, links and names are never learned. See docs/smart-ai.md.
+
 ## 0.7.0
 Smarter AI. After your AI passes its connection test the agent learns your business (from facts you typed, workflow names, calendar event types, and a website or notes you provide) into a profile you review, edit and approve before the AI uses it; nothing about customers is read and nothing goes to Speakvora. New limits card in Settings with fixed safety rules and ceilings for AI conversations. A caller who presses 0 is connected to your staff phone (new `transfer` workflow action), with a polite fallback when no number is set. Live AI phone conversations and AI text replies are not in this release; their switches are saved but inactive. See docs/smart-ai.md.
 

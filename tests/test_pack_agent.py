@@ -1530,5 +1530,88 @@ class SmartDashboardRoutes(unittest.TestCase):
             srv.shutdown(); srv.server_close(); r.close()
 
 
+class LearnedPhrases(unittest.TestCase):
+    LINE = "Thanks for reaching out, we will get back to you shortly."
+
+    def _rig(self, **g):
+        return Rig(extra={"guardrails": g})
+
+    def test_only_generic_lines_count_and_the_threshold_applies(self):
+        from speakvora_pack_agent import learned as L
+        for bad in ("Your order 1234 is ready for pickup now", "Write to ann@x.com for the details please", "Hi Ann Lee, your table is ready now", "short"):
+            self.assertFalse(L.eligible(bad), bad)
+        self.assertTrue(L.eligible(self.LINE))
+        r = self._rig()
+        try:
+            self.assertEqual([L.observe(r.agent, self.LINE) for _ in range(3)], [False, False, True])
+            self.assertEqual(len(L.candidates(r.agent)), 1)
+        finally:
+            r.close()
+
+    def test_adding_voices_once_saves_audio_and_joins_the_library_inside_the_budget(self):
+        from speakvora_pack_agent import learned as L
+        r = self._rig(phrase_chars_per_month=100)
+        orig = L._voice
+        L._voice = lambda agent, text: (b"ID3audio", ".mp3")
+        try:
+            for _ in range(3):
+                L.observe(r.agent, self.LINE)
+            cid = L.candidates(r.agent)[0]["id"]
+            out = L.add(r.agent, cid)
+            self.assertTrue(os.path.exists(r.agent.pack.audio_path(out["id"]))); self.assertEqual(r.agent.pack.text(out["id"]), self.LINE)
+            self.assertEqual(L.budget(r.agent)["used"], len(self.LINE)); self.assertEqual(L.candidates(r.agent), [])
+            other = "We are open every day and happy to help you out."
+            for _ in range(3):
+                L.observe(r.agent, other)
+            with self.assertRaises(ValueError):                         # 100 characters a month: the second line does not fit
+                L.add(r.agent, L.candidates(r.agent)[0]["id"])
+            a2 = Agent(config.load(os.path.join(r.tmp, "agent.json")), now=lambda: r.now[0])
+            self.assertIn(out["id"], a2.pack.by_id)                    # still there after a restart
+            L.remove(r.agent, out["id"]); self.assertNotIn(out["id"], r.agent.pack.by_id)
+        finally:
+            L._voice = orig; r.close()
+
+    def test_automatic_adding_is_off_unless_switched_on(self):
+        from speakvora_pack_agent import learned as L
+        calls = []; orig = L._voice; L._voice = lambda agent, text: (calls.append(text) or (b"x", ".mp3"))
+        for on in (False, True):
+            r = self._rig(auto_learn_phrases=on)
+            os.environ["SPEAKVORA_KEY"] = "k"
+            try:
+                for _ in range(3):
+                    L.observe(r.agent, self.LINE)
+                L.auto(r.agent)
+            finally:
+                os.environ.pop("SPEAKVORA_KEY", None); r.close()
+        L._voice = orig
+        self.assertEqual(len(calls), 1)
+
+
+class PhraseBox(unittest.TestCase):
+    def test_lines_box_adds_each_line_and_skips_bad_ones(self):
+        from speakvora_pack_agent import learned as L
+        r = Rig(extra={"guardrails": {"phrase_chars_per_month": 120}}); orig = L._voice; L._voice = lambda a, t: (b"x", ".mp3")
+        try:
+            out = L.add_lines(r.agent, "We close in ten minutes, please finish up.\nshort\nEmail me at a@b.com for details please\nYour table is ready at the front desk now.\nA third line that will not fit in the budget at all today.")
+            self.assertEqual(len(out["added"]), 2)
+            self.assertEqual([s["line"] for s in out["skipped"]][:2], ["short", "Email me at a@b.com for details please"])
+            self.assertTrue(any("budget" in s["reason"] for s in out["skipped"]))
+            self.assertEqual(L.add_lines(r.agent, "We close in ten minutes, please finish up.")["skipped"][0]["reason"], "That line is already in your library.")
+        finally:
+            L._voice = orig; r.close()
+
+    def test_ai_suggestions_wait_for_the_owner_and_can_be_added(self):
+        from speakvora_pack_agent import learned as L, reasoner
+        r = Rig(extra={"reasoner": {"provider": "openai", "model": "m", "api_key": "k"}}); orig = (L._voice, reasoner._chat)
+        L._voice = lambda a, t: (b"x", ".mp3")
+        reasoner._chat = lambda cfg, s, u, mt=None: ('{"lines": ["Thank you for waiting, we appreciate your patience.", "Call 555 1234 now", "x"]}', {})
+        try:
+            v = L.suggest(r.agent, "We close soon, please finish up.")
+            self.assertEqual([s["text"] for s in v["suggested"]], ["Thank you for waiting, we appreciate your patience."]); self.assertEqual(v["items"], [])
+            L.add(r.agent, v["suggested"][0]["id"]); self.assertEqual(len(L.view(r.agent)["items"]), 1); self.assertEqual(L.view(r.agent)["suggested"], [])
+        finally:
+            L._voice, reasoner._chat = orig; r.close()
+
+
 if __name__ == "__main__":
     unittest.main()

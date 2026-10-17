@@ -10,9 +10,10 @@ HARD = [
     "A caller who asks for a person is connected to your staff phone right away; two unanswered questions in a row do the same.",
     "Consent, STOP, quiet hours, per-person limits and the pause switch are checked on every message and call, exactly as for every other send.",
 ]
-CEILING = {"max_turns": 40, "max_call_minutes": 20, "max_ai_replies_per_hour": 200}
+CEILING = {"max_turns": 40, "max_call_minutes": 20, "max_ai_replies_per_hour": 200, "phrase_chars_per_month": 20000}
+FLOOR = {"learn_after": (2, 20)}
 DEFAULTS = {"sms_replies": False, "voice_calls": False, "max_turns": 12, "max_call_minutes": 6, "max_ai_replies_per_hour": 30, "allowed_actions": [], "blocked_topics": ["medical advice", "legal advice", "emergencies"],
-            "handoff_words": ["person", "human", "agent", "operator", "manager", "representative", "someone"], "after_hours": "message"}
+            "handoff_words": ["person", "human", "agent", "operator", "manager", "representative", "someone"], "after_hours": "message", "auto_learn_phrases": False, "learn_after": 3, "phrase_chars_per_month": 3000}
 ACTIONS = {"notify": "Tell my team in Slack or Teams", "sms": "Send a confirmation text", "calendar_create": "Add a booking to my calendar"}      # nothing that moves money or changes a customer record
 
 
@@ -30,6 +31,11 @@ def clean(v):
             cur[k] = max(1, min(int((v or {}).get(k, DEFAULTS[k])), hi))
         except (TypeError, ValueError):
             raise ValueError(f"{k.replace('_', ' ').capitalize()} must be a number up to {hi}.")
+    cur["auto_learn_phrases"] = bool((v or {}).get("auto_learn_phrases"))
+    try:
+        cur["learn_after"] = max(2, min(int((v or {}).get("learn_after", 3)), 20))
+    except (TypeError, ValueError):
+        raise ValueError("Repeat count must be a number from 2 to 20.")
     cur["allowed_actions"] = [a for a in ((v or {}).get("allowed_actions") or []) if a in ACTIONS]
     cur["blocked_topics"] = [re.sub(r"\s+", " ", str(x)).strip()[:60] for x in ((v or {}).get("blocked_topics") or DEFAULTS["blocked_topics"]) if str(x).strip()][:20]
     cur["handoff_words"] = [re.sub(r"\s+", " ", str(x)).strip().lower()[:30] for x in ((v or {}).get("handoff_words") or DEFAULTS["handoff_words"]) if str(x).strip()][:30]

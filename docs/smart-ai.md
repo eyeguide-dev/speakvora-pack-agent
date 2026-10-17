@@ -26,6 +26,16 @@ Always on, not changeable from any dashboard:
 
 You choose, inside fixed ceilings: whether the AI answers texts, whether it answers calls, most turns per conversation (max 40), longest call (max 20 minutes), most replies per hour (max 200), which actions it may do by itself (tell your team, send a confirmation text, add a calendar booking), topics it must hand to a person, and the words that mean "I want a person". Saved in `agent.json` under `guardrails`.
 
+## Add your own phrases (0.7.1)
+In the dashboard, open **Library**: the first box is **Add your own phrases**. Type or paste one phrase on each line (up to 30 at a time) and press **Add to my library**. Each line is voiced once in your bundle's voice and becomes a line any workflow can play, instant, free and offline. **Suggest more with my AI** asks your connected AI for up to 10 new lines in the same voice; they wait as suggestions until you press Add or No thanks. Lines with emails, links or card-like numbers are skipped with the reason shown. Same monthly character budget as below. API: `POST /dash/api/learned/{lines,suggest,dismiss}`.
+
+## Lines your AI keeps saying become library lines (0.7.1)
+When your AI writes the same customer-facing text or email again and again (and you approved it), the agent counts it. At the repeat count you choose (default 3, range 2 to 20) it shows up in **Library, Lines your AI keeps saying**. Press **Add** and the line is voiced once with your Speakvora API key (`SPEAKVORA_KEY`) in your bundle's own voice, saved in `agent-state/learned/`, and joins your library: any workflow can play it by id (`learned:<id>`) or search, instantly, offline and free from then on. **Remove** deletes it.
+- Only generic lines qualify. Anything with digits, emails, links, a person's name or personal data is skipped (it would not repeat, and could hold customer data).
+- Automatic adding is **off** until you switch it on in Settings. It then adds at most 3 a day.
+- Spend is capped in code: a monthly character budget (default 3,000, ceiling 20,000). A line that does not fit is not added.
+- Only the line to voice is sent to Speakvora. API: `GET /dash/api/learned`, `POST /dash/api/learned/{add,remove}`.
+
 ## Connecting a caller to a person
 Press 0 in the phone menu, or set the staff number (`oncall_phone`) and the agent dials it with `<Dial>` and bridges the call. With no number set, the caller hears a polite fallback and your team is notified. The `transfer` action can also be added to any phone-menu option in `workflows.json`: `{"action":"transfer","to":"{{fact:oncall_phone}}"}`.
 

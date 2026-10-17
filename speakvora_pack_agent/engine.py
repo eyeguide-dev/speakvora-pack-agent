@@ -31,6 +31,8 @@ class Agent:
         self.state = State(cfg["state_dir"], now)
         self.safe = S.Safety(cfg, self.state, now)
         self.audio = AudioStore(self.pack, cfg["state_dir"], cfg.get("public_base_url", ""))
+        from . import learned
+        learned.attach(self)                                                     # lines learned from your AI's repeated replies
         self.imap_factory = None
         self._init_services()
         wf = self._load_workflows()
@@ -428,6 +430,9 @@ class Agent:
             try:
                 r = self._do(j["wf"], k, a2, ctx, {"reply": "", "play": []}, cj)            # the model's text is sent as written: it is NOT run through templates
                 state = "done" if r.get("status") in ("sent", "ok", "created", "queued", "dry_run") else "failed"
+                if state == "done" and k in ("sms", "email") and not self.dry:
+                    from . import learned
+                    learned.observe(self, args["text"])
             except Exception as e:  # noqa: BLE001
                 r, state = {"status": "failed", "error": str(e)[:200]}, "failed"
             self.state.update_proposal(jid, i, state=state, job=cj, status=r.get("status"))
@@ -672,6 +677,8 @@ class Agent:
         """Call about once a minute: queued actions, calendar reminders and daily schedules."""
         self.flush_outbox()
         from . import sharing
+        from . import learned
+        learned.auto(self)                                                       # repeated AI lines become library lines, inside the monthly budget, if switched on
         sharing.auto(self)                                                       # missing phrases go to Speakvora once a day, if the person agreed
         if self.inbox.configured:
             self.poll_email()
