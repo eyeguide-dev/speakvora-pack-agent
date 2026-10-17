@@ -1640,6 +1640,19 @@ class ServiceCallFlow(unittest.TestCase):
         finally:
             r.close()
 
+    def test_silence_never_hangs_up_and_an_answer_asks_if_there_is_more(self):
+        r = Rig(extra={"facts": {"oncall_phone": "+16465550123"}})
+        try:
+            start = r.agent.handle_call({"From": "+16465550101"}, "start")
+            self.assertIn("<Redirect", start); self.assertIn("/twilio/call/menu<", start)             # no answer at all: Twilio carries on to the next step instead of hanging up
+            self.assertIn("/twilio/call/menu3<", r.agent.handle_call({"From": "+16465550101"}, "menu", ""))
+            self.assertIn("Dial", r.agent.handle_call({"From": "+16465550101"}, "menu3", ""))
+            hours = r.agent.handle_call({"From": "+16465550101"}, "menu", "1")
+            self.assertIn("anything else", hours); self.assertIn("Goodbye", hours)
+            self.assertIn("Goodbye", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "no thanks"}, "menu", ""))
+        finally:
+            r.close()
+
     def test_service_business_gets_follow_up_workflows_with_tasks(self):
         from speakvora_pack_agent import recipes
         names = {w["name"]: w for w in recipes.workflows_for("trades")["workflows"]}

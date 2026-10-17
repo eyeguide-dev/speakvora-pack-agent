@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.8.1
+Fixes from the first live phone test: after an answer the agent asks whether there is anything else and ends politely on "no thanks" (it used to hang up); silence no longer drops the call (re-asks once, then connects a person); callers can interrupt the prompt by speaking; the "anything else" prompt listens for a small set of words so "no thanks" is not misheard as "person". Tested on a real call: hours by voice, goodbye, and "I need to speak to a person" connecting the staff phone.
+
 ## 0.8.0
 Service-business call flow: callers can say what they want (opt-in, English) as well as press a key; asking for a person always connects to your staff phone; two misses connect a person instead of looping. Follow-up workflows with team tasks for quotes, finished work and next visits. Industry rules (what the AI may never say, blocked terms that stop an AI-written message from being sent) for clinic, pharmacy, legal, finance, collections, corrections, education, public services and more. Customer details are removed from finished jobs and old log lines after the days you choose. See docs/industry-rules.md.
 

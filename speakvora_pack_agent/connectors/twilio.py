@@ -39,12 +39,12 @@ def twiml_play(urls, then_hangup=True):
     return "<Response>" + "".join(f"<Play>{escape(u)}</Play>" for u in urls) + ("<Hangup/>" if then_hangup else "") + "</Response>"
 
 
-def twiml_menu(prompt_urls, action_url, say_fallback="", digits=1, pre=(), speech_hints=""):
+def twiml_menu(prompt_urls, action_url, say_fallback="", digits=1, pre=(), speech_hints="", no_input_url="", tail=""):
     """A menu the caller answers by pressing a key; with speech_hints the caller may also just say it (Twilio listens for speech too, which Twilio bills a little extra)."""
     lead = "".join(f"<Play>{escape(v)}</Play>" if k == "play" else f"<Say>{escape(v)}</Say>" for k, v in pre)
     inner = "".join(f"<Play>{escape(u)}</Play>" for u in prompt_urls) or (f"<Say>{escape(say_fallback)}</Say>" if say_fallback else "")
-    mode = f' input="dtmf speech" speechTimeout="auto" hints={quoteattr(speech_hints)}' if speech_hints else ' input="dtmf"'
-    return f'<Response>{lead}<Gather{mode} numDigits="{digits}" action={quoteattr(action_url)} method="POST" timeout="6">{inner}</Gather></Response>'
+    mode = f' input="dtmf speech" speechTimeout="auto" bargeIn="true" hints={quoteattr(speech_hints)}' if speech_hints else ' input="dtmf"'
+    return f'<Response>{lead}<Gather{mode} numDigits="{digits}" action={quoteattr(action_url)} method="POST" timeout="6">{inner}</Gather>{tail}' + (f'<Redirect method="POST">{escape(no_input_url)}</Redirect>' if no_input_url else '') + '</Response>'
 
 
 def twiml_message(text):

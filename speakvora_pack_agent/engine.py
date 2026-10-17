@@ -1,6 +1,6 @@
 """The agent: receives triggers (an event from your app, a calendar tick, an inbound text or call, a Slack command, a daily schedule), picks the matching workflows from workflows.json, and runs their actions through the connectors,
 always through the safety checks first. Dry-run (the default) records what it WOULD do and sends nothing."""
-import datetime as dt, http.client, json, re, smtplib, ssl, threading, time
+import datetime as dt, http.client, json, os, re, smtplib, ssl, threading, time
 from zoneinfo import ZoneInfo
 
 from . import i18n, reasoner as R, safety as S, slots as slots_mod, templating as T
@@ -804,13 +804,19 @@ class Agent:
             except (PackError, AudioError):
                 pass
             pre = [self._line_part(x) for x in self._required("menu")]
-            return twiml_menu(urls, f"{base}/twilio/call/menu", T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), pre=pre, speech_hints=self._speech_hints(menu))
-        digits = (digits or "").strip() or self._speech_choice(menu, params.get("SpeechResult", ""))
+            return twiml_menu(urls, f"{base}/twilio/call/menu", T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), pre=pre, speech_hints=self._speech_hints(menu), no_input_url=f"{base}/twilio/call/menu")
+        said = re.sub(r"[^a-z0-9' ]+", " ", str(params.get("SpeechResult", "")).lower()).strip()
+        if said and os.environ.get("SV_DEBUG_SPEECH"):
+            self.state.log(workflow=wf["name"], action="call_speech", status="heard", dry_run=False, step=step, heard=said[:80])         # test aid only: what the caller said, never on by default
+        bye = bool(re.search(r"\b(bye|goodbye|nope|nah|nothing|no thank you|no thanks|that's all|that is all|that's it|that is it|all done|all set|i'm good|im good|i am good)\b", said)) or said == "no"
+        digits = (digits or "").strip() or self._speech_choice(menu, said)
+        if bye and not digits and step == "menu":
+            return "<Response><Say>Thanks for calling. Goodbye.</Say><Hangup/></Response>"
         if not digits or digits not in (menu.get("options") or {}):
-            if step == "menu2" and "0" in (menu.get("options") or {}):         # twice without an answer: do not leave the caller stuck, connect them to a person
+            if step in ("menu2", "menu3") and "0" in (menu.get("options") or {}):         # a second miss: do not leave the caller stuck, connect them to a person
                 digits = "0"
             else:
-                return twiml_menu([], f"{base}/twilio/call/menu2", "Sorry, I did not catch that. " + T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), speech_hints=self._speech_hints(menu))
+                return twiml_menu([], f"{base}/twilio/call/menu2", "Sorry, I did not catch that. " + T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), speech_hints=self._speech_hints(menu), no_input_url=f"{base}/twilio/call/menu3")
         opt = (menu.get("options") or {}).get(digits)
         xfer = [a for a in opt if isinstance(a, dict) and a.get("action") == "transfer"]
         opt = [a for a in opt if not (isinstance(a, dict) and a.get("action") == "transfer")]
@@ -834,6 +840,11 @@ class Agent:
                 return xml + f'<Dial timeout="25" answerOnBridge="true"><Number>{escape(to)}</Number></Dial><Say>{escape(xfer[0].get("say_if_busy") or "Sorry, nobody could pick up. We will call you back as soon as we can.")}</Say><Hangup/></Response>'
             self.record(wf["name"], "transfer", "skipped", reason="no staff phone number set (facts.oncall_phone)")
             xml += "<Say>Sorry, nobody is available to take your call right now. We will call you back as soon as we can.</Say>"
+        if menu.get("again", True):                                               # after an answer, ask whether there is anything else; silence or "no" ends the call politely
+            from xml.sax.saxutils import quoteattr
+            hints = "no, no thanks, goodbye, hours, book, status, person" if self._speech_on() else ""
+            mode = f' input="dtmf speech" speechTimeout="auto" bargeIn="true" hints={quoteattr(hints)}' if hints else ' input="dtmf"'
+            return xml + f'<Gather{mode} numDigits="1" action={quoteattr(base + "/twilio/call/menu")} method="POST" timeout="6"><Say>Is there anything else I can help with? Press 1 for hours, 2 to book, 3 for a status, or 0 for a person.</Say></Gather><Say>Thanks for calling. Goodbye.</Say><Hangup/></Response>'
         return xml + "<Hangup/></Response>"
 
     def handle_slack_command(self, form):
