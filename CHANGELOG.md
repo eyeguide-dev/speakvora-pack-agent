@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.4
+Wording: the bundle licence is now a 12-month licence per business location that covers updates, the dashboard and support; renewing is optional and the audio you downloaded keeps working for ever. The agent's update notices say so. No behaviour change.
+
 ## 0.5.3
 Security hardening. The dashboard now opens only on the computer running the agent: a request that arrives through a tunnel or reverse proxy (forwarding headers, or a public Host name) is refused, so putting the agent's webhook routes on the internet no longer exposes the dashboard (set `dashboard.allow_remote` to true to turn this off on purpose). Webhook routes accept at most 240 requests a minute per sender. New tests: hostile model output and injected customer messages cannot add recipients, actions, channels or destinations beyond what the workflow allows; unsigned events are refused; logs never contain keys. See docs/security.md.
 

@@ -27,7 +27,7 @@ How complete your bundle is. Missing lines can be sent to Speakvora by the agent
 * **Let the agent ask Speakvora for missing lines**.
 
 ## Sharing missing phrases with Speakvora
-When a workflow needs a spoken line your bundle does not have, the agent can tell Speakvora so the line gets written, checked, recorded and added to the next version of every bundle for that industry and language (free for four years). It is **off until you switch it on**. What is sent: the moment the line is for, an example sentence, your industry, language and bundle name. Never customer data, messages or keys. A line you type yourself is always sent. No delivery date is promised.
+When a workflow needs a spoken line your bundle does not have, the agent can tell Speakvora so the line gets written, checked, recorded and added to the next version of every bundle for that industry and language (included in your 12-month licence). It is **off until you switch it on**. What is sent: the moment the line is for, an example sentence, your industry, language and bundle name. Never customer data, messages or keys. A line you type yourself is always sent. No delivery date is promised.
 
 ## Safety
 The page is served with a strict content policy and refuses requests from other websites. By default the agent listens on 127.0.0.1 only. Anything exposed to the internet needs your own HTTPS and access control: the token is the only lock.

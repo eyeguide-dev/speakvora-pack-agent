@@ -1,5 +1,5 @@
 """Missing phrases go to Speakvora, so every bundle gets better. When a workflow needs a spoken line the pack does not have, the agent can send Speakvora the request itself: the moment, an example sentence, the industry, the language and the pack name.
-Nothing else is sent: no customer data, no messages, no keys. The phrase bot writes, checks and voices the line and adds it to the next version of every pack of that industry and language, which the buyer downloads for free (four years of updates).
+Nothing else is sent: no customer data, no messages, no keys. The phrase bot writes, checks and voices the line and adds it to the next version of every pack of that industry and language, which the buyer downloads while their 12-month licence is active.
 Automatic sending is opt-in (the dashboard asks once); a request the person types themselves is always sent. Also checks whether a newer version of this pack exists (public information, nothing sent)."""
 import json, os, time
 
