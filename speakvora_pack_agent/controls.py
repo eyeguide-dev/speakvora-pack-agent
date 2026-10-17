@@ -9,7 +9,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 _cache = {}
 
 # our profile -> catalog industries that apply (the catalog's "All industries" always applies)
-INDUSTRIES = {"food": ["Restaurants"], "clinic": ["Clinics and hospitals"], "pharmacy": ["Pharmacy", "Cannabis dispensary"], "lodging": ["Hotels"], "beauty": ["Salons and spas", "Fitness studios"], "laundry": ["Salons and spas"],
+INDUSTRIES = {"food": ["Restaurants"], "clinic": ["Clinics and hospitals"], "pharmacy": ["Pharmacy"], "dispensary": ["Cannabis dispensary"], "lodging": ["Hotels"], "beauty": ["Salons and spas", "Fitness studios"], "laundry": ["Salons and spas"],
               "retail": ["Retail stores", "E-commerce"], "trades": ["Home services"], "auto": ["Auto repair"], "legal": ["Legal services"], "finance": ["Banking and payments"], "collections": ["Banking and payments"],
               "education": ["Education and childcare"], "devops": ["IT and SaaS support"], "support": ["IT and SaaS support"], "generic": []}
 HEALTH = ("Clinics and hospitals", "Pharmacy", "Cannabis dispensary", "Dental", "Behavioral health")
@@ -24,10 +24,18 @@ ENFORCED = {
     "UNI-038": "A caller who cannot use the keypad can speak, and is never looped: two misses connect a person.",
     "UNI-061": "Asking for a person connects the staff phone right away.",
     "UNI-062": "A caller describing an emergency is told to call 911 and the business flow stops (speech input must be on).",
+    "HLT-001": "Hours, directions and visiting information are answered without asking for any patient detail.",
+    "HLT-007": "A caller asking about symptoms, results, medicines or treatment is connected to staff; the assistant never gives clinical judgment.",
+    "HLT-027": "Dose, interaction and side-effect questions go to a pharmacist (staff), never answered by the assistant.",
+    "HLT-008": "Immediate danger gets the 911 instruction and the menu stops.", "HLT-028": "Immediate danger gets the 911 instruction and the menu stops.", "REG-041": "Someone unresponsive or not breathing gets the 911 instruction and the menu stops.",
+    "REG-042": "A child who may have swallowed something gets Poison Control (1-800-222-1222) and 911, never home advice.", "REG-043": "A pet that may have swallowed something is told to contact a vet or a poison line, never given home advice.",
+    "REG-021": "A caller asking whether a product treats a condition is connected to staff; the assistant never diagnoses or recommends treatment.", "REG-027": "How much to use goes to staff; the assistant never gives dosing.", "REG-045": "Pregnancy and breastfeeding safety questions go to staff.",
+    "HLT-009": "If your records system is unreachable or has not approved the lookup, nothing is guessed from earlier calls: the caller is told staff will help.", "HLT-029": "If your records system is unreachable or has not approved the lookup, nothing is guessed from earlier calls: the caller is told staff will help.",
     "UNI-082": "Keys, passwords and system instructions are never read out.",
     "UNI-083": "Webhook and API calls go only to hosts written in the workflow or connection, never to a caller-supplied address.",
     "UNI-093": "Lookups are logged by outcome only, never the private content.",
 }
+EXPOSURE = re.compile(r"\b(poison|swallowed|swallow|ingested|ate (?:a |an |too many |some |all )?(?:edible|edibles|gumm\w*|brownie|cookie|candy)|(?:my )?(?:child|kid|baby|toddler|son|daughter) (?:ate|got into|found)|(?:my )?(?:dog|cat|pet) (?:ate|got into))\b", re.I)
 EMERGENCY = re.compile(r"\b(emergency|911|nine one one|heart attack|chest pain|can'?t breathe|cannot breathe|not breathing|overdose|overdosed|suicide|kill myself|bleeding|unconscious|gas leak|on fire|fire in|someone is hurt|being attacked)\b", re.I)
 SECRET = re.compile(r"\b(password|passcode|one[- ]time (?:code|password)|verification code|security code|cvv|card number|credit card|debit card|social security|pin number)\b", re.I)
 
@@ -111,6 +119,8 @@ def view(agent):
 
 def guard_speech(said):
     """'emergency', 'secret' or '' for what a caller said. Emergency wins."""
+    if EXPOSURE.search(said or ""):
+        return "exposure"
     if EMERGENCY.search(said or ""):
         return "emergency"
     if SECRET.search(said or ""):

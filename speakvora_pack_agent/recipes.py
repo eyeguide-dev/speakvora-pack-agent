@@ -28,8 +28,12 @@ def localize(doc, lang):
     return _j.loads(txt)
 
 
-TRACK_PROFILES = ('food', 'retail', 'laundry', 'pharmacy')                                       # businesses whose customers watch an order move through steps
-LOOKUP_PROFILES = ('clinic', 'pharmacy')                                               # private status comes only from the business's own connected records system
+TRACK_PROFILES = ('food', 'retail', 'laundry', 'pharmacy', 'dispensary')                                       # businesses whose customers watch an order move through steps
+LOOKUP_PROFILES = ('clinic', 'pharmacy', 'dispensary')
+PERSON_WORDS = {   # words that mean the caller needs a person, not the assistant: health, dose, condition, results, medicines
+    'clinic': ['symptom', 'symptoms', 'results', 'result', 'medication', 'medicine', 'prescription', 'pain', 'doctor', 'nurse', 'treatment', 'diagnosis', 'pregnant', 'bleeding'],
+    'pharmacy': ['dose', 'dosage', 'interaction', 'interactions', 'side', 'effects', 'reaction', 'pregnant', 'substitute', 'generic', 'pharmacist', 'symptom', 'symptoms'],
+    'dispensary': ['dose', 'dosage', 'strength', 'potency', 'treat', 'treats', 'condition', 'pregnant', 'medical', 'certification', 'caregiver', 'reaction', 'pharmacist']}                                               # private status comes only from the business's own connected records system
 
 
 def _workflows_for(profile):
@@ -43,9 +47,9 @@ def _workflows_for(profile):
             tr = lambda st, **k: {"action": "track", "status": st, **k}              # noqa: E731
             w += [{"name": "order_received", "on": {"event": "order.received"}, "do": [tr("received"), _sms(None, "{{business}}: {{slot:order_received}} {{track.line}}")]},
                   {"name": "order_preparing", "on": {"event": "order.preparing"}, "do": [tr("preparing"), dict(_sms(None, "{{business}}: {{slot:order_preparing}} {{track.line}}"), each_step=True)]},
-                  {"name": "order_ready", "on": {"event": "order.ready"}, "do": [tr("ready"), dict(_sms(None, "{{business}}: order {{order.number}} is ready. {{slot:order_ready}}" + (" {{slot:pickup_instructions}}" if has("pickup_instructions") else "")), **({} if profile == "pharmacy" else {"each_step": True})),
+                  {"name": "order_ready", "on": {"event": "order.ready"}, "do": [tr("ready"), dict(_sms(None, "{{business}}: order {{order.number}} is ready. {{slot:order_ready}}" + (" {{slot:pickup_instructions}}" if has("pickup_instructions") else "") + (" {{slot:pickup_id_reminder}}" if has("pickup_id_reminder") else "")), **({} if profile in ("pharmacy", "dispensary") else {"each_step": True})),
                                                                               {"action": "notify", "text": "Order {{order.number}} is ready (status page updated)."}]},
-                  {"name": "order_picked_up", "on": {"event": "order.picked_up"}, "do": [tr("picked_up"), dict(_sms(None, "{{business}}: {{slot:order_picked_up}}"), **({} if profile == "pharmacy" else {"each_step": True}))]},
+                  {"name": "order_picked_up", "on": {"event": "order.picked_up"}, "do": [tr("picked_up"), dict(_sms(None, "{{business}}: {{slot:order_picked_up}}"), **({} if profile in ("pharmacy", "dispensary") else {"each_step": True}))]},
                   {"name": "order_delayed", "on": {"event": "order.delayed"}, "do": [tr("preparing", delayed=True), _sms(None, "{{business}}: {{slot:order_delayed}} {{track.line}}"), {"action": "notify", "text": "Order {{order.number}} delayed. Text to customer: {{last.sms}}."}]}]
             if has("order_ready_delivery"):
                 w += [{"name": "order_out_for_delivery", "on": {"event": "order.out_for_delivery"}, "do": [tr("out_for_delivery", delivery=True), dict(_sms(None, "{{business}}: {{slot:order_ready_delivery}} {{track.line}}"), each_step=True)]},
@@ -94,13 +98,18 @@ def _workflows_for(profile):
         w += [{"name": "ticket_created", "on": {"event": "ticket.created"}, "do": [kt("received"), _sms(None, "{{business}}: {{slot:ticket_created}} {{track.line}}")]},
               {"name": "ticket_in_progress", "on": {"event": "ticket.in_progress"}, "do": [kt("in_progress")]},
               {"name": "ticket_resolved", "on": {"event": "ticket.resolved"}, "do": [kt("resolved"), dict(_sms(None, "{{business}}: {{slot:ticket_update}}"), each_step=True)]}]
+    if profile in PERSON_WORDS:                                                      # health: questions about symptoms, doses, conditions or results are never answered by text; a person is told
+        w += [{"name": "sms_clinical", "on": {"sms": {"keywords": PERSON_WORDS[profile]}}, "do": [{"action": "reply", "text": "{{slot:handoff_received}}"}, {"action": "notify", "text": "A customer asked a health or product question by text ({{sms.from}}). Please call them."}]}]
+        w += [{"name": "sms_info", "on": {"sms": {"keywords": ["parking", "visiting", "visitor", "visitors", "departments", "department", "billing", "directory"]}}, "do": [{"action": "reply", "text": "{{fact:info}}"}]}]
+    if profile == "pharmacy" and has("refill_help"):
+        w += [{"name": "sms_refill", "on": {"sms": {"keywords": ["refill", "refills", "renew"]}}, "do": [{"action": "reply", "text": "{{slot:refill_help}}"}, {"action": "notify", "text": "Refill question by text from {{sms.from}}. No details were taken."}]}]
     w += [{"name": "thanks_review", "on": {"event": "visit.completed"}, "do": [_sms(None, "{{business}}: {{slot:thanks_review}} {{fact:review_url}}")]},
           {"name": "sms_hours", "on": {"sms": {"topic": "hours"}}, "do": [{"action": "reply", "text": "{{slot:hours_intro}} {{fact:hours}}"}]},
           {"name": "sms_directions", "on": {"sms": {"topic": "directions"}}, "do": [{"action": "reply", "text": "{{slot:directions_intro}} {{fact:address}}"}]},
           {"name": "sms_status", "on": {"sms": {"topic": "status"}}, "do": ([{"action": "lookup", "connection": "records", "deliver": "reply", "fallback_slot": "handoff_received"}] if profile in LOOKUP_PROFILES else [{"action": "reply", "text": "{{slot:status_help}}"}]) + [{"action": "notify", "text": "Status question by text from {{sms.from}}"}]},
           {"name": "sms_person", "on": {"sms": {"topic": "person"}}, "do": [
               {"action": "reply", "text": "{{slot:handoff_received}}"}, {"action": "notify", "text": "Someone needs a person: {{sms.from}} says \"{{sms.body}}\""}]},
-          {"name": "phone_menu", "on": {"call": {"menu": {"prompt": "menu_prompt", "fallback_say": "Press 1 for opening hours, 2 to book, 3 to check on something, or 0 for a person.", "options": {
+          {"name": "phone_menu", "on": {"call": {"menu": {**({"person_words": PERSON_WORDS[profile]} if profile in PERSON_WORDS else {}), "prompt": "menu_prompt", "fallback_say": "Press 1 for opening hours, 2 to book, 3 to check on something, or 0 for a person.", "options": {
               "1": [{"action": "play", "audio": ["hours_intro"]}, {"action": "reply", "text": "{{fact:hours}}"}],
               "2": [{"action": "notify", "text": "Caller {{call.from}} wants to book or change a booking."}, {"action": "reply", "text": "Thanks, the team will call you back."}],
               "3": ([{"action": "lookup", "connection": "records", "deliver": "sms", "fallback_slot": "handoff_received"}] if profile in LOOKUP_PROFILES else [{"action": "play", "audio": ["status_help"]}]) + [{"action": "notify", "text": "Caller {{call.from}} asked for a status update."}],

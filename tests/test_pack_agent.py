@@ -1965,5 +1965,49 @@ class OrderTrackerAndRecords(unittest.TestCase):
             r.close()
 
 
+class HealthIndustries(unittest.TestCase):
+    def _agent(self, profile, **extra):
+        from speakvora_pack_agent import recipes
+        r = Rig(extra=dict({"twilio": {"speech_input": True}, "facts": {"oncall_phone": "+16465550123", "info": "Visiting hours 2 to 8 PM. Parking is free."}}, **extra))
+        json.dump(recipes.workflows_for(profile), open(r.agent.cfg["workflows"], "w")); r.agent._load_workflows(); r.agent.profile = profile
+        return r
+
+    def test_dispensary_is_its_own_profile_with_an_id_reminder_and_no_product_talk(self):
+        from speakvora_pack_agent import slots, recipes, industry_rules as IR, controls, tracker
+        self.assertEqual(slots.profile_for("dispensary"), "dispensary"); self.assertIn("pickup_id_reminder", slots.registry("dispensary")); self.assertNotIn("pickup_id_reminder", slots.registry("pharmacy"))
+        ready = next(w for w in recipes.workflows_for("dispensary")["workflows"] if w["name"] == "order_ready"); self.assertIn("{{slot:pickup_id_reminder}}", json.dumps(ready))
+        self.assertTrue(any(a["action"] == "sms" and not a.get("each_step") for a in ready["do"]))                            # the ready text always goes out
+        r = self._agent("dispensary")
+        try:
+            self.assertIn(IR.violation(r.agent, "This one helps with sleep and the dose is small"), ("dose", "helps with")); self.assertEqual(IR.violation(r.agent, "Your order 12 is ready for pickup"), "")
+            self.assertEqual(controls.industries(r.agent), ["Cannabis dispensary"]); self.assertIn("REG-042", controls.ENFORCED)
+            self.assertEqual(tracker.KIND["dispensary"][0], "Dispensary")
+        finally:
+            r.close()
+
+    def test_health_questions_on_a_call_go_to_a_person_and_exposure_gets_poison_help(self):
+        for prof, said in (("clinic", "I have a question about my test results"), ("pharmacy", "what is the dose for this"), ("dispensary", "does it treat anxiety")):
+            r = self._agent(prof)
+            try:
+                self.assertIn("Dial", r.agent.handle_call({"From": "+16465550101", "SpeechResult": said}, "menu", ""), prof)
+                self.assertNotIn("Dial", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "what are your hours"}, "menu", ""))
+                xml = r.agent.handle_call({"From": "+16465550101", "SpeechResult": "my toddler ate an edible"}, "menu", "")
+                self.assertIn("Poison Control", xml); self.assertIn("two two two", xml); self.assertNotIn("Dial", xml)
+                self.assertIn("nine one one", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "he is not breathing"}, "menu", ""))
+                hints = r.agent._speech_hints(next(w for w in r.agent.workflows if w["name"] == "phone_menu")["on"]["call"]["menu"]); self.assertIn("pharmacist" if prof != "clinic" else "symptom", hints)
+            finally:
+                r.close()
+
+    def test_health_texts_hand_questions_to_staff_and_never_answer_them(self):
+        r = self._agent("pharmacy")
+        try:
+            r.agent.handle_sms({"From": "+16465550101", "Body": "what are the side effects and dosage"})
+            posts = [str(c) for c in r.mock.calls("chat.postMessage")]; self.assertTrue(any("health or product question" in p for p in posts))
+            self.assertEqual(r.agent.handle_sms({"From": "+16465550101", "Body": "where is the parking"}).count("Parking"), 1)                  # general information comes from the facts you typed
+            r.agent.handle_sms({"From": "+16465550101", "Body": "can I get a refill"}); self.assertTrue(any("Refill question" in str(c) for c in r.mock.calls("chat.postMessage")))
+        finally:
+            r.close()
+
+
 if __name__ == "__main__":
     unittest.main()

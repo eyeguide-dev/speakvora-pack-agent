@@ -13,6 +13,7 @@ A short map of everything in the agent, with where to read more. Everything runs
 | Your own phrases | Add lines in the Library box; repeated AI lines become library lines; a monthly budget caps spend | [smart-ai.md](smart-ai.md) |
 | Order, visit, repair and request tracking | One text with a private link that follows the order; saved in the Orders tab | [orders-and-private-records.md](orders-and-private-records.md) |
 | Pharmacy and dispensary | Plain texts at placed, ready, picked up, never naming what was ordered | [orders-and-private-records.md](orders-and-private-records.md) |
+| Clinics, hospitals, pharmacies, dispensaries | Office information and scheduling help only; clinical questions go to staff; emergencies and poison exposure handled; order texts never name the contents | [health-industries.md](health-industries.md) |
 | Private records | Health and similar details only from your own verified system, only after you approve | [orders-and-private-records.md](orders-and-private-records.md) |
 | Industry rules and call controls | What your AI must never say per industry; a 1,140-rule draft catalog with policy settings | [industry-rules.md](industry-rules.md) |
 | Customer details | Removed from finished jobs and masked in old logs after the days you choose | [security.md](security.md) |

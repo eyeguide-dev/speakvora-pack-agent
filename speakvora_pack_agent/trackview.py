@@ -2,12 +2,13 @@
 view(rec, biz, profile) turns one saved order and the business details into what the page draws; render(token, view, json_url) is the page itself."""
 import html, json
 
-KIND = {"trades": ("Home services", "team"), "auto": ("Auto repair", "shop"), "support": ("Support", "support team"), "food": ("Restaurant", "restaurant"), "retail": ("Retail", "store"), "laundry": ("Laundry", "laundry"), "pharmacy": ("Pharmacy", "pharmacy")}
+KIND = {"dispensary": ("Dispensary", "dispensary"), "trades": ("Home services", "team"), "auto": ("Auto repair", "shop"), "support": ("Support", "support team"), "food": ("Restaurant", "restaurant"), "retail": ("Retail", "store"), "laundry": ("Laundry", "laundry"), "pharmacy": ("Pharmacy", "pharmacy")}
 SHORT = {"scheduled": "Scheduled", "on_the_way": "On the way", "in_progress": "In progress", "completed": "Completed", "resolved": "Resolved", "received": "Received", "preparing": "Preparing", "ready": "Ready", "picked_up": "Collected", "out_for_delivery": "On the way", "delivered": "Delivered", "cancelled": "Cancelled"}
 STEP_WORDS = {"retail": {"received": "Confirmed", "preparing": "Packed", "ready": "Ready", "picked_up": "Collected"}, "laundry": {"received": "Received", "preparing": "Cleaning", "ready": "Ready", "picked_up": "Collected"}}
 HEAD = {"food": {"received": "We have your order.", "preparing": "In the kitchen.", "ready": "Ready for pickup.", "picked_up": "Enjoy your meal.", "out_for_delivery": "On its way to you.", "delivered": "Delivered. Enjoy."},
         "retail": {"received": "Order confirmed.", "preparing": "Getting it ready.", "ready": "Ready for pickup.", "picked_up": "All yours.", "out_for_delivery": "On its way to you.", "delivered": "Delivered."},
         "laundry": {"received": "We have your items.", "preparing": "Being cleaned.", "ready": "Fresh. Folded. Ready.", "picked_up": "All collected.", "out_for_delivery": "On its way back to you.", "delivered": "Delivered."},
+        "dispensary": {"received": "We have your order.", "preparing": "Being prepared.", "ready": "Ready. Bring your ID.", "picked_up": "Picked up.", "out_for_delivery": "On its way.", "delivered": "Delivered."},
         "pharmacy": {"received": "We have your order.", "preparing": "Being prepared.", "ready": "Ready for pickup.", "picked_up": "Picked up.", "out_for_delivery": "On its way.", "delivered": "Delivered."}}
 HEAD_DEFAULT = {"received": "We have your order.", "preparing": "Being prepared.", "ready": "Ready for pickup.", "picked_up": "Picked up.", "out_for_delivery": "On its way to you.", "delivered": "Delivered.", "cancelled": "This order was cancelled."}
 PICKUP = ["received", "preparing", "ready", "picked_up"]

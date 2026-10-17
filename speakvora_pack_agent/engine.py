@@ -841,7 +841,7 @@ class Agent:
         if not self._speech_on():
             return ""
         ws = menu.get("words") or self.SPEECH_WORDS
-        return ", ".join(sorted({w for v in ws.values() for w in v} | {"person", "manager", "operator", "human"}))[:480]
+        return ", ".join(sorted({w for v in ws.values() for w in v} | set(menu.get("person_words") or ()) | {"person", "manager", "operator", "human"}))[:480]
 
     def _speech_choice(self, menu, said):
         """The menu option a caller's spoken words mean, or ''. Asking for a person always wins, so nobody is trapped in the menu."""
@@ -852,6 +852,8 @@ class Agent:
         if guardrails.wants_human(self, said):
             return "0"
         words = set(re.findall(r"[a-z']+", said.lower()))
+        if words & set(menu.get("person_words") or ()):                                  # health, dose, condition, results...: not for the assistant, a person takes it
+            return "0"
         for k, ws in (menu.get("words") or self.SPEECH_WORDS).items():
             if words & set(ws):
                 return k
@@ -880,6 +882,9 @@ class Agent:
         if guard == "emergency":                                                   # an emergency is never queued or handled by a menu: say what to do and stop
             self.record(wf["name"], "emergency_redirect", "said")
             return "<Response><Say>If this is an emergency, hang up and call nine one one now. This line cannot send emergency help.</Say><Hangup/></Response>"
+        if guard == "exposure":                                                    # a child or pet that may have swallowed something: poison help and 911, never home advice
+            self.record(wf["name"], "exposure_redirect", "said")
+            return "<Response><Say>If a child, a pet or anyone may have swallowed something harmful, call Poison Control now at one, eight hundred, two two two, one two two two, or call nine one one if they are unwell. For a pet, call a vet. This line cannot send help.</Say><Hangup/></Response>"
         if guard == "secret":                                                      # passwords, codes and card numbers are never taken on this line
             self.record(wf["name"], "secret_refused", "said")
             return twiml_menu([], f"{base}/twilio/call/menu2", "Please do not say passwords, codes or card numbers on this call. I cannot take them. Press 0 or say person for a team member, or press 1 for hours.", speech_hints=self._speech_hints(menu), no_input_url=f"{base}/twilio/call/menu3")

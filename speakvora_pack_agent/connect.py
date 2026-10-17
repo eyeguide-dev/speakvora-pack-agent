@@ -19,6 +19,7 @@ CARDS = {
         ("website", "Business website", "url", "facts.website", None, "Your own website address. Customers see it on their order page and it is saved with your business details."),
         ("phone", "Customer service phone", "text", "facts.phone", None, "The number customers should call with a question, with the country code, for example +15551234567. It becomes the Call button on every order page."),
         ("service_numbers", "Other customer service numbers (optional)", "text", "facts.service_numbers", None, "One or more, with a label, for example: Billing +15551230001, Returns +15551230002."),
+        ("info", "Other things customers ask (optional)", "text", "facts.info", None, "For example: Visiting hours 2 to 8 PM. Parking is free in the east lot. Billing office +15551234567. Sent when someone texts parking, visiting, departments or billing."),
         ("hours", "Opening hours", "text", "facts.hours", None, "For example: Tue to Sun, 5 to 10 PM. Sent when someone texts \"hours\"."),
         ("address", "Address", "text", "facts.address", None, "Sent when someone texts \"where are you\"."),
         ("review_url", "Review link (optional)", "url", "facts.review_url", None, "Where happy customers are asked to leave a review."),
