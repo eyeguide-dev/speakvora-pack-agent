@@ -732,7 +732,14 @@ class Agent:
         """Call about once a minute: queued actions, calendar reminders and daily schedules."""
         self.flush_outbox()
         from . import sharing
-        from . import learned, privacy
+        from . import learned, privacy, tracker
+        try:
+            tracker.sync(self)                                                   # order pages Speakvora has not seen yet (offline earlier) are sent now
+            from . import connect as _cn
+            if _cn.tracking_needed(self) and tracker.mode(self) == "hosted" and sharing._key(self) and not tracker.pages_current(self) and (self.state.data.get("order_pages") or {}).get("preview_url"):
+                tracker.push_business(self)                                      # a business detail changed here: update every page
+        except Exception:  # noqa: BLE001
+            pass
         privacy.scrub(self)                                                      # customer details are cleaned from finished jobs and old log lines after the days you chose
         learned.auto(self)                                                       # repeated AI lines become library lines, inside the monthly budget, if switched on
         sharing.auto(self)                                                       # missing phrases go to Speakvora once a day, if the person agreed

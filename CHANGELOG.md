@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.13.0
+Order pages are now hosted by Speakvora (speakvora.com/o/<code>): a business sets nothing up. On first sign-in the dashboard asks once for its business details and Speakvora API key and creates the pages in one step; going live is blocked until that is done. Links are created even offline and the page catches up when the agent reconnects; only the order number, step and the business's public details are sent, never customer details. Changing a business detail updates every page. The public-address guide is gone (self-hosting remains as an advanced option). See docs/orders-and-private-records.md.
+
 ## 0.12.0
 Tracking links for more industries: home services and trades (visit: scheduled, on the way, in progress, completed), auto repair (checked in, in progress, ready, collected) and customer-service support (received, in progress, resolved), alongside restaurants, retail, laundry and pharmacy. Each has its own steps, wording and "Job / Repair / Ticket" label, all saved in the Orders tab. New guide to getting a permanent public address (Cloudflare named tunnel, Tailscale Funnel or a small server) and a table of which industries get a link. Private industries (clinics, legal, banking and similar) get no public link. See docs/public-address-setup.md and docs/orders-and-private-records.md.
 

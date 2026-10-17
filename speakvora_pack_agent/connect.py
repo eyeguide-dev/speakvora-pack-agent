@@ -51,6 +51,9 @@ CARDS = {
         ("password", "Password or app password", "secret", "email.password", "EMAIL_PASSWORD", "Gmail: Google Account > Security > App passwords."),
         ("from", "Send from", "text", "email.from", None, "For example: Bella <hello@bella.com>."),
     ]},
+    "account": {"title": "Your Speakvora account", "blurb": "Connects this agent to your Speakvora account so it can create your hosted order pages (the links customers open), voice new phrases and ask for missing lines. Only order numbers and steps are sent for order pages, never customer details.", "fields": [
+        ("api_key", "Speakvora API key", "secret", "speakvora.api_key", "SPEAKVORA_KEY", "On speakvora.com open your account, Voice API tab, and create a key. Paste it here."),
+    ]},
     "ai": {"title": "AI reasoning (your own key)", "blurb": "Lets the agent think about requests the rules cannot handle. It only proposes; you approve in Activity. You pay your AI provider, we charge nothing, and only what a workflow chooses is sent.", "fields": [
         ("provider", "Which AI", "select", "reasoner.provider", None, "OpenAI-compatible covers OpenAI, Groq, Together, OpenRouter, Azure and others. Local keeps everything on this machine (for example Ollama)."),
         ("base_url", "Server address (leave empty for OpenAI or Anthropic)", "url", "reasoner.base_url", None, "Local example: http://localhost:11434/v1"),
@@ -156,6 +159,9 @@ def connected(agent, name):
         return bool(r.get("model") and (r.get("api_key") or str(r.get("provider")) == "local" or r.get("base_url")))
     if name == "business":
         return _real(c.get("business"))
+    if name == "account":
+        from . import sharing
+        return bool(sharing._key(agent))
     return False
 
 
@@ -221,6 +227,13 @@ def save(agent, card, values):
         pass
     _write_raw(agent, raw); _reload(agent)
     agent.state.data.get("tested", {}).pop(card, None); agent.state.save()
+    if card in ("business", "account", "twilio") and tracking_needed(agent):               # keep the hosted pages in step with what was just saved (best effort: offline is retried later)
+        try:
+            from . import tracker
+            if tracker.mode(agent) == "hosted" and connected(agent, "account"):
+                tracker.push_business(agent)
+        except Exception:  # noqa: BLE001
+            pass
     return next(c for c in status(agent)["cards"] if c["name"] == card)
 
 
@@ -248,6 +261,10 @@ def test(agent, card, opts=None):
     if not connected(agent, card) and card != "business":
         return {"ok": False, "message": "Fill in this section and save it first."}
     try:
+        if card == "account":
+            from . import tracker
+            r = tracker.push_business(agent)
+            return _passed(agent, card, "Connected to your Speakvora account." + (" Your order pages are ready: see a sample at " + r["preview_url"] if r.get("preview_url") else ""))
         if card == "twilio":
             a = agent.twilio
             st, r = web.request("GET", f"{a.base}/2010-04-01/Accounts/{a.sid}.json", a._auth())
@@ -373,6 +390,48 @@ def set_workflow(agent, name, enabled):
     return workflows(agent)
 
 
+def tracking_needed(agent):
+    try:
+        return any(w.get("enabled", True) and "track" in _kinds(w) for w in _workflow_file(agent).get("workflows", []))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+ORDER_PAGE_FIELDS = (("business", "Business name"), ("website", "Business website"), ("phone", "Customer service phone"), ("hours", "Opening hours"), ("address", "Address"))
+
+
+def order_pages(agent):
+    """Where the order-pages setup stands, for the dashboard: {'needed', 'complete', 'missing': [labels], 'has_key', 'preview_url'}."""
+    from . import tracker
+    f = agent.cfg.get("facts") or {}
+    missing = [lab for k, lab in ORDER_PAGE_FIELDS if not _real(agent.cfg.get("business") if k == "business" else f.get(k))]
+    has_key = connected(agent, "account"); hosted = tracker.mode(agent) == "hosted"
+    if hosted and not has_key:
+        missing.append("Speakvora API key")
+    done = not missing and ((tracker.pages_current(agent) and bool((agent.state.data.get("tested") or {}).get("order_pages"))) if hosted else bool((agent.state.data.get("tested") or {}).get("public_address")))
+    return {"needed": tracking_needed(agent), "complete": done, "missing": missing, "has_key": has_key, "hosted": hosted, "preview_url": (agent.state.data.get("order_pages") or {}).get("preview_url", "")}
+
+
+def setup_order_pages(agent, values):
+    """One step for the business: save the details and the key, create the hosted pages, return the sample link. values: business, website, phone, service_numbers, hours, address, api_key."""
+    from . import tracker
+    v = {k: str(x).strip() for k, x in (values or {}).items() if x is not None}
+    biz = {k: v[k] for k in ("business", "website", "phone", "service_numbers", "hours", "address") if v.get(k)}
+    if biz:
+        save(agent, "business", biz)
+    if v.get("api_key"):
+        save(agent, "account", {"api_key": v["api_key"]})
+    st = order_pages(agent)
+    if st["missing"]:
+        raise SetupError("Still needed: " + ", ".join(st["missing"]) + ".")
+    if st["hosted"]:
+        try:
+            tracker.push_business(agent)
+        except ValueError as e:
+            raise SetupError(str(e))
+    return order_pages(agent)
+
+
 def readiness(agent):
     """What must be true before the agent sends for real."""
     wfs = workflows(agent); on = [w for w in wfs if w["enabled"]]; tested = agent.state.data.get("tested", {})
@@ -382,10 +441,14 @@ def readiness(agent):
               {"ok": bool(live_services) and all(tested.get(n) for n in live_services), "text": "Every connected service passed its test."},
               {"ok": bool(on), "text": "At least one workflow is switched on."},
               {"ok": not [w for w in on if w["missing"] and set(w["missing"]) - {"ai"}], "text": "Every workflow that is switched on has what it needs connected (otherwise it will be skipped and logged)."}]
-    if any(w.get("enabled", True) and "track" in _kinds(w) for w in _workflow_file(agent).get("workflows", [])):           # order links are on: the business details and a permanent public address must be real
+    if tracking_needed(agent):                                                                    # order links are on: the business details are real, and the pages exist (hosted) or the public address works (self-hosted)
+        from . import tracker
         f = agent.cfg.get("facts") or {}
-        checks += [{"ok": all(_real(f.get(k)) for k in ("website", "phone", "hours", "address")), "text": "Order tracking links need your business website, customer service phone, opening hours and address (Connect, Your business)."},
-                   {"ok": bool(tested.get("public_address")) and _real(agent.cfg.get("public_base_url")), "text": "Your public address is set and the Test button confirmed it reaches this agent: customers open their order link on it, so it must stay the same."}]
+        checks.append({"ok": all(_real(f.get(k)) for k in ("website", "phone", "hours", "address")), "text": "Order tracking links need your business website, customer service phone, opening hours and address (Connect, Your business)."})
+        if tracker.mode(agent) == "hosted":
+            checks.append({"ok": connected(agent, "account") and bool(tested.get("order_pages")) and tracker.pages_current(agent), "text": "Your order pages are created at Speakvora (Connect, Your Speakvora account, then Create my order pages)."})
+        else:
+            checks.append({"ok": bool(tested.get("public_address")) and _real(agent.cfg.get("public_base_url")), "text": "Your public address is set and the Test button confirmed it reaches this agent."})
     return {"ok": all(c["ok"] for c in checks), "checks": checks}
 
 

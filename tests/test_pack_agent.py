@@ -659,7 +659,7 @@ class ConnectTab(unittest.TestCase):
         self.assertEqual(self.call("GET", "/dash/api/setup", tok=False)[0], 401)
         st, s = self.call("GET", "/dash/api/setup"); self.assertEqual(st, 200); txt = json.dumps(s)
         for secret in (TOKEN, "xoxb-1", SLACK_SECRET, "ya29"): self.assertNotIn(secret, txt)
-        self.assertEqual([c["name"] for c in s["cards"]], ["business", "twilio", "slack", "teams", "calendar", "email", "ai"])
+        self.assertEqual([c["name"] for c in s["cards"]], ["business", "twilio", "slack", "teams", "calendar", "email", "account", "ai"])
         tw = self.card("twilio"); self.assertTrue(tw["connected"]); self.assertTrue(next(f for f in tw["fields"] if f["key"] == "auth_token")["set"]); self.assertTrue(next(f for f in tw["fields"] if f["key"] == "auth_token")["hint"].endswith(TOKEN[-4:]))
 
     def test_saving_a_card_stores_keys_privately_applies_at_once_and_keeps_old_ones_when_the_box_is_empty(self):
@@ -1751,6 +1751,61 @@ class OrderTrackerAndRecords(unittest.TestCase):
             self.assertEqual(templating.render("Bella: {{slot:not_a_real_slot}} {{fact:hours}}", {"facts": {"hours": "9-5"}}, r.agent.pack), "Bella: 9-5")
         finally:
             r.close()
+
+    def test_hosted_pages_push_only_the_step_and_retry_when_offline(self):
+        from speakvora_pack_agent import tracker, sharing
+        r = Rig(extra={"speakvora": {"api_key": "key-123"}, "facts": {"website": "https://bella.example", "phone": "+16465550199"}}); sent = []; orig = sharing.web.request; fail = [True]
+        def fake(method, url, headers=None, body=None, **k):
+            if fail[0]:
+                raise OSError("offline")
+            sent.append((method, url, headers, body)); return 200, {"ok": True, "preview_url": "https://speakvora.com/o/preview-abc"}
+        sharing.web.request = fake
+        try:
+            self.assertEqual(tracker.mode(r.agent), "hosted")
+            ctx = r.agent.ctx(order={"number": "H1"}, customer={"name": "Ann", "phone": "+16465550101"}); r.agent.run_actions("t", [{"action": "track", "status": "received"}], ctx)
+            self.assertTrue("/o/" in ctx["track"]["url"] and "/track/" not in ctx["track"]["url"])      # a Speakvora link, made even though we are offline
+            self.assertEqual(tracker.sync(r.agent), 0); self.assertEqual(sent, [])                                                                      # offline: nothing lost, retried later
+            fail[0] = False; self.assertEqual(tracker.sync(r.agent), 1); m, url, h, body = sent[0]
+            self.assertEqual((m, h["x-api-key"]), ("POST", "key-123")); self.assertTrue(url.endswith("/api/v1/track/push")); self.assertEqual((body["order"], body["status"], body["flow"]), ("H1", "received", "order"))
+            self.assertNotIn("Ann", json.dumps(body)); self.assertNotIn("6465550101", json.dumps(body))                                               # nothing about the customer leaves
+            self.assertEqual(tracker.sync(r.agent), 0)                                                                                                  # already sent
+            r.agent.run_actions("t", [{"action": "track", "status": "preparing"}], r.agent.ctx(order={"number": "H1"})); import time; time.sleep(0.3); tracker.sync(r.agent)
+            self.assertEqual(sent[-1][3]["status"], "preparing")
+        finally:
+            sharing.web.request = orig; r.close()
+
+    def test_creating_the_order_pages_sends_the_business_details_and_needs_a_key(self):
+        from speakvora_pack_agent import tracker, sharing
+        r = Rig(extra={"facts": {"website": "https://bella.example", "phone": "+16465550199", "hours": "Daily 11-10"}}); got = []; orig = sharing.web.request
+        sharing.web.request = lambda method, url, headers=None, body=None, **k: (got.append((method, url, headers, body)) or (200, {"ok": True, "preview_url": "https://speakvora.com/o/preview-zz"}))
+        try:
+            with self.assertRaises(ValueError):
+                tracker.push_business(r.agent)
+            r.agent.cfg["speakvora"] = {"api_key": "key-9"}
+            out = tracker.push_business(r.agent); self.assertEqual(out["preview_url"], "https://speakvora.com/o/preview-zz")
+            m, url, h, b = got[0]; self.assertEqual((m, b["name"], b["phone"], b["website"], b["hours"]), ("PUT", "Bella", "+16465550199", "https://bella.example", "Daily 11-10"))
+            self.assertTrue(tracker.pages_current(r.agent)); r.agent.cfg["facts"]["phone"] = "+16465550000"; self.assertFalse(tracker.pages_current(r.agent))      # a changed phone number must be sent again
+        finally:
+            sharing.web.request = orig; r.close()
+
+    def test_order_pages_setup_is_one_step_and_blocks_going_live_until_done(self):
+        from speakvora_pack_agent import connect, tracker, sharing
+        r = Rig(); got = []; orig = sharing.web.request
+        sharing.web.request = lambda method, url, headers=None, body=None, **k: (got.append((method, url, body)) or (200, {"ok": True, "preview_url": "https://speakvora.com/o/preview-q1"}))
+        try:
+            wf = json.load(open(r.agent.cfg["workflows"])); wf["workflows"].append({"name": "order_received", "on": {"event": "order.received"}, "do": [{"action": "track", "status": "received"}]}); json.dump(wf, open(r.agent.cfg["workflows"], "w")); r.agent._load_workflows()
+            r.agent.cfg["public_base_url"] = ""                                                                                              # no self-hosting: Speakvora hosts the pages
+            st = connect.order_pages(r.agent); self.assertTrue(st["needed"] and st["hosted"] and not st["complete"]); self.assertIn("Speakvora API key", st["missing"]); self.assertIn("Business website", st["missing"])
+            self.assertTrue(any("order pages are created" in c["text"] for c in connect.readiness(r.agent)["checks"] if not c["ok"]))
+            with self.assertRaises(connect.SetupError):
+                connect.setup_order_pages(r.agent, {"website": "https://bella.example"})                                                     # still missing details: nothing is created
+            self.assertEqual([g for g in got if g[0] == "PUT"], [])
+            out = connect.setup_order_pages(r.agent, {"website": "https://bella.example", "phone": "+16465550199", "hours": "Daily 11-10", "address": "12 Main St", "api_key": "key-77"})
+            self.assertTrue(out["complete"]); self.assertEqual(out["preview_url"], "https://speakvora.com/o/preview-q1"); self.assertTrue(any(g[0] == "PUT" and g[2]["name"] == "Bella" for g in got))
+            self.assertTrue(all(c["ok"] for c in connect.readiness(r.agent)["checks"] if "order" in c["text"].lower() and "pages" in c["text"].lower()))
+            r.agent.cfg["facts"]["phone"] = "+16465550000"; self.assertFalse(connect.order_pages(r.agent)["complete"])                        # a changed detail must reach every page again
+        finally:
+            sharing.web.request = orig; r.close()
 
     def test_orders_are_saved_listed_searched_and_exported_and_old_links_flagged(self):
         from speakvora_pack_agent import tracker

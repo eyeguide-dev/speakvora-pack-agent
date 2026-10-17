@@ -92,11 +92,11 @@ def summary(agent):
     st = agent.state; gaps = _gaps(agent); jobs = st.jobs()
     att = [j for j in jobs if j["status"] in ATTENTION][-30:][::-1]
     svc = [n for n in ("twilio", "slack", "teams", "email", "calendar") if SU.connected(agent, n)]
-    return {"setup": {"business": SU.connected(agent, "business"), "business_complete": bool(SU._real(agent.cfg.get("business")) and all(SU._real((agent.cfg.get("facts") or {}).get(k)) for k in ("hours", "address"))), "connected": len(svc), "services": svc, "ready": SU.readiness(agent)["ok"], "live": not agent.dry}, "update": sharing.update_info(agent), "now": int(agent.now()), "pack": {"title": agent.pack.meta.get("title"), "id": agent.pack.meta.get("pack"), "language": agent.pack.language, "lines": len(agent.pack.items), "profile": agent.profile, "version": agent.pack.meta.get("version")},
+    return {"setup": {"business": SU.connected(agent, "business"), "business_complete": bool(SU._real(agent.cfg.get("business")) and all(SU._real((agent.cfg.get("facts") or {}).get(k)) for k in ("hours", "address"))), "connected": len(svc), "services": svc, "ready": SU.readiness(agent)["ok"], "live": not agent.dry, "order_pages": SU.order_pages(agent)}, "update": sharing.update_info(agent), "now": int(agent.now()), "pack": {"title": agent.pack.meta.get("title"), "id": agent.pack.meta.get("pack"), "language": agent.pack.language, "lines": len(agent.pack.items), "profile": agent.profile, "version": agent.pack.meta.get("version")},
             "mode": "dry_run" if agent.dry else "live", "paused": agent.safe.killed(), "counts": st.job_counts(), "workflows": len(agent.workflows),
             "attention": [_job(j) for j in att], "recent": [_job(j) for j in jobs[-40:][::-1]],
             "coverage": {"needed": len(SL.needed_by(json.load(open(agent.cfg["workflows"], encoding="utf-8")))) if agent.cfg.get("workflows") else 0, "missing": gaps},
-            "requests": _requests(agent)[-10:][::-1], "can_send_requests": bool(os.environ.get("SPEAKVORA_KEY")), "locations": LC.view(agent)}
+            "requests": _requests(agent)[-10:][::-1], "can_send_requests": bool(sharing._key(agent)), "locations": LC.view(agent)}
 
 
 CUSTOM_BAD = re.compile(r"https?://|@|\d{6,}")
@@ -250,6 +250,10 @@ def handle(agent, method, path, headers, raw):
             out = BR.edit(agent, json.loads(raw or b"{}").get("profile"))
         elif p == "/dash/api/brain/forget" and method == "POST":
             out = BR.forget(agent)
+        elif p == "/dash/api/orderpages" and method == "GET":
+            out = SU.order_pages(agent)
+        elif p == "/dash/api/orderpages/setup" and method == "POST":
+            out = SU.setup_order_pages(agent, json.loads(raw or b"{}"))
         elif p == "/dash/api/orders" and method == "GET":
             qs = parse_qs(u.query); out = TK.orders(agent, (qs.get("q") or [""])[0], int((qs.get("offset") or ["0"])[0] or 0))
         elif p == "/dash/api/orders/export" and method == "GET":

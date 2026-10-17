@@ -84,7 +84,7 @@ def budget(agent):
 
 def _voice(agent, text):
     """Voices one line through the owner's Speakvora key. Returns audio bytes and the file extension."""
-    key = sharing._key()
+    key = sharing._key(agent)
     if not key:
         raise ValueError("Add your Speakvora API key (SPEAKVORA_KEY) so the agent can voice new lines.")
     voice = agent.pack.meta.get("voice")
@@ -202,7 +202,7 @@ def remove(agent, lid):
 
 def view(agent):
     s = _settings(agent)
-    return {"candidates": candidates(agent), "suggested": [{"id": k, "text": v} for k, v in (load(agent).get("suggested") or {}).items()], "items": [{"id": i["id"], "text": i["text"], "auto": i.get("auto", False)} for i in load(agent)["items"]], "budget": budget(agent), "auto": bool(s["auto_learn_phrases"]), "learn_after": s["learn_after"], "has_key": bool(sharing._key())}
+    return {"candidates": candidates(agent), "suggested": [{"id": k, "text": v} for k, v in (load(agent).get("suggested") or {}).items()], "items": [{"id": i["id"], "text": i["text"], "auto": i.get("auto", False)} for i in load(agent)["items"]], "budget": budget(agent), "auto": bool(s["auto_learn_phrases"]), "learn_after": s["learn_after"], "has_key": bool(sharing._key(agent))}
 
 
 def auto(agent):
@@ -212,7 +212,7 @@ def auto(agent):
             return
         d = load(agent)
         today = [i for i in d["items"] if i.get("auto") and agent.now() - i["added"] < DAY]
-        if len(today) >= 3 or not sharing._key():
+        if len(today) >= 3 or not sharing._key(agent):
             return
         for c in candidates(agent):
             if len(c["text"]) <= budget(agent)["left"]:

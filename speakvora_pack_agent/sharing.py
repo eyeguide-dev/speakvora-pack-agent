@@ -42,8 +42,14 @@ def pending(agent):
     return [g for g in gaps(agent) if g["slot"] not in done]
 
 
-def _key():
-    return os.environ.get("SPEAKVORA_KEY") or ""
+def _key(agent=None):
+    """Your Speakvora API key: the SPEAKVORA_KEY environment variable, or the one typed into the dashboard (Connect, Your Speakvora account)."""
+    v = os.environ.get("SPEAKVORA_KEY") or ""
+    if not v and agent is not None:
+        v = str(((agent.cfg.get("speakvora") or {}).get("api_key")) or "")
+        if v.startswith("env:") or "YOUR-" in v:
+            v = ""
+    return v
 
 
 def _log(agent, slots, sent, text=""):
@@ -61,7 +67,7 @@ def submit(agent, picked, text=""):
     path = os.path.join(agent.state.dir, "slot-requests.json"); doc = SL.request_file(agent.pack, agent.profile, picked, path)
     slots = [p["slot"] for p in picked]
     try:
-        h = {"x-api-key": _key()} if _key() else {}
+        h = {"x-api-key": _key(agent)} if _key(agent) else {}
         _st, r = web.request("POST", host() + "/api/v1/packs/slot-requests", {**h, "content-type": "application/json"}, body=doc, timeout=20)
         for s in slots:
             agent.state.data.setdefault("requested", {})[s] = int(agent.now())
