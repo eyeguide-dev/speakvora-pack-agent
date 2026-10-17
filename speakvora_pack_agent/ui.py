@@ -217,6 +217,24 @@ const list=(title,arr,addLabel,dismiss)=>{if(!arr.length)return;c.appendChild(h(
 list('Suggested by your AI:',d.suggested,'Add');list('Your AI keeps saying these ('+d.learn_after+' times or more):',d.candidates,'Add');
 if(d.items.length){c.appendChild(h('div',{class:'small mut',style:'margin-top:12px'},'Your added phrases:'));d.items.forEach(x=>c.appendChild(h('div',{class:'row',style:'align-items:center;margin-top:6px'},h('div',{class:'grow small'},x.text+(x.auto?' (automatic)':'')),h('button',{class:'btn',on:{click:e=>act(e.currentTarget,async()=>{await post('/dash/api/learned/remove',{id:x.id})},'Removed')}},'Remove'))))}
 const prog=box.querySelector('.prog');box.insertBefore(frag,prog?prog.nextSibling:box.children[2]||null)}
+
+async function controlsCard(box){let d;try{d=await api('/dash/api/controls')}catch(e){return}
+box.appendChild(h('h2',null,'Call handling controls'));const c=h('div',{class:'card'});box.appendChild(c);
+c.appendChild(h('div',{class:'small mut'},'Your industry: '+(d.industries.length?d.industries.join(', '):'general')+'. '+d.counts.rules+' draft rules apply ('+d.counts.critical+' critical, '+d.counts.high+' high priority). The agent already enforces '+d.counts.enforced+' of them in code; the rest are guidance for your team and your systems until you review them.'));
+c.appendChild(h('div',{class:'hlp'},d.ready?'Private records are approved: your connected system may answer verified people.':'Private records (health details, order lookups tied to a person) stay OFF until the items below are filled in and you approve go-live.'));
+if(d.readiness.length){const ul=h('div',{class:'small',style:'margin-top:8px'});d.readiness.forEach(x=>ul.appendChild(h('div',null,'\u2022 '+x.setting.replace(/_/g,' ')+': '+x.why)));c.appendChild(ul)}
+const vals={};const form=h('div',{style:'margin-top:10px'});
+d.policy.forEach(p=>{const isb=(p.default==='True'||p.default==='False');const cur=p.value;
+if(isb){const cb=h('input',{type:'checkbox'});cb.checked=String(cur).toLowerCase()==='true';cb.onchange=()=>{vals[p.setting]=cb.checked?'True':'False'};form.appendChild(h('label',{class:'row',style:'gap:8px;align-items:center;margin-top:6px'},cb,h('span',{class:'small'},p.setting.replace(/_/g,' ')+' - '+p.purpose)))}
+else{const i=h('input',{value:cur==='UNSET'?'':cur,placeholder:'UNSET'});i.onchange=()=>{vals[p.setting]=i.value.trim()||'UNSET'};form.appendChild(h('div',{class:'fld'},h('label',{class:'small'},p.setting.replace(/_/g,' ')+' - '+p.purpose),i))}});
+const det=h('details',null,h('summary',{class:'small'},'Policy settings ('+d.policy.length+')'),form);c.appendChild(det);
+c.appendChild(h('div',{class:'btns'},h('button',{class:'btn primary',on:{click:e=>act(e.currentTarget,async()=>{await post('/dash/api/controls/policy',{values:vals})},'Saved')}},'Save policy settings')));
+const list=h('div',{class:'small',style:'margin-top:8px'});let off=0;
+const more=async()=>{const r=await api('/dash/api/controls/rules?priority='+encodeURIComponent(pf.value)+'&offset='+off);r.rules.forEach(x=>list.appendChild(h('div',{style:'margin-top:8px;padding-top:8px;border-top:1px solid var(--line,#ddd)'},h('b',null,x.id+' ['+x.priority+'] '),(x.enforced?'ENFORCED. ':'Draft guidance. '),h('div',null,'When: '+x.trigger),h('div',null,'Do: '+x.control),h('div',{class:'mut'},'Never: '+x.never))));off+=r.rules.length;mb.style.display=off<r.total?'':'none';cnt.textContent=Math.min(off,r.total)+' of '+r.total};
+const pf=h('select',null,h('option',{value:''},'All priorities'),h('option',{value:'Critical'},'Critical'),h('option',{value:'High'},'High'),h('option',{value:'Standard'},'Standard'));
+const cnt=h('span',{class:'small mut'},'');const mb=h('button',{class:'btn',on:{click:()=>more().catch(e=>toast(e.message))}},'Show more');
+pf.onchange=()=>{list.textContent='';off=0;more().catch(e=>toast(e.message))};
+const rd=h('details',{on:{toggle:e=>{if(e.target.open&&!off)more().catch(x=>toast(x.message))}}},h('summary',{class:'small'},'See the rules that apply to you'),h('div',{style:'margin-top:8px'},pf,' ',cnt),list,mb);c.appendChild(rd)}
 async function guardCard(box){let g;try{g=await api('/dash/api/guardrails')}catch(e){return}const s=g.settings;
 box.appendChild(h('h2',null,'Limits for your AI in live conversations'));const c=h('div',{class:'card'});box.appendChild(c);
 c.appendChild(h('div',{class:'small mut'},'Always on, and not changeable:'));g.hard.forEach(x=>c.appendChild(h('div',{class:'small'},'• '+x)));
@@ -230,7 +248,7 @@ const bt=(k,t)=>{const i=h('input',{value:(s[k]||[]).join(', ')});i.onchange=()=
 c.appendChild(bt('blocked_topics','Topics it must hand to a person (comma separated)'));c.appendChild(bt('handoff_words','Words that mean the caller wants a person'));
 c.appendChild(h('div',{class:'hlp'},g.staff_phone_set?'A caller who asks for a person is connected to your staff number right away.':'Set your staff phone number (Connect) so a caller who asks for a person can be connected. Until then they are told someone will call back.'));
 c.appendChild(h('div',{class:'btns'},h('button',{class:'btn primary',on:{click:e=>act(e.currentTarget,async()=>{await post('/dash/api/guardrails',s)},'Saved')}},'Save limits')))}
-{const _ll=loadLibrary,_ls=loadSettings;loadLibrary=async function(){await _ll();await brainCard($('v-library'));await learnedCard($('v-library'))};loadSettings=async function(){await _ls();await guardCard($('v-settings'))}}
+{const _ll=loadLibrary,_ls=loadSettings;loadLibrary=async function(){await _ll();await brainCard($('v-library'));await learnedCard($('v-library'))};loadSettings=async function(){await _ls();await guardCard($('v-settings'));await controlsCard($('v-settings'))}}
 async function refreshAll(){try{S=await api('/dash/api/summary');JOBS=(await api('/dash/api/jobs')).jobs}catch(e){$('v-home').textContent=e.status===401?'Open the address printed when the agent started (it ends with #token=...).':'Could not load: '+e.message;return}drawState();document.title=(S.pack.title||'Your voice bundle')+' | Speakvora';if(VIEW==='home')renderHome();if(VIEW==='connect')loadConnect(true);if(VIEW==='library')loadLibrary();if(VIEW==='settings')loadSettings()}
 (async()=>{drawTabs();await refreshAll();if(START)go(START);else if(S&&!S.setup.connected&&!JOBS.length)go('connect');if(ADDSHEET){await new Promise(r=>setTimeout(r,1200));if(SETUP)addSheet()}setInterval(()=>{if(VIEW==='home')refreshAll()},15000)})();
 </script></body></html>""".replace("__LOGO__", LOGO)

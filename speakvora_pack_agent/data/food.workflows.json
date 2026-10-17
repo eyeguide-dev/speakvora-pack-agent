@@ -1,15 +1,128 @@
 {
  "workflows": [
   {
+   "name": "order_received",
+   "on": {
+    "event": "order.received"
+   },
+   "do": [
+    {
+     "action": "track",
+     "status": "received"
+    },
+    {
+     "action": "sms",
+     "to": "{{customer.phone}}",
+     "text": "{{business}}: {{slot:order_received}} {{slot:track_intro}} {{track.url}}"
+    }
+   ]
+  },
+  {
+   "name": "order_preparing",
+   "on": {
+    "event": "order.preparing"
+   },
+   "do": [
+    {
+     "action": "track",
+     "status": "preparing"
+    },
+    {
+     "action": "sms",
+     "to": "{{customer.phone}}",
+     "text": "{{business}}: {{slot:order_preparing}} {{track.url}}",
+     "each_step": true
+    }
+   ]
+  },
+  {
+   "name": "order_picked_up",
+   "on": {
+    "event": "order.picked_up"
+   },
+   "do": [
+    {
+     "action": "track",
+     "status": "picked_up"
+    },
+    {
+     "action": "sms",
+     "to": "{{customer.phone}}",
+     "text": "{{business}}: {{slot:order_picked_up}}",
+     "each_step": true
+    }
+   ]
+  },
+  {
+   "name": "order_out_for_delivery",
+   "on": {
+    "event": "order.out_for_delivery"
+   },
+   "do": [
+    {
+     "action": "track",
+     "status": "out_for_delivery",
+     "delivery": true
+    },
+    {
+     "action": "sms",
+     "to": "{{customer.phone}}",
+     "text": "{{business}}: {{slot:order_ready_delivery}} {{track.url}}",
+     "each_step": true
+    }
+   ]
+  },
+  {
+   "name": "order_delivered",
+   "on": {
+    "event": "order.delivered"
+   },
+   "do": [
+    {
+     "action": "track",
+     "status": "delivered",
+     "delivery": true
+    },
+    {
+     "action": "sms",
+     "to": "{{customer.phone}}",
+     "text": "{{business}}: {{slot:order_delivered}}",
+     "each_step": true
+    }
+   ]
+  },
+  {
+   "name": "order_cancelled",
+   "on": {
+    "event": "order.cancelled"
+   },
+   "do": [
+    {
+     "action": "track",
+     "status": "cancelled"
+    },
+    {
+     "action": "sms",
+     "to": "{{customer.phone}}",
+     "text": "{{business}}: {{slot:order_cancelled}}"
+    }
+   ]
+  },
+  {
    "name": "order_ready",
    "on": {
     "event": "order.ready"
    },
    "do": [
     {
+     "action": "track",
+     "status": "ready"
+    },
+    {
      "action": "sms",
      "to": "{{customer.phone}}",
-     "text": "{{business}}: order {{order.number}} is ready. {{slot:order_ready}} {{slot:pickup_instructions}}"
+     "text": "{{business}}: order {{order.number}} is ready. {{slot:order_ready}} {{slot:pickup_instructions}}",
+     "each_step": true
     },
     {
      "action": "call",
@@ -35,6 +148,11 @@
     "event": "order.delayed"
    },
    "do": [
+    {
+     "action": "track",
+     "status": "preparing",
+     "delayed": true
+    },
     {
      "action": "sms",
      "to": "{{customer.phone}}",

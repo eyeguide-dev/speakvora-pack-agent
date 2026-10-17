@@ -901,7 +901,7 @@ class Languages(unittest.TestCase):
             r.agent.state.opt_in("+16465550101"); r.agent.handle_sms({"From": "+16465550101", "Body": "STOP"}); self.assertTrue(r.agent.state.is_opted_out("+16465550101"), lang); r.close()
 
     def test_order_texts_use_the_pack_language_not_english_glue(self):
-        r = self.agent("es"); r.event("order.ready", customer=CUST, order={"number": 42}); body = r.mock.calls("Messages.json")[0]["form"]["Body"]
+        r = self.agent("es"); r.agent.cfg["tracking"] = {"text_each_step": True}; r.event("order.ready", customer=CUST, order={"number": 42}); body = r.mock.calls("Messages.json")[0]["form"]["Body"]
         self.assertIn("Pedido 42:", body); self.assertNotIn("order 42 is ready", body); r.event("order.delayed", customer=CUST, order={"number": 42, "extra_minutes": 10}); self.assertIn("(10 min)", r.mock.calls("Messages.json")[1]["form"]["Body"]); r.close()
 
     def test_dates_are_formatted_in_the_pack_language(self):
@@ -1686,6 +1686,92 @@ class IndustryRulesAndPrivacy(unittest.TestCase):
             self.assertEqual(out["jobs"], 1); self.assertEqual(st.data["jobs"]["old"]["ctx"], {}); self.assertEqual(st.data["jobs"]["old"]["a"]["text"], "(removed)")
             self.assertEqual(st.data["jobs"]["wait"]["ctx"]["customer"]["name"], "Bo")
             self.assertNotIn("6465550101", open(st.log_path).read())
+        finally:
+            r.close()
+
+
+class OrderTrackerAndRecords(unittest.TestCase):
+    def test_tracker_gives_one_link_and_the_page_follows_the_steps(self):
+        from speakvora_pack_agent import tracker
+        r = Rig()
+        try:
+            ctx = r.agent.ctx(order={"number": "A17"}, customer={"name": "Ann", "phone": "+16465550101", "sms_consent": True})
+            res = r.agent.run_actions("t", [{"action": "track", "status": "received"}], ctx); self.assertEqual(res[0]["status"], "ok")      # logged as ok, not as an error
+            url = ctx["track"]["url"]; self.assertIn("/track/", url); tok = url.rsplit("/", 1)[1]; self.assertGreaterEqual(len(tok), 20)
+            r.agent.run_actions("t", [{"action": "track", "status": "preparing"}], r.agent.ctx(order={"number": "A17"}))
+            d = tracker.get(r.agent, tok); self.assertEqual(d["status"], "preparing"); self.assertEqual(d["label"], "Being prepared")
+            r.agent.run_actions("t", [{"action": "track", "status": "out_for_delivery", "delivery": True}], r.agent.ctx(order={"number": "A17"}))
+            self.assertEqual([s["key"] for s in tracker.get(r.agent, tok)["steps"]][-1], "delivered")
+            page = tracker.page(r.agent, tok).decode(); self.assertIn("A17", page); self.assertNotIn("Ann", page); self.assertNotIn("6465550101", page)
+            self.assertIsNone(tracker.get(r.agent, "not-a-real-code"))
+            r.now[0] += 5 * 86400; r.agent.run_actions("t", [{"action": "track", "status": "delivered", "delivery": True}], r.agent.ctx(order={"number": "A17"}))
+            r.now[0] += 5 * 86400; self.assertEqual(tracker.purge(r.agent), 1); self.assertIsNone(tracker.get(r.agent, tok))
+        finally:
+            r.close()
+
+    def test_later_step_texts_are_off_unless_switched_on(self):
+        r = Rig()
+        try:
+            acts = [{"action": "track", "status": "preparing"}, {"action": "sms", "to": "{{customer.phone}}", "text": "Preparing {{track.url}}", "each_step": True}]
+            ctx = lambda: r.agent.ctx(order={"number": "B2"}, customer={"phone": "+16465550101", "sms_consent": True})
+            before = len(r.mock.calls("sms")) if hasattr(r.mock, "calls") else 0
+            res = r.agent.run_actions("t", acts, ctx())
+            self.assertEqual([x["action"] for x in res], ["track"])
+        finally:
+            r.close()
+
+    def test_private_lookup_needs_approval_a_verified_person_and_an_allowed_number(self):
+        from speakvora_pack_agent import engine as E
+        r = Rig(extra={"connections": [{"id": "records", "url": "https://records.example/lookup", "auth": {"type": "bearer", "secret": "k"}}], "industry_profile": "pharmacy"})
+        orig = E.web.request; calls = []
+        reply = {"found": True, "verified": True, "message": "Your order is ready at the counter.", "allowed_phones": ["+16465550101"]}
+        E.web.request = lambda *a, **k: (calls.append(1) or (200, dict(reply)))
+        look = [{"action": "lookup", "connection": "records", "deliver": "reply", "fallback_slot": "handoff_received"}]
+        ctx = lambda: r.agent.ctx(sms={"from": "+16465550101", "body": "status A1"}, customer={"phone": "+16465550101", "sms_consent": True})
+        try:
+            r.agent.profile = "pharmacy"
+            out = {"reply": "", "play": []}; r.agent.run_actions("t", look, ctx(), out)
+            self.assertNotIn("counter", out["reply"]); self.assertEqual(calls, [])                  # policy not approved: no request is even made
+            r.agent.cfg["call_policy"] = {"human_review_owner": "Sam", "identity_method": "records system asks date of birth", "privacy_notice": "x", "jurisdiction_profile": "NY", "transfer_roster": "front desk", "phi_enabled": "True", "go_live_approval": "True"}
+            r.agent.dry = False
+            out = {"reply": "", "play": []}; r.agent.run_actions("t", look, ctx(), out); self.assertEqual(out["reply"], "Your order is ready at the counter.")
+            reply["verified"] = False
+            out = {"reply": "", "play": []}; r.agent.run_actions("t", look, ctx(), out); self.assertNotIn("counter", out["reply"])         # caller ID alone is never enough
+            reply["verified"] = True; reply["allowed_phones"] = ["+16465559999"]
+            out = {"reply": "", "play": []}; r.agent.run_actions("t", look, ctx(), out); self.assertNotIn("counter", out["reply"])
+            self.assertNotIn("counter", open(r.agent.state.log_path).read())                              # the private text is never written to the log
+        finally:
+            E.web.request = orig; r.close()
+
+    def test_the_public_tracking_page_and_its_json(self):
+        r = Rig(); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            ctx = r.agent.ctx(order={"number": "C3"}); r.agent.run_actions("t", [{"action": "track", "status": "ready"}], ctx); tok = ctx["track"]["url"].rsplit("/", 1)[1]
+            html = urllib.request.urlopen(f"http://127.0.0.1:{port}/track/{tok}").read().decode(); self.assertIn("C3", html); self.assertIn("noindex", html)
+            self.assertEqual(json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/track/{tok}.json").read())["status"], "ready")
+            with self.assertRaises(urllib.error.HTTPError):
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/track/wrongcode")
+        finally:
+            srv.shutdown(); srv.server_close(); r.close()
+
+    def test_emergency_and_secrets_on_a_call(self):
+        r = Rig(extra={"twilio": {"speech_input": True}})
+        try:
+            self.assertIn("nine one one", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "my husband has chest pain"}, "menu", ""))
+            xml = r.agent.handle_call({"From": "+16465550101", "SpeechResult": "my card number is"}, "menu", "")
+            self.assertIn("cannot take them", xml); self.assertNotIn("Dial", xml)
+        finally:
+            r.close()
+
+    def test_the_controls_catalog_loads_per_industry(self):
+        from speakvora_pack_agent import controls
+        r = Rig()
+        try:
+            r.agent.profile = "pharmacy"; v = controls.view(r.agent)
+            self.assertGreater(v["counts"]["rules"], 100); self.assertGreaterEqual(v["counts"]["enforced"], 5); self.assertFalse(v["ready"])
+            self.assertTrue(any(x["setting"] == "phi_enabled" for x in v["readiness"]))
+            self.assertTrue(all(not x["enabled"] for x in controls.catalog()["rules"]))                  # every catalog rule ships disabled
+            self.assertEqual(controls.rules(r.agent, "Critical")["rules"][0]["priority"], "Critical")
         finally:
             r.close()
 

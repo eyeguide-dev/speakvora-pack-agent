@@ -154,6 +154,8 @@ class Agent:
         results = []
         for idx, a in enumerate(actions):
             kind = a.get("action")
+            if a.get("each_step") and not (self.cfg.get("tracking") or {}).get("text_each_step"):         # a text for every order step is opt-in: by default the customer gets one text with a tracking link
+                continue
             if a.get("if") and not self._when_ok(a["if"], ctx):                  # per-action condition, e.g. {"if": {"customer.prefers_call": "*"}}
                 continue
             try:
@@ -193,6 +195,42 @@ class Agent:
                 return [val(v) for v in o]
             return o
         return {k: val(v) for k, v in a.items() if k != "if"}
+
+    def _lookup(self, wf, a, ctx, out):
+        """Asks the business's own records system about the person who texted or called, and passes the answer on ONLY to a number that system lists as allowed (the patient or their caregiver). The answer comes from that system word for word (the AI never writes it), is sent to the asking number only,
+        and is not kept: a text reply goes straight back in the answer to the incoming message, and a text sent for a phone call is cleared from the job record as soon as it is sent. Without a connected system, or when the number is not allowed, the person is told to contact staff."""
+        phone = S.norm_phone((ctx.get("customer") or {}).get("phone", ""))
+        def fallback(why):
+            try:
+                out["reply"] = self.pack.text(a.get("fallback_slot") or "handoff_received")
+            except PackError:
+                out["reply"] = "Please contact our staff and they will help you."
+            self.record(wf, "lookup", why); return {"status": why}
+        try:
+            c = self._with_connection({"connection": a.get("connection") or "records", "method": "POST"})
+        except PackError:
+            return fallback("not_connected")
+        from . import controls
+        if not controls.private_lookups_ready(self):                              # private records stay off until the settings that make them safe are approved; no request is made
+            return fallback("policy_not_approved")
+        if self.dry:
+            self.record(wf, "lookup", "dry_run"); out["reply"] = "(practice mode) A lookup would be made in your records system."; return {"status": "dry_run"}
+        try:
+            st, resp = web.request("POST", c["url"], c.get("headers") or {}, body={"phone": phone, "text": str((ctx.get("sms") or {}).get("body", ""))[:300], "channel": "text" if ctx.get("sms") else "call"}, timeout=10)
+        except Exception:  # noqa: BLE001
+            return fallback("system_unreachable")
+        allowed = {S.norm_phone(x) for x in (resp.get("allowed_phones") or [])} if isinstance(resp, dict) else set()
+        msg = str(resp.get("message") or "").strip()[:600] if isinstance(resp, dict) else ""
+        if not (isinstance(resp, dict) and resp.get("found") and resp.get("verified") is True and msg and phone and phone in allowed):      # the records system must have verified who is asking (caller ID alone never counts) and list this number as allowed
+            return fallback("not_authorised")
+        if a.get("deliver") == "sms":                                             # a phone call never speaks health details aloud: they are texted to the number on file
+            self.run_actions(wf, [{"action": "sms", "to": phone, "text": msg, "raw": True, "sensitive": True}], dict(ctx, customer={"phone": phone, "sms_consent": True}))
+            from . import privacy
+            privacy.clear_sensitive(self)
+            out["reply"] = "I have sent the details by text to the number we have on file."
+        else:
+            out["reply"] = msg
+        self.record(wf, "lookup", "answered", channel=a.get("deliver") or "reply"); return {"status": "answered"}
 
     def _with_connection(self, a):
         """An http action that names one of the connections set up in the dashboard ("connection": "my-app") uses its address and key, so the workflow never contains the key."""
@@ -505,6 +543,18 @@ class Agent:
             return {"status": "ok"}
         if kind == "log":
             self.record(wf, kind, "ok", text=a.get("text", "")); return {"status": "ok"}
+        if kind == "track":
+            from . import tracker
+            o = ctx.get("order") or {}
+            try:
+                r = tracker.set_status(self, a.get("order") or o.get("number") or o.get("id"), str(a.get("status", "")), delivery=bool(a.get("delivery") or o.get("delivery") or str(o.get("type", "")).lower() == "delivery"), delayed=a.get("delayed"))
+            except ValueError as ex:                                                  # for example no public address yet: say so and skip, never crash the workflow
+                raise PackError(str(ex))
+            ctx["track"] = {"url": r["url"], "status": a.get("status")}
+            st = "dry_run" if self.dry else "ok"
+            self.record(wf, kind, st, step=a.get("status"), order=str(a.get("order") or o.get("number") or o.get("id"))); return {"status": st}
+        if kind == "lookup":
+            return self._lookup(wf, a, ctx, out)
         if kind == "sms":
             to = S.norm_phone(a["to"]); blocked = self._gate(wf, "sms", to, ctx, bool(a.get("urgent")))
             if blocked:
@@ -808,6 +858,14 @@ class Agent:
         said = re.sub(r"[^a-z0-9' ]+", " ", str(params.get("SpeechResult", "")).lower()).strip()
         if said and os.environ.get("SV_DEBUG_SPEECH"):
             self.state.log(workflow=wf["name"], action="call_speech", status="heard", dry_run=False, step=step, heard=said[:80])         # test aid only: what the caller said, never on by default
+        from . import controls
+        guard = controls.guard_speech(said)
+        if guard == "emergency":                                                   # an emergency is never queued or handled by a menu: say what to do and stop
+            self.record(wf["name"], "emergency_redirect", "said")
+            return "<Response><Say>If this is an emergency, hang up and call nine one one now. This line cannot send emergency help.</Say><Hangup/></Response>"
+        if guard == "secret":                                                      # passwords, codes and card numbers are never taken on this line
+            self.record(wf["name"], "secret_refused", "said")
+            return twiml_menu([], f"{base}/twilio/call/menu2", "Please do not say passwords, codes or card numbers on this call. I cannot take them. Press 0 or say person for a team member, or press 1 for hours.", speech_hints=self._speech_hints(menu), no_input_url=f"{base}/twilio/call/menu3")
         bye = bool(re.search(r"\b(bye|goodbye|nope|nah|nothing|no thank you|no thanks|that's all|that is all|that's it|that is it|all done|all set|i'm good|im good|i am good)\b", said)) or said == "no"
         digits = (digits or "").strip() or self._speech_choice(menu, said)
         if bye and not digits and step == "menu":

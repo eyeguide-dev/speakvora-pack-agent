@@ -1,0 +1,35 @@
+# Order tracking links, pharmacy texts, and private records from your own system
+
+## Order tracking (restaurants, laundry, retail and similar)
+When your system sends `order.received`, the customer gets **one text** with a private link, like the ones pizza chains send. The page behind the link shows the order moving through its steps and updates by itself:
+- pickup: received, preparing, ready for pickup, picked up
+- delivery: received, preparing, on its way, delivered (send `"delivery": true` in the order, or `order.out_for_delivery`)
+
+Your system just keeps telling the agent where the order is: `order.preparing`, `order.ready`, `order.picked_up`, `order.out_for_delivery`, `order.delivered`, `order.delayed`, `order.cancelled`. Each event updates the page; no more texts go out unless you set `"tracking": {"text_each_step": true}` in `agent.json`.
+The page shows only your business name, the order number and the step: no customer name, number or what was ordered. The code in the link is long and random, the page tells search engines to ignore it, and the link stops working three days after the order is finished. The agent serves the page at `public_base_url/track/<code>`, so the address in `public_base_url` must be reachable by your customers' phones.
+
+## Pharmacy and dispensary
+Customers get a plain text when an order is **placed**, **ready for pickup** and **picked up**. The texts never say what is in the order. A customer who texts or calls can reach staff (press 0 or say "person").
+
+## Health and other private details: only from your own connected system
+The agent never writes or guesses private details. It can pass on an answer **word for word from your records system**, only when all of these hold:
+1. The **Call handling controls** card in Settings shows private records approved: a named reviewer, how your system verifies people, your privacy notice, jurisdiction profile, transfer roster, `phi_enabled` for health businesses, and your go-live approval.
+2. Your system answers the agent's request with `{"found": true, "verified": true, "message": "...", "allowed_phones": ["+1..."]}`. `verified` means YOUR system checked who is asking (caller ID alone never counts). `allowed_phones` lists the patient's number and any caregiver or representative your system authorised.
+3. The asking number is on that list.
+Otherwise the person hears that staff will help them. On a text, the answer goes straight back as the reply. On a phone call nothing private is spoken: the details are texted to the number on file, and the agent erases that text from its own records as soon as it is sent. Only the outcome (answered, or not authorised) is logged.
+
+Connect it in **Connect, Your apps**: add a connection with the id `records`, the address of your lookup endpoint and its key. The agent POSTs `{"phone": "...", "text": "<what they typed>", "channel": "text"|"call"}` and nothing else.
+
+## Hospitals and clinics
+General administrative questions (hours, departments, directions, scheduling procedure) are answered from approved facts. Patient-specific status uses the same connected-system lookup above. Clinical questions, symptoms and results go to staff.
+
+## Industry call-handling controls (draft catalog)
+The agent ships a catalog of 1,140 draft rules for 23 industries, 49 policy settings and source references (`data/call_controls.json`, from your Speakvora Industry Call Handling Controls workbook). **Every rule is a draft until you review it.** The dashboard (Settings, Call handling controls) lists the rules for your industry and marks the ones the agent already enforces in code: caller ID is never identity; passwords and card numbers are refused; the call starts by saying it is automated; emergencies get "call 911" and stop the menu (when speech input is on); a person is always one request away; webhooks go only to hosts you wrote; private lookups are logged by outcome only. This is not legal advice or a compliance certificate.
+
+## Feeding the tracker from your system (the API)
+Your ordering or kitchen system sends each change to the agent as a signed event, the same way every other event arrives (see `docs/integrate-in-10-minutes.md` for the signature). One example, a kitchen marking an order ready:
+```
+curl -X POST https://YOUR-AGENT-ADDRESS/event -H "content-type: application/json" -H "x-sv-timestamp: <unix seconds>" -H "x-sv-signature: <HMAC of timestamp and body with your events secret>" \
+  -d '{"event":"order.ready","id":"evt-1042-ready","customer":{"name":"Ann","phone":"+15551234567","sms_consent":true},"order":{"number":"1042"}}'
+```
+The first event for an order (`order.received`) texts the customer the link once; every later event only moves the page along. Send the same `order.number` each time. Use a different `id` per event so a repeat is ignored.

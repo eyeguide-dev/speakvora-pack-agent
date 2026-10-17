@@ -29,6 +29,8 @@ def scrub(agent, force=False):
     st = agent.state; now = agent.now()
     if not force and now - float(st.data.get("privacy_last", 0)) < 20 * 3600:
         return {"jobs": 0, "log_lines": 0}
+    from . import tracker
+    tracker.purge(agent)
     cutoff = now - days(agent) * 86400; jobs = lines = 0
     with st.lock:
         for j in st.data["jobs"].values():
@@ -47,3 +49,15 @@ def scrub(agent, force=False):
                 out.append(json.dumps(r, ensure_ascii=False))
             tmp = st.log_path + ".tmp"; open(tmp, "w", encoding="utf-8").write("\n".join(out) + ("\n" if out else "")); os.replace(tmp, st.log_path)
     return {"jobs": jobs, "log_lines": lines}
+
+
+def clear_sensitive(agent):
+    """Texts marked sensitive (answers from a connected records system) lose their wording and customer details the moment they are finished, not after the retention days."""
+    n = 0
+    with agent.state.lock:
+        for j in agent.state.data["jobs"].values():
+            if (j.get("a") or {}).get("sensitive") and j["status"] not in KEEP and not j.get("scrubbed"):
+                j["ctx"] = {}; j["a"] = {k: ("(removed)" if k in ("text", "body") else _mask(v)) for k, v in j["a"].items()}; j["scrubbed"] = True; n += 1
+        if n:
+            agent.state.save()
+    return n

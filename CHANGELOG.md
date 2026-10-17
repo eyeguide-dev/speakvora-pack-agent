@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.9.0
+Order tracking links: customers get one text with a private page that follows their order (received, preparing, ready, picked up; or on its way, delivered); later texts are opt-in. Pharmacy and dispensary texts at order placed, ready and picked up, never naming the contents. Private details only from your own connected records system, only to a number your system lists, only after you approve the settings that make that safe; erased from the agent's own records right after sending. A 1,140-rule draft catalog of industry call-handling controls with the policy settings to complete, shown in Settings, and the first controls enforced in code (emergency redirect, no passwords or card numbers, caller ID is never identity). Laundry bundles now have order workflows. See docs/orders-and-private-records.md.
+
 ## 0.8.1
 Fixes from the first live phone test: after an answer the agent asks whether there is anything else and ends politely on "no thanks" (it used to hang up); silence no longer drops the call (re-asks once, then connects a person); callers can interrupt the prompt by speaking; the "anything else" prompt listens for a small set of words so "no thanks" is not misheard as "person". Tested on a real call: hours by voice, goodbye, and "I need to speak to a person" connecting the staff phone.
 

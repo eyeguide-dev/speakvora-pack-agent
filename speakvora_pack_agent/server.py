@@ -93,6 +93,16 @@ def make_handler(agent):
                 return self._loc("GET")
             if p == "/health":
                 return self._send(200, {"ok": True, "dry_run": agent.dry, "pack": agent.pack.meta.get("pack"), "workflows": len(agent.workflows), "missing_slots": agent.missing_slots, "missing_required_lines": agent.missing_required, "killed": agent.safe.killed(), "queued": len(agent.state.outbox()), "jobs": agent.state.job_counts()})
+            if p.startswith("/track/"):                                        # the customer's order page: public, holds only the step, protected by a long random code
+                from . import tracker
+                if self._limited():
+                    return self._send(429, {"error": "slow_down"})
+                code = p[len("/track/"):]
+                if code.endswith(".json"):
+                    d = tracker.get(agent, code[:-5])
+                    return self._send(200, d) if d else self._send(404, {"error": "not_found"})
+                body = tracker.page(agent, code)
+                return self._send(200, body, "text/html; charset=utf-8") if body else self._send(404, {"error": "not_found"})
             if p.startswith("/audio/"):
                 got = agent.audio.serve(p[len("/audio/"):].rsplit(".", 1)[0])
                 return self._send(200, got[0], got[1]) if got else self._send(404, {"error": "not_found"})

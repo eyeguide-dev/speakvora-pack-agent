@@ -28,6 +28,10 @@ def localize(doc, lang):
     return _j.loads(txt)
 
 
+TRACK_PROFILES = ('food', 'retail', 'laundry')                                       # businesses whose customers watch an order move through steps
+LOOKUP_PROFILES = ('clinic', 'pharmacy')                                               # private status comes only from the business's own connected records system
+
+
 def _workflows_for(profile):
     reg = SL.registry(profile)
     if profile == "food":
@@ -35,13 +39,26 @@ def _workflows_for(profile):
     has = lambda s: s in reg  # noqa: E731
     w = []
     if has("order_ready"):
-        w += [{"name": "order_ready", "on": {"event": "order.ready"}, "do": [_sms(None, "{{business}}: order {{order.number}} is ready. {{slot:order_ready}}" + (" {{slot:pickup_instructions}}" if has("pickup_instructions") else "")),
-                                                                         {"action": "notify", "text": "Order {{order.number}} is ready. Text to {{customer.name}}: {{last.sms}}."}]},
-              {"name": "order_received", "on": {"event": "order.received"}, "do": [_sms(None, "{{business}}: {{slot:order_received}}")]},
-              {"name": "order_delayed", "on": {"event": "order.delayed"}, "do": [_sms(None, "{{business}}: {{slot:order_delayed}}"), {"action": "notify", "text": "Order {{order.number}} delayed. Text to customer: {{last.sms}}."}]}]
+        if profile in TRACK_PROFILES:                                                  # one text with a tracking link; the page then shows each step (pizza-tracker style); a text per step is opt-in (tracking.text_each_step)
+            tr = lambda st, **k: {"action": "track", "status": st, **k}              # noqa: E731
+            w += [{"name": "order_received", "on": {"event": "order.received"}, "do": [tr("received"), _sms(None, "{{business}}: {{slot:order_received}} {{slot:track_intro}} {{track.url}}")]},
+                  {"name": "order_preparing", "on": {"event": "order.preparing"}, "do": [tr("preparing"), dict(_sms(None, "{{business}}: {{slot:order_preparing}} {{track.url}}"), each_step=True)]},
+                  {"name": "order_ready", "on": {"event": "order.ready"}, "do": [tr("ready"), dict(_sms(None, "{{business}}: order {{order.number}} is ready. {{slot:order_ready}}" + (" {{slot:pickup_instructions}}" if has("pickup_instructions") else "")), each_step=True),
+                                                                              {"action": "notify", "text": "Order {{order.number}} is ready (status page updated)."}]},
+                  {"name": "order_picked_up", "on": {"event": "order.picked_up"}, "do": [tr("picked_up"), dict(_sms(None, "{{business}}: {{slot:order_picked_up}}"), each_step=True)]},
+                  {"name": "order_delayed", "on": {"event": "order.delayed"}, "do": [tr("preparing", delayed=True), _sms(None, "{{business}}: {{slot:order_delayed}} {{track.url}}"), {"action": "notify", "text": "Order {{order.number}} delayed. Text to customer: {{last.sms}}."}]}]
+            if has("order_ready_delivery"):
+                w += [{"name": "order_out_for_delivery", "on": {"event": "order.out_for_delivery"}, "do": [tr("out_for_delivery", delivery=True), dict(_sms(None, "{{business}}: {{slot:order_ready_delivery}} {{track.url}}"), each_step=True)]},
+                      {"name": "order_delivered", "on": {"event": "order.delivered"}, "do": [tr("delivered", delivery=True), dict(_sms(None, "{{business}}: {{slot:order_delivered}}"), each_step=True)]}]
+        else:                                                                           # pharmacy and others: a plain text at each main step, never naming what was ordered
+            w += [{"name": "order_received", "on": {"event": "order.received"}, "do": [_sms(None, "{{business}}: {{slot:order_received}}")]},
+                  {"name": "order_ready", "on": {"event": "order.ready"}, "do": [_sms(None, "{{business}}: order {{order.number}} is ready. {{slot:order_ready}}" + (" {{slot:pickup_instructions}}" if has("pickup_instructions") else "")),
+                                                                              {"action": "notify", "text": "Order {{order.number}} is ready. Text to {{customer.name}}: {{last.sms}}."}]},
+                  {"name": "order_picked_up", "on": {"event": "order.picked_up"}, "do": [_sms(None, "{{business}}: {{slot:order_picked_up}}")]},
+                  {"name": "order_delayed", "on": {"event": "order.delayed"}, "do": [_sms(None, "{{business}}: {{slot:order_delayed}}"), {"action": "notify", "text": "Order {{order.number}} delayed. Text to customer: {{last.sms}}."}]}]
         if has("order_cancelled"):
-            w.append({"name": "order_cancelled", "on": {"event": "order.cancelled"}, "do": [_sms(None, "{{business}}: {{slot:order_cancelled}}")]})
-        if has("order_ready_delivery"):
+            w.append({"name": "order_cancelled", "on": {"event": "order.cancelled"}, "do": ([{"action": "track", "status": "cancelled"}] if profile in TRACK_PROFILES else []) + [_sms(None, "{{business}}: {{slot:order_cancelled}}")]})
+        if has("order_ready_delivery") and profile not in TRACK_PROFILES:
             w.append({"name": "order_out_for_delivery", "on": {"event": "order.out_for_delivery"}, "do": [_sms(None, "{{business}}: {{slot:order_ready_delivery}}")]})
     if has("appointment_confirmed"):
         w += [{"name": "appointment_created", "on": {"event": "appointment.created"}, "do": [
@@ -63,13 +80,13 @@ def _workflows_for(profile):
     w += [{"name": "thanks_review", "on": {"event": "visit.completed"}, "do": [_sms(None, "{{business}}: {{slot:thanks_review}} {{fact:review_url}}")]},
           {"name": "sms_hours", "on": {"sms": {"topic": "hours"}}, "do": [{"action": "reply", "text": "{{slot:hours_intro}} {{fact:hours}}"}]},
           {"name": "sms_directions", "on": {"sms": {"topic": "directions"}}, "do": [{"action": "reply", "text": "{{slot:directions_intro}} {{fact:address}}"}]},
-          {"name": "sms_status", "on": {"sms": {"topic": "status"}}, "do": [{"action": "reply", "text": "{{slot:status_help}}"}, {"action": "notify", "text": "Status question by text from {{sms.from}}: {{sms.body}}"}]},
+          {"name": "sms_status", "on": {"sms": {"topic": "status"}}, "do": ([{"action": "lookup", "connection": "records", "deliver": "reply", "fallback_slot": "handoff_received"}] if profile in LOOKUP_PROFILES else [{"action": "reply", "text": "{{slot:status_help}}"}]) + [{"action": "notify", "text": "Status question by text from {{sms.from}}"}]},
           {"name": "sms_person", "on": {"sms": {"topic": "person"}}, "do": [
               {"action": "reply", "text": "{{slot:handoff_received}}"}, {"action": "notify", "text": "Someone needs a person: {{sms.from}} says \"{{sms.body}}\""}]},
           {"name": "phone_menu", "on": {"call": {"menu": {"prompt": "menu_prompt", "fallback_say": "Press 1 for opening hours, 2 to book, 3 to check on something, or 0 for a person.", "options": {
               "1": [{"action": "play", "audio": ["hours_intro"]}, {"action": "reply", "text": "{{fact:hours}}"}],
               "2": [{"action": "notify", "text": "Caller {{call.from}} wants to book or change a booking."}, {"action": "reply", "text": "Thanks, the team will call you back."}],
-              "3": [{"action": "play", "audio": ["status_help"]}, {"action": "notify", "text": "Caller {{call.from}} asked for a status update."}],
+              "3": ([{"action": "lookup", "connection": "records", "deliver": "sms", "fallback_slot": "handoff_received"}] if profile in LOOKUP_PROFILES else [{"action": "play", "audio": ["status_help"]}]) + [{"action": "notify", "text": "Caller {{call.from}} asked for a status update."}],
               "0": [{"action": "play", "audio": ["handoff_person"]}, {"action": "notify", "text": "Caller {{call.from}} wants a person."}, {"action": "transfer", "to": "{{fact:oncall_phone}}"}]}}}}, "do": []},
           {"name": "daily_briefing", "on": {"schedule": {"at": "09:30"}}, "do": [{"action": "notify", "text": "Today:\n{{today_text}}"}]},
           {"name": "slack_say", "on": {"slack_command": "/say"}, "do": [_sms("{{command.arg2}}", "{{business}}: {{slotvar:command.arg1}}"), {"action": "reply", "text": "Text to {{command.arg2}} ({{last.sms}}): {{slotvar:command.arg1}}"}]}]

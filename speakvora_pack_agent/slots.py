@@ -39,6 +39,10 @@ ORDER = {
     "order_delayed": ("Say an order is late and will be updated.", "Sorry, your order is running a little late. We will update you as soon as it is ready."),
     "pickup_instructions": ("Tell the customer where to collect.", "Please come to the pickup counter and give us your name or order number."),
     "order_cancelled": ("Confirm an order was cancelled.", "Your order has been cancelled."),
+    "order_preparing": ("Say an order is being prepared.", "We are preparing your order now."),
+    "order_picked_up": ("Confirm an order was picked up.", "Your order has been picked up. Thank you."),
+    "order_delivered": ("Confirm an order was delivered.", "Your order has been delivered. Thank you."),
+    "track_intro": ("Point the customer to their order tracking page.", "You can follow your order here."),
 }
 PROFILES = {   # profile -> (word for a booking, families used, extra slots)
     "food": ("reservation", ("order", "appt"), {
@@ -57,6 +61,7 @@ PROFILES = {   # profile -> (word for a booking, families used, extra slots)
                                          "insurance_issue": ("Insurance needs attention.", "We need to check something with your insurance. Please call the pharmacy."), "pickup_deadline": ("Pickup deadline.", "Please pick up your order soon. We can only hold it for a few days.")}),
     "lodging": ("booking", ("appt",), {"booking_confirmed": ("Confirm a stay.", "Your booking is confirmed. We look forward to welcoming you."), "checkin_info": ("Check-in details.", "Check-in is available from the afternoon. Please bring a photo ID."),
                                        "room_ready": ("Room is ready.", "Your room is ready. Please stop by the front desk for your key."), "checkout_reminder": ("Checkout reminder.", "A friendly reminder that checkout is this morning. Thank you for staying with us.")}),
+    "laundry": ("pickup", ("order", "appt"), {"garment_ready": ("Garments are ready.", "Your items are cleaned and ready for pickup.")}),
     "retail": ("pickup appointment", ("order", "appt"), {"back_in_stock": ("Item back in stock.", "Good news, the item you asked about is back in stock."), "return_received": ("Return received.", "We have received your return and it is being processed."),
                                       "refund_issued": ("Refund issued.", "Your refund has been issued. It can take a few days to appear.")}),
     "beauty": ("appointment", ("appt",), {"aftercare_tip": ("Aftercare reminder.", "Thank you for visiting. Please follow the aftercare tips we discussed."), "membership_renewal": ("Membership renewal.", "Your membership renews soon. Reply if you would like to make a change."), "quote_followup": ("Check in on a quote or consultation.", "Just checking in on the quote we sent. Reply if you have any questions or would like to go ahead."), "job_followup": ("Follow up after finished work.", "Thank you for choosing us. If anything is not right, reply and we will make it right."), "next_visit_due": ("Remind that the next visit is due.", "It is about time for your next visit. Reply and we will find a time that suits you."), "callback_promise": ("Promise a call back after a call.", "Thanks for calling. We will call you back as soon as we can.")}),
@@ -115,7 +120,7 @@ EXTRA_REQUIRED_LINES = {   # the required lines above that are not in COMMON
 }
 PROFILE_OF = {"jail-corrections-bail": "corrections", "restaurants-food": "food", "bars-food-trucks": "food", "healthcare": "clinic", "telehealth": "clinic", "pharmacy": "pharmacy", "dispensary": "pharmacy", "hotels-travel": "lodging", "airport-parking-taxi": "lodging",
               "retail-shopping": "retail", "furniture-home-goods": "retail", "fashion-gifts-hobby-stores": "retail", "amazon-marketplace-sellers": "retail", "dropshipping-ecommerce": "retail", "returns-refunds": "retail",
-              "beauty-fitness": "beauty", "laundry-dry-cleaning": "beauty", "studios-print-coworking": "beauty", "home-services": "trades", "trades-outdoor-services": "trades", "automotive": "auto", "car-care-roadside": "auto",
+              "beauty-fitness": "beauty", "laundry-dry-cleaning": "laundry", "studios-print-coworking": "beauty", "home-services": "trades", "trades-outdoor-services": "trades", "automotive": "auto", "car-care-roadside": "auto",
               "education-community": "education", "tutoring-online-courses": "education", "government-utilities": "public", "legal-services": "legal", "lending-collections": "collections", "billing-payments": "finance",
               "crypto-pawn-rent-to-own": "finance", "customer-service": "support", "it-saas-support": "devops", "ivr-phone-menus": "support", "website-hosting-internet": "devops", "dating-social-apps": "support", "apps-and-devices": "devops"}
 
