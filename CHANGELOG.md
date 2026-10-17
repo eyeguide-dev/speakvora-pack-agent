@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.18.0
+Fewer tabs: the dashboard is now Home, Connect, Library and Settings. The Connect tab holds an **Ask your assistant** box (ask your own AI about recent calls and texts, or have it write or reword phrases; it only suggests), a **Calls and texts** section and an **Orders** section, then every connection. Calls and texts shows each conversation with its time, topics, how it ended and a one-line summary, with search and filters. Transcripts are optional and off by default: the words are saved here, cleaned of emails, phone numbers and card-like numbers, never including a password, code or card number said on a call or private details from your records system, and deleted after the days you set. A button writes an AI summary of one conversation when you ask. See docs/dashboard.md.
+
 ## 0.17.0
 Every industry now has its own phone and text behaviour, not just the health ones: words that hand a question to a person (allergy, refunds, guests, grades, advice, balances, disputes, security...), industry rules for all 19 profiles, private status lookups (verified, from your own system) for legal, finance, education, hotels and public services as well as health, and a spoken opt-out ("stop calling me") applied at once. Pressing 0 now connects staff in restaurant bundles too (it did not before). A simulated caller and texter are run against every industry one by one in the test suite. See docs/industry-rules.md.
 

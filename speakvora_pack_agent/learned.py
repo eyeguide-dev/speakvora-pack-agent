@@ -160,6 +160,17 @@ SUGGEST_SYSTEM = ("You help a small business build its library of spoken phrases
                   'Reply with ONE JSON object only: {"lines": ["..."]}. Up to 10 lines, each 20 to 160 characters, generic (no names, no numbers, no prices, no times, no contact details), nothing that repeats the examples, no medical, legal or financial advice, no promises of refunds.')
 
 
+def add_suggestions(agent, lines):
+    """Puts lines on the suggestions list (nothing voiced or added) and returns [{'id','text'}] for the ones that qualified."""
+    d = load(agent); have = {norm(i["text"]) for i in d["items"]}; sug = d.setdefault("suggested", {}); out = []
+    for l in (lines or [])[:10]:
+        l = re.sub(r"\s+", " ", str(l)).strip()
+        if eligible(l) and norm(l) not in have:
+            cid = hashlib.sha1(norm(l).encode()).hexdigest()[:12]; sug[cid] = l; out.append({"id": cid, "text": l})
+    d["suggested"] = dict(list(sug.items())[-30:]); save(agent, d)
+    return out
+
+
 def suggest(agent, text):
     """Asks the owner's connected AI for more lines like the typed ones. Nothing is added or voiced: they wait as suggestions for the owner to add."""
     from . import brain

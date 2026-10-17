@@ -2119,5 +2119,135 @@ class EveryIndustryOneByOne(unittest.TestCase):
                     r.close()
 
 
+class CallsAndTexts(unittest.TestCase):
+    CALLER = {"From": "+16465550101", "CallSid": "CA100"}
+
+    def _rig(self, transcripts=False, **extra):
+        return Rig(extra=dict({"twilio": {"speech_input": True}, "facts": {"oncall_phone": "+16465550123"}, "transcripts": {"enabled": transcripts}}, **extra))
+
+    def call(self, r, step, said="", digits="", sid="CA100"):
+        return r.agent.handle_call(dict(self.CALLER, CallSid=sid, SpeechResult=said), step, digits)
+
+    def test_a_call_is_recorded_with_topics_outcome_and_summary_but_no_words_by_default(self):
+        from speakvora_pack_agent import conversations as CV
+        r = self._rig(False)
+        try:
+            self.call(r, "start"); self.call(r, "menu", digits="1"); self.call(r, "menu", said="no thanks")
+            lst = CV.list_(r.agent); self.assertEqual(lst["total"], 1); c = lst["items"][0]
+            self.assertEqual((c["channel"], c["outcome"], c["who"]), ("call", "goodbye", "*********01")); self.assertIn("opening hours and location", c["summary"]); self.assertIn("ended politely", c["summary"])
+            d = CV.get(r.agent, c["id"]); self.assertEqual(d["turns"], []); self.assertEqual(d["topics"], ["opening hours and location"])             # the words were not saved
+            self.assertNotIn("6465550101", json.dumps(d))
+        finally:
+            r.close()
+
+    def test_with_transcripts_on_the_words_are_saved_cleaned_and_secrets_are_never_saved(self):
+        from speakvora_pack_agent import conversations as CV
+        r = self._rig(True)
+        try:
+            self.call(r, "start"); self.call(r, "menu", digits="1")
+            d = CV.get(r.agent, CV.list_(r.agent)["items"][0]["id"]); roles = [x["role"] for x in d["turns"]]
+            self.assertIn("caller", roles); self.assertIn("assistant", roles); self.assertTrue(any("Tue-Sun 5-10 PM" in x["text"] for x in d["turns"] if x["role"] == "assistant"))
+            self.call(r, "menu", said="my card number is 4242 4242 4242 4242", sid="CA101"); sec = CV.get(r.agent, CV.list_(r.agent, q="refused")["items"][0]["id"])
+            self.assertEqual(sec["outcome"], "secret"); self.assertTrue(all("4242" not in x["text"] for x in sec["turns"])); self.assertIn("[withheld]", [x["text"] for x in sec["turns"]])
+            r.agent.handle_sms({"From": "+16465550102", "Body": "call me at 646-555-0199 or ann@example.com about hours"})
+            txt = CV.get(r.agent, CV.list_(r.agent, kind="sms")["items"][0]["id"]); said = " ".join(x["text"] for x in txt["turns"]); self.assertNotIn("0199", said); self.assertNotIn("ann@example.com", said)
+        finally:
+            r.close()
+
+    def test_emergency_staff_and_optout_outcomes_filters_and_search(self):
+        from speakvora_pack_agent import conversations as CV
+        r = self._rig(True)
+        try:
+            self.call(r, "menu", said="he is not breathing", sid="C1"); self.call(r, "menu", digits="0", sid="C2"); self.call(r, "menu", said="please stop calling me", sid="C3")
+            outs = {c["outcome"] for c in CV.list_(r.agent)["items"]}; self.assertEqual(outs, {"emergency", "staff", "optout"})
+            self.assertEqual(CV.list_(r.agent, kind="urgent")["total"], 1); self.assertEqual(CV.list_(r.agent, kind="person")["total"], 1); self.assertEqual(CV.list_(r.agent, q="not breathing")["total"], 1)
+            self.assertTrue(CV.list_(r.agent, kind="person")["items"][0]["needs_person"])
+            self.assertEqual(CV.delete(r.agent, CV.list_(r.agent, kind="urgent")["items"][0]["id"]), 1); self.assertEqual(CV.list_(r.agent)["total"], 2); self.assertEqual(CV.delete(r.agent), 2)
+        finally:
+            r.close()
+
+    def test_private_details_from_the_records_system_are_never_saved_and_old_words_are_deleted(self):
+        from speakvora_pack_agent import conversations as CV, engine as E
+        r = self._rig(True, connections=[{"id": "records", "url": "https://records.example/lookup", "auth": {"type": "bearer", "secret": "k"}}], guardrails={"keep_details_days": 1})
+        orig = E.web.request; E.web.request = lambda *a, **k: (200, {"found": True, "verified": True, "message": "Your order is ready at counter 4.", "allowed_phones": ["+16465550102"]})
+        try:
+            r.agent.profile = "pharmacy"
+            from speakvora_pack_agent import recipes
+            json.dump(recipes.workflows_for("pharmacy"), open(r.agent.cfg["workflows"], "w")); r.agent._load_workflows()
+            r.agent.cfg["call_policy"] = {"human_review_owner": "Sam", "identity_method": "dob", "privacy_notice": "x", "jurisdiction_profile": "NY", "transfer_roster": "desk", "phi_enabled": "True", "go_live_approval": "True"}; r.agent.dry = False
+            reply = r.agent.handle_sms({"From": "+16465550102", "Body": "status of my order"}); self.assertIn("counter 4", reply)                       # the person gets the answer
+            c = CV.get(r.agent, CV.list_(r.agent, kind="sms")["items"][0]["id"]); self.assertNotIn("counter 4", json.dumps(c)); self.assertIn("[private details withheld]", [x["text"] for x in c["turns"]])
+            r.now[0] += 3 * 86400; self.assertEqual(CV.scrub(r.agent, 1), 1); old = CV.get(r.agent, c["id"]); self.assertEqual(old["turns"], []); self.assertTrue(old["summary"])  # words gone, summary stays
+        finally:
+            E.web.request = orig; r.close()
+
+    def test_ai_summary_only_on_request_and_the_dashboard_routes(self):
+        from speakvora_pack_agent import conversations as CV, reasoner, dashboard
+        r = self._rig(True, reasoner={"provider": "openai", "model": "m", "api_key": "k"}); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start()
+        tok = dashboard.token(r.agent); orig = reasoner._chat
+        def api(path, body=None):
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None, method="POST" if body is not None else "GET", headers={"x-dashboard-token": tok, "content-type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as x: return json.loads(x.read())
+        try:
+            self.call(r, "menu", digits="1"); cid = api("/dash/api/conversations")["items"][0]["id"]
+            self.assertEqual(api(f"/dash/api/conversations/{cid}")["ai_summary"], "")                                                                  # nothing written until asked
+            reasoner._chat = lambda cfg, system, user, mt=None: ("The caller wanted the opening hours and got them.", {})
+            self.assertIn("opening hours", api("/dash/api/conversations/summary", {"id": cid})["ai_summary"])
+            self.assertFalse(api("/dash/api/conversations/switch", {"on": False})["enabled"]); self.assertTrue(api("/dash/api/conversations/switch", {"on": True})["enabled"])
+            self.assertEqual(api("/dash/api/conversations/delete", {"id": cid})["deleted"], 1)
+        finally:
+            reasoner._chat = orig; srv.shutdown(); srv.server_close(); r.close()
+
+
+class AssistantBox(unittest.TestCase):
+    def _rig(self, **extra):
+        return Rig(extra=dict({"twilio": {"speech_input": True}, "facts": {"oncall_phone": "+16465550123"}, "transcripts": {"enabled": True}, "reasoner": {"provider": "openai", "model": "m", "api_key": "k"}}, **extra))
+
+    def test_it_answers_from_summaries_only_proposes_phrases_and_changes_nothing(self):
+        from speakvora_pack_agent import chat, reasoner, learned
+        r = self._rig(); seen = []; orig = reasoner._chat
+        reasoner._chat = lambda cfg, system, user, mt=None: (seen.append(user) or ('{"reply": "Two calls needed a person today.", "phrases": ["We are happy to help you with your booking today.", "Call 555 0100 now", "x"]}', {}))
+        try:
+            r.agent.handle_call({"From": "+16465550101", "CallSid": "C1", "SpeechResult": "my secret question about 646-555-0188"}, "menu", ""); r.agent.handle_call({"From": "+16465550101", "CallSid": "C1"}, "menu", "0")
+            out = chat.ask(r.agent, "Which calls needed a person today? My number is 646-555-0177")
+            self.assertEqual(out["reply"], "Two calls needed a person today."); self.assertEqual([p["text"] for p in out["phrases"]], ["We are happy to help you with your booking today."])      # only plain sentences become suggestions
+            prompt = seen[0]; self.assertIn("Connected to staff", prompt); self.assertNotIn("secret question", prompt); self.assertNotIn("0188", prompt); self.assertNotIn("0177", prompt); self.assertNotIn("6465550101", prompt)   # summaries only, nothing private
+            self.assertEqual(learned.view(r.agent)["items"], []); self.assertEqual(len(learned.view(r.agent)["suggested"]), 1)                                                     # nothing was voiced or added
+            self.assertEqual([m["role"] for m in chat.history(r.agent)], ["you", "assistant"]); self.assertEqual(chat.clear(r.agent)["history"], [])
+        finally:
+            reasoner._chat = orig; r.close()
+
+    def test_it_needs_the_ai_a_message_and_is_limited_per_hour(self):
+        from speakvora_pack_agent import chat, reasoner
+        r = Rig()
+        try:
+            with self.assertRaises(ValueError):
+                chat.ask(r.agent, "hello")                                                                  # AI not connected
+        finally:
+            r.close()
+        r = self._rig(); orig = reasoner._chat; reasoner._chat = lambda cfg, s, u, mt=None: ("plain words, not json", {})
+        try:
+            with self.assertRaises(ValueError):
+                chat.ask(r.agent, "   ")
+            self.assertEqual(chat.ask(r.agent, "hi")["reply"], "plain words, not json")                      # a model that ignores the format still gets a reply
+            r.agent.state.data["chat_times"] = [time.time()] * chat.MAX_PER_HOUR
+            with self.assertRaises(ValueError):
+                chat.ask(r.agent, "one more")
+        finally:
+            reasoner._chat = orig; r.close()
+
+    def test_the_dashboard_routes(self):
+        from speakvora_pack_agent import reasoner, dashboard
+        r = self._rig(); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start(); tok = dashboard.token(r.agent); orig = reasoner._chat
+        reasoner._chat = lambda cfg, s, u, mt=None: ('{"reply": "Hello.", "phrases": []}', {})
+        def api(path, body=None):
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None, method="POST" if body is not None else "GET", headers={"x-dashboard-token": tok, "content-type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as x: return json.loads(x.read())
+        try:
+            self.assertTrue(api("/dash/api/chat")["configured"]); self.assertEqual(api("/dash/api/chat", {"message": "hi"})["reply"], "Hello."); self.assertEqual(len(api("/dash/api/chat")["history"]), 2); self.assertEqual(api("/dash/api/chat/clear", {})["history"], [])
+        finally:
+            reasoner._chat = orig; srv.shutdown(); srv.server_close(); r.close()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -134,8 +134,33 @@ class Agent:
         if not ok:
             raise PackError(f"{what} is not set up yet: {hint}")
 
+    def _m(self):
+        """Notes about the conversation being handled on this thread (outcome, topic, whether private words were involved): what the Calls and texts view records."""
+        tl = getattr(self, "_tl", None)
+        if tl is None:
+            tl = self._tl = threading.local()
+        if not hasattr(tl, "m"):
+            tl.m = {}
+        return tl.m
+
     def record(self, wf, action, status, **extra):
         self.state.log(workflow=wf, action=action, status=status, dry_run=self.dry, **extra)
+        m = self._m()
+        if action == "emergency_redirect":
+            m["outcome"] = "emergency"
+        elif action == "exposure_redirect":
+            m["outcome"] = "poison"
+        elif action == "secret_refused":
+            m["outcome"] = "secret"; m["withhold"] = True
+        elif action == "opt_out":
+            m["outcome"] = "optout"
+        elif action == "transfer" and status == "sent":
+            m["outcome"] = "staff"; m["handoff"] = True
+        elif action == "lookup":
+            if status == "answered":
+                m["private"] = extra.get("channel") != "sms"; m["outcome"] = "texted" if extra.get("channel") == "sms" else "answered"        # a text reply carries private words; a call only says they were texted
+            else:
+                m["outcome"] = "handoff"; m["handoff"] = True
 
     @staticmethod
     def _when_ok(when, ctx):
@@ -801,6 +826,20 @@ class Agent:
         return {"ok": True}
 
     def handle_sms(self, params):
+        """An inbound text from Twilio (see _handle_sms). Also writes the conversation record shown in the dashboard's Calls and texts."""
+        self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}
+        reply = self._handle_sms(params)
+        try:
+            from . import conversations as CV
+            m = self._m(); who = S.norm_phone(params.get("From", "")); body = (params.get("Body") or "").strip(); wf = m.get("wf", ""); low = body.lower()
+            outcome = "optout" if low in i18n.opt_out_words(self.lang) else (m.get("outcome") or ("handoff" if wf in ("sms_clinical", "sms_person") else ("answered" if reply else "unanswered")))
+            topic = re.sub(r"_", " ", wf[4:]) if wf.startswith("sms_") else None
+            CV.record(self, "sms:" + who, "sms", who, body, [reply] if reply else [], outcome=outcome, intent=topic, handoff=outcome == "handoff" or bool(m.get("handoff")), private=bool(m.get("private")))
+        except Exception:  # noqa: BLE001
+            pass
+        return reply
+
+    def _handle_sms(self, params):
         """An inbound text from Twilio. Returns the reply text ('' = no reply). STOP / START / HELP (and the opt-out words of the pack's language) are handled first, as carriers require."""
         who, body = S.norm_phone(params.get("From", "")), (params.get("Body") or "").strip()
         low = body.lower()
@@ -817,6 +856,7 @@ class Agent:
         for w in self.workflows:
             kw = self._triggers((w.get("on") or {}).get("sms"))
             if kw and any(i18n.matches(k, low, self.lang) for k in kw):
+                self._m()["wf"] = w["name"]
                 ctx = self.ctx(sms={"from": who, "body": body}, customer={"phone": who, "sms_consent": True})   # they texted us first: replying is always allowed
                 out = {"reply": "", "play": []}
                 self.run_actions(w["name"], w.get("do", []), ctx, out)
@@ -884,6 +924,20 @@ class Agent:
         return ""
 
     def handle_call(self, params, step="start", digits=""):
+        """An inbound call from Twilio -> TwiML (see _handle_call). Also writes the conversation record shown in the dashboard's Calls and texts."""
+        self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}
+        xml = self._handle_call(params, step, digits)
+        try:
+            from . import conversations as CV
+            m = self._m(); who = S.norm_phone(params.get("From", "")); key = "call:" + (params.get("CallSid") or who)
+            caller = ("Pressed " + str(digits).strip()) if str(digits or "").strip() else str(params.get("SpeechResult") or "")
+            CV.record(self, key, "call", who, caller if step != "start" else "", CV._spoken(self, xml), outcome=m.get("outcome") or ("answered" if step != "start" and m.get("digits") else ("unanswered" if step in ("menu2", "menu3") else None)),
+                      intent=CV.INTENTS.get(str(m.get("digits") or "")) if m.get("digits") else None, handoff=bool(m.get("handoff")), private=bool(m.get("private")), withhold=bool(m.get("withhold")))
+        except Exception:  # noqa: BLE001
+            pass
+        return xml
+
+    def _handle_call(self, params, step="start", digits=""):
         """An inbound call from Twilio -> TwiML. The workflow with on.call.menu plays a prompt, then runs the actions of the pressed digit."""
         wf = next((w for w in self.workflows if (w.get("on") or {}).get("call")), None)
         if not wf:
@@ -925,13 +979,14 @@ class Agent:
             return twiml_menu([], f"{base}/twilio/call/menu", "", inner=self._vp("menu_ask_speech", self.SPEECH_ASK), speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
         digits = (digits or "").strip() or self._speech_choice(menu, said)
         if bye and not digits and step in ("menu", "menu2"):
-            return "<Response>" + self._vp("call_goodbye", "Thanks for calling. Goodbye.") + "<Hangup/></Response>"
+            self._m()["outcome"] = "goodbye"; return "<Response>" + self._vp("call_goodbye", "Thanks for calling. Goodbye.") + "<Hangup/></Response>"
         if not digits or digits not in (menu.get("options") or {}):
             if step in ("menu2", "menu3") and "0" in (menu.get("options") or {}):         # a second miss: do not leave the caller stuck, connect them to a person
                 digits = "0"
             else:
                 return twiml_menu([], f"{base}/twilio/call/menu2", "Sorry, I did not catch that. " + (self.SPEECH_ASK if self._speech_on() else T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack)), inner=(self._vp("call_not_understood", "Sorry, I did not catch that.") + self._vp("menu_ask_speech", self.SPEECH_ASK)) if self._speech_on() else None, speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
         opt = (menu.get("options") or {}).get(digits)
+        self._m()["digits"] = digits
         xfer = [a for a in opt if isinstance(a, dict) and a.get("action") == "transfer"]
         opt = [a for a in opt if not (isinstance(a, dict) and a.get("action") == "transfer")]
         out = {"reply": "", "play": []}

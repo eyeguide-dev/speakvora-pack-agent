@@ -5,7 +5,7 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import brain as BR, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
+from . import brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
@@ -250,6 +250,22 @@ def handle(agent, method, path, headers, raw):
             out = BR.edit(agent, json.loads(raw or b"{}").get("profile"))
         elif p == "/dash/api/brain/forget" and method == "POST":
             out = BR.forget(agent)
+        elif p == "/dash/api/chat" and method == "GET":
+            out = {"history": CH.history(agent), "configured": BR.configured(agent)}
+        elif p == "/dash/api/chat" and method == "POST":
+            out = CH.ask(agent, json.loads(raw or b"{}").get("message"))
+        elif p == "/dash/api/chat/clear" and method == "POST":
+            out = CH.clear(agent)
+        elif p == "/dash/api/conversations" and method == "GET":
+            qs = parse_qs(u.query); out = CVS.list_(agent, (qs.get("q") or [""])[0], (qs.get("kind") or [""])[0], int((qs.get("offset") or ["0"])[0] or 0))
+        elif re.fullmatch(r"/dash/api/conversations/\d+", p) and method == "GET":
+            out = CVS.get(agent, int(p.rsplit("/", 1)[1])); out = out if out is not None else (_ for _ in ()).throw(ValueError("That conversation was not found."))
+        elif p == "/dash/api/conversations/switch" and method == "POST":
+            out = CVS.set_enabled(agent, bool(json.loads(raw or b"{}").get("on")))
+        elif p == "/dash/api/conversations/summary" and method == "POST":
+            out = CVS.ai_summary(agent, int(json.loads(raw or b"{}").get("id") or 0))
+        elif p == "/dash/api/conversations/delete" and method == "POST":
+            b = json.loads(raw or b"{}"); out = {"deleted": CVS.delete(agent, None if b.get("all") else int(b.get("id") or 0))}
         elif p == "/dash/api/orderpages" and method == "GET":
             out = SU.order_pages(agent)
         elif p == "/dash/api/orderpages/switch" and method == "POST":

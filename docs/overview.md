@@ -5,12 +5,13 @@ A short map of everything in the agent, with where to read more. Everything runs
 | What | In plain words | Read more |
 |---|---|---|
 | Workflows | Confirm bookings, remind from your calendar, tell customers an order is ready, answer texts and calls, alert your team | [workflows.md](workflows.md), [connect-anything.md](connect-anything.md) |
-| Dashboard | Home, Orders, Connect, Library, Settings; approve or decline, see what was sent, connect services | [dashboard.md](dashboard.md), [connect-dashboard.md](connect-dashboard.md) |
+| Dashboard | Home, Connect (assistant box, calls and texts, orders, connections), Library, Settings; approve or decline, see what was sent, connect services | [dashboard.md](dashboard.md), [connect-dashboard.md](connect-dashboard.md) |
 | Safety | Dry run first, consent, STOP, quiet hours, limits, kill switch, a person always one request away | [safety.md](safety.md), [limits-and-control.md](limits-and-control.md) |
 | Offline and recovery | Actions wait for the internet and go out in order; every send is written down first | [offline-and-queue.md](offline-and-queue.md), [jobs-and-recovery.md](jobs-and-recovery.md) |
 | Phone calls | A menu callers can press or speak to (hours, book, status, person); two misses connect a person; emergencies and secrets handled | [industry-rules.md](industry-rules.md) |
 | Smart AI | Your own AI learns your business (you review it), suggests actions and phrases, inside fixed limits | [smart-ai.md](smart-ai.md), [reasoning.md](reasoning.md) |
 | Your own phrases | Add lines in the Library box; repeated AI lines become library lines; a monthly budget caps spend | [smart-ai.md](smart-ai.md) |
+| Calls and texts view | Every conversation with its topics, outcome and summary; optional transcripts, cleaned and short-lived | [dashboard.md](dashboard.md) |
 | Order, visit, repair and request tracking | One text with a private link that follows the order; saved in the Orders tab | [orders-and-private-records.md](orders-and-private-records.md) |
 | Pharmacy and dispensary | Plain texts at placed, ready, picked up, never naming what was ordered | [orders-and-private-records.md](orders-and-private-records.md) |
 | Clinics, hospitals, pharmacies, dispensaries | Office information and scheduling help only; clinical questions go to staff; emergencies and poison exposure handled; order texts never name the contents | [health-industries.md](health-industries.md) |

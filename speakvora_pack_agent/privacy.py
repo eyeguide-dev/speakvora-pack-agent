@@ -29,8 +29,12 @@ def scrub(agent, force=False):
     st = agent.state; now = agent.now()
     if not force and now - float(st.data.get("privacy_last", 0)) < 20 * 3600:
         return {"jobs": 0, "log_lines": 0}
-    from . import tracker
+    from . import tracker, conversations
     tracker.purge(agent)
+    try:
+        conversations.scrub(agent, days(agent))                                       # the words of old conversations go; the record and summary stay
+    except Exception:  # noqa: BLE001
+        pass
     cutoff = now - days(agent) * 86400; jobs = lines = 0
     with st.lock:
         for j in st.data["jobs"].values():
