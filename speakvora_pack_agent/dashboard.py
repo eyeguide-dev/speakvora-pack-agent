@@ -5,7 +5,7 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import connect as SU, recipes, sharing, slots as SL
+from . import connect as SU, locations as LC, recipes, sharing, slots as SL
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
@@ -92,11 +92,11 @@ def summary(agent):
     st = agent.state; gaps = _gaps(agent); jobs = st.jobs()
     att = [j for j in jobs if j["status"] in ATTENTION][-30:][::-1]
     svc = [n for n in ("twilio", "slack", "teams", "email", "calendar") if SU.connected(agent, n)]
-    return {"setup": {"connected": len(svc), "services": svc, "ready": SU.readiness(agent)["ok"], "live": not agent.dry}, "update": sharing.update_info(agent), "now": int(agent.now()), "pack": {"title": agent.pack.meta.get("title"), "id": agent.pack.meta.get("pack"), "language": agent.pack.language, "lines": len(agent.pack.items), "profile": agent.profile, "version": agent.pack.meta.get("version")},
+    return {"setup": {"business": SU.connected(agent, "business"), "business_complete": bool(SU._real(agent.cfg.get("business")) and all(SU._real((agent.cfg.get("facts") or {}).get(k)) for k in ("hours", "address"))), "connected": len(svc), "services": svc, "ready": SU.readiness(agent)["ok"], "live": not agent.dry}, "update": sharing.update_info(agent), "now": int(agent.now()), "pack": {"title": agent.pack.meta.get("title"), "id": agent.pack.meta.get("pack"), "language": agent.pack.language, "lines": len(agent.pack.items), "profile": agent.profile, "version": agent.pack.meta.get("version")},
             "mode": "dry_run" if agent.dry else "live", "paused": agent.safe.killed(), "counts": st.job_counts(), "workflows": len(agent.workflows),
             "attention": [_job(j) for j in att], "recent": [_job(j) for j in jobs[-40:][::-1]],
             "coverage": {"needed": len(SL.needed_by(json.load(open(agent.cfg["workflows"], encoding="utf-8")))) if agent.cfg.get("workflows") else 0, "missing": gaps},
-            "requests": _requests(agent)[-10:][::-1], "can_send_requests": bool(os.environ.get("SPEAKVORA_KEY"))}
+            "requests": _requests(agent)[-10:][::-1], "can_send_requests": bool(os.environ.get("SPEAKVORA_KEY")), "locations": LC.view(agent)}
 
 
 CUSTOM_BAD = re.compile(r"https?://|@|\d{6,}")
@@ -226,6 +226,20 @@ def handle(agent, method, path, headers, raw):
             if not todo:
                 raise ValueError("Nothing is missing.")
             r = sharing.submit(agent, todo[:60]); out = {**r, "library": library_view(agent)}
+        elif p == "/dash/api/locations" and method == "GET":
+            out = LC.status_all(agent)
+        elif p == "/dash/api/licence" and method == "POST":
+            out = {"locations": LC.set_licence(agent, json.loads(raw or b"{}").get("code"))}
+        elif p == "/dash/api/locations/session" and method == "POST":
+            hdr = {**hdr, "set-cookie": f"svloc={LC.session_cookie(token(agent))}; Path=/loc; HttpOnly; SameSite=Strict"}; out = {"ok": True}
+        elif p == "/dash/api/locations/test" and method == "POST":
+            b = json.loads(raw or b"{}"); out = LC.test(agent, b.get("url"), b.get("token"))
+        elif p == "/dash/api/locations/add" and method == "POST":
+            b = json.loads(raw or b"{}"); out = LC.add(agent, b.get("name"), b.get("url"), b.get("token"), bool(b.get("force")))
+        elif p == "/dash/api/locations/remove" and method == "POST":
+            out = {"locations": LC.remove(agent, str(json.loads(raw or b"{}").get("id", "")))}
+        elif p == "/dash/api/locations/enable" and method == "POST":
+            b = json.loads(raw or b"{}"); out = {"locations": LC.set_enabled(agent, bool(b.get("on")), b.get("this_name"))}
         elif p == "/dash/api/pause" and method == "POST":
             on = bool(json.loads(raw or b"{}").get("on")); f = os.path.join(agent.state.dir, "STOP")
             if on:
@@ -239,7 +253,7 @@ def handle(agent, method, path, headers, raw):
             return 404, b'{"error":"not_found"}', "application/json", hdr
     except PermissionError as e:
         return 409, json.dumps({"error": "not_allowed", "message": str(e)}).encode(), "application/json", hdr
-    except (ValueError, KeyError) as e:
+    except (ValueError, KeyError) as e:         # LocationError and SetupError are ValueErrors
         return 400, json.dumps({"error": "bad_request", "message": str(e)}).encode(), "application/json", hdr
     return 200, json.dumps(out).encode(), "application/json", hdr
 

@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.0
+Several business locations in one dashboard (commercial licence). A Locations button at the top (orange, only with a commercial licence code) opens a menu to switch between your locations, shows which need you or need setup, and offers an All locations overview and Add a location. Each location keeps its own agent, data and licence; this dashboard opens the others' dashboards through itself, with a Back bar. Licence codes are checked offline (Ed25519, standard library): only the Locations menu depends on the code, never your bundle or its audio; after the 12-month term there are 30 days of grace. See docs/multi-location.md.
+
 ## 0.5.4
 Wording: the bundle licence is now a 12-month licence per business location that covers updates, the dashboard and support; renewing is optional and the audio you downloaded keeps working for ever. The agent's update notices say so. No behaviour change.
 

@@ -1,5 +1,5 @@
 """The pack agent against fake Twilio, Slack and Google: every connector, every safety rule, the restaurant workflows and the signed web endpoints."""
-import threading, base64, datetime as dt, hashlib, hmac, json, os, shutil, sys, tempfile, threading, unittest, urllib.error, urllib.parse, urllib.request
+import time, threading, base64, datetime as dt, hashlib, hmac, json, os, shutil, sys, tempfile, threading, unittest, urllib.error, urllib.parse, urllib.request
 os.environ.setdefault("SPEAKVORA_HOST", "http://127.0.0.1:9")            # tests never reach the real Speakvora
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT); sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(ROOT, "examples", "restaurant"))
@@ -1313,6 +1313,117 @@ class AgentHardening(unittest.TestCase):
             for secret in (TOKEN, "xoxb-1", SECRET, SLACK_SECRET): self.assertNotIn(secret, text)
         finally:
             r.close()
+
+
+class MultiLocation(unittest.TestCase):
+    """One dashboard, several business locations: each location is its own agent; this one lists them, shows their status and opens their dashboards through itself."""
+    def serve(self, r):
+        srv = serve(r.agent, "127.0.0.1", 0); threading.Thread(target=srv.serve_forever, daemon=True).start(); return srv, srv.server_address[1]
+
+    def call(self, port, method, path, body=None, headers=None):
+        import http.client
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=15); h = dict(headers or {})
+        if body is not None:
+            h["content-type"] = "application/json"
+        c.request(method, path, body=json.dumps(body) if body is not None else None, headers=h); x = c.getresponse(); b = x.read()
+        try:
+            return x.status, json.loads(b), dict(x.getheaders())
+        except ValueError:
+            return x.status, b.decode("utf-8", "replace"), dict(x.getheaders())
+
+    def setup(self, licensed=True, n=3):
+        from speakvora_pack_agent import dashboard, licence, ed25519
+        self.sk = os.urandom(32); self._pk = licence.PUBLIC_KEY; licence.PUBLIC_KEY = ed25519.public_key(self.sk)            # a test key stands in for Speakvora's
+        a, b = Rig(), Rig(); sa, pa = self.serve(a); sb, pb = self.serve(b)
+        ta, tb = dashboard.token(a.agent), dashboard.token(b.agent)
+        if licensed:
+            self.code = self.mkcode(a, n); self.call(pa, "POST", "/dash/api/licence", {"code": self.code}, {"x-dashboard-token": ta})
+        return a, b, sa, sb, pa, pb, ta, tb
+
+    def mkcode(self, a, n, until=None, pack=None):
+        from speakvora_pack_agent import licence
+        return licence.make_code(self.sk, {"pack": pack or a.agent.pack.meta.get("pack", ""), "n": n, "until": int(until or time.time() + 86400 * 300)})
+
+    def tearDown(self):
+        from speakvora_pack_agent import licence
+        if getattr(self, "_pk", None):
+            licence.PUBLIC_KEY = self._pk
+
+    def test_add_list_open_and_remove_locations(self):
+        a, b, sa, sb, pa, pb, ta, tb = self.setup()
+        try:
+            H = {"x-dashboard-token": ta}
+            s, r, _ = self.call(pa, "POST", "/dash/api/locations/add", {"name": "Uptown", "url": f"http://127.0.0.1:{pb}", "token": "wrong"}, H); self.assertEqual(s, 400); self.assertIn("token", r["message"].lower())
+            s, r, _ = self.call(pa, "POST", "/dash/api/locations/add", {"name": "Uptown", "url": "http://127.0.0.1:9", "token": tb}, H); self.assertEqual(s, 400); self.assertIn("reach", r["message"].lower())
+            s, r, _ = self.call(pa, "POST", "/dash/api/locations/add", {"name": "Uptown", "url": f"http://127.0.0.1:{pb}", "token": tb}, H); self.assertEqual(s, 200); self.assertEqual(r["added"], "uptown")
+            self.assertNotIn(tb, open(a.agent.cfg["_path"]).read())                                                                            # tokens are never written to agent.json
+            sec = os.path.join(a.agent.state.dir, "secrets.json"); self.assertIn(tb, open(sec).read()); self.assertEqual(oct(os.stat(sec).st_mode)[-3:], "600")
+            self.assertFalse([x for x in self.call(pa, "GET", "/dash/api/locations", headers=H)[1]["locations"] if x["id"] == "uptown"][0]["needs_setup"])   # the test rig has its business details filled in
+            b.agent.cfg["facts"]["hours"] = "YOUR-OPENING-HOURS"                                                                              # a location whose hours are still the placeholder is flagged "needs setup"
+            self.assertTrue([x for x in self.call(pa, "GET", "/dash/api/locations", headers=H)[1]["locations"] if x["id"] == "uptown"][0]["needs_setup"])
+            b.agent.cfg["facts"]["hours"] = "Tue-Sun 5-10 PM"
+            b.agent.set_policy(ask_before=["sms"]); b.event("order.ready", customer=CUST, order={"number": 5})                                  # a text waiting for approval at the other location
+            s, r, _ = self.call(pa, "GET", "/dash/api/locations", headers=H); rows = {x["id"]: x for x in r["locations"]}
+            self.assertEqual(sorted(rows), ["this", "uptown"]); self.assertTrue(rows["uptown"]["online"]); self.assertEqual(rows["uptown"]["needs_you"], 1); self.assertEqual(rows["this"]["needs_you"], 0)
+            # open the other dashboard through this one
+            s, _, hd = self.call(pa, "POST", "/dash/api/locations/session", {}, H); hd = {k.lower(): v for k, v in hd.items()}; self.assertIn("svloc=", hd.get("set-cookie", "")); self.assertIn("HttpOnly", hd["set-cookie"]); ck = hd["set-cookie"].split(";")[0]
+            s, page, _ = self.call(pa, "GET", "/loc/uptown/dashboard", headers={"Cookie": ck}); self.assertEqual(s, 200); self.assertIn("/loc/uptown/dash/api", page); self.assertIn("Back to", page); self.assertNotIn("'/dash/api", page)
+            s, summ, _ = self.call(pa, "GET", "/loc/uptown/dash/api/summary", headers=H); self.assertEqual(s, 200); self.assertIn("pack", summ)
+            self.assertEqual(self.call(pa, "GET", "/loc/uptown/dashboard")[0], 401)                                                             # no cookie, no token: refused
+            self.assertEqual(self.call(pa, "GET", "/loc/nope/dashboard", headers={"Cookie": ck})[0], 404)                                       # only locations in the list can be reached
+            self.assertEqual(self.call(pa, "GET", "/loc/uptown/dashboard", headers={"Cookie": ck, "X-Forwarded-For": "203.0.113.5"})[0], 403)   # not through a tunnel
+            s, r, _ = self.call(pa, "POST", "/dash/api/locations/remove", {"id": "uptown"}, H); self.assertEqual(r["locations"]["others"], [])
+        finally:
+            sa.shutdown(); sb.shutdown(); a.close(); b.close()
+
+    def test_the_location_menu_needs_a_commercial_licence_code(self):
+        a, b, sa, sb, pa, pb, ta, tb = self.setup(licensed=False)
+        try:
+            H = {"x-dashboard-token": ta}
+            loc = self.call(pa, "GET", "/dash/api/summary", headers=H)[1]["locations"]; self.assertFalse(loc["enabled"]); self.assertEqual(loc["licence"]["state"], "none")
+            for path, body in (("/dash/api/locations/enable", {"on": True}), ("/dash/api/locations/add", {"name": "Uptown", "url": f"http://127.0.0.1:{pb}", "token": tb})):
+                s, r, _ = self.call(pa, "POST", path, body, H); self.assertEqual(s, 400); self.assertIn("commercial licence", r["message"])
+            self.assertEqual(self.call(pa, "GET", "/dash/api/locations", headers=H)[0], 400)
+            s, r, _ = self.call(pa, "POST", "/dash/api/licence", {"code": "SVL1.nonsense.nonsense"}, H); self.assertEqual(s, 400); self.assertIn("not valid", r["message"])
+            s, r, _ = self.call(pa, "POST", "/dash/api/licence", {"code": self.mkcode(a, 3, pack="some-other-bundle")}, H); self.assertEqual(s, 400); self.assertIn("different bundle", r["message"])
+            s, r, _ = self.call(pa, "POST", "/dash/api/licence", {"code": self.mkcode(a, 3)}, H); self.assertEqual(s, 200); self.assertEqual(r["locations"]["licence"]["state"], "valid"); self.assertEqual(r["locations"]["licence"]["locations"], 3)
+            self.assertTrue(self.call(pa, "POST", "/dash/api/locations/enable", {"on": True, "this_name": "Downtown"}, H)[0] == 200)
+        finally:
+            sa.shutdown(); sb.shutdown(); a.close(); b.close()
+
+    def test_the_licence_limits_how_many_locations_and_ends_with_a_grace_period(self):
+        a, b, sa, sb, pa, pb, ta, tb = self.setup(n=2)
+        try:
+            H = {"x-dashboard-token": ta}
+            self.assertEqual(self.call(pa, "POST", "/dash/api/locations/add", {"name": "Uptown", "url": f"http://127.0.0.1:{pb}", "token": tb}, H)[0], 200)
+            s, r, _ = self.call(pa, "POST", "/dash/api/locations/add", {"name": "Midtown", "url": f"http://127.0.0.1:{pb}", "token": tb}, H); self.assertEqual(s, 400); self.assertIn("covers 2 locations", r["message"])
+            a.agent.cfg["licence"] = {"code": self.mkcode(a, 2, until=time.time() - 5 * 86400)}                                              # ended 5 days ago: still inside the 30-day grace period
+            self.assertEqual(self.call(pa, "GET", "/dash/api/summary", headers=H)[1]["locations"]["licence"]["state"], "grace")
+            self.assertTrue(self.call(pa, "GET", "/dash/api/summary", headers=H)[1]["locations"]["enabled"])
+            a.agent.cfg["licence"] = {"code": self.mkcode(a, 2, until=time.time() - 40 * 86400)}                                             # past the grace period: the menu is hidden, the bundle keeps working
+            loc = self.call(pa, "GET", "/dash/api/summary", headers=H)[1]["locations"]; self.assertEqual(loc["licence"]["state"], "expired"); self.assertFalse(loc["enabled"])
+            self.assertEqual(self.call(pa, "GET", "/dash/api/locations", headers=H)[0], 400); self.assertEqual(self.call(pa, "GET", "/loc/uptown/dashboard", headers={**H})[0], 403)
+        finally:
+            sa.shutdown(); sb.shutdown(); a.close(); b.close()
+
+    def test_a_location_that_is_down_is_shown_as_offline_not_an_error(self):
+        a, b, sa, sb, pa, pb, ta, tb = self.setup()
+        try:
+            H = {"x-dashboard-token": ta}
+            self.call(pa, "POST", "/dash/api/locations/add", {"name": "Uptown", "url": f"http://127.0.0.1:{pb}", "token": tb}, H); sb.shutdown(); sb.server_close()
+            s, r, _ = self.call(pa, "GET", "/dash/api/locations", headers=H); row = [x for x in r["locations"] if x["id"] == "uptown"][0]
+            self.assertEqual(s, 200); self.assertFalse(row["online"]); self.assertIn("Cannot reach", row["error"])
+        finally:
+            sa.shutdown(); a.close(); b.close()
+
+    def test_the_switch_and_the_name_are_saved_and_shown_in_the_summary(self):
+        a, b, sa, sb, pa, pb, ta, tb = self.setup()
+        try:
+            H = {"x-dashboard-token": ta}
+            s, r, _ = self.call(pa, "POST", "/dash/api/locations/enable", {"on": True, "this_name": "Downtown"}, H)
+            loc = self.call(pa, "GET", "/dash/api/summary", headers=H)[1]["locations"]; self.assertTrue(loc["enabled"]); self.assertEqual(loc["this_name"], "Downtown")
+        finally:
+            sa.shutdown(); sb.shutdown(); a.close(); b.close()
 
 if __name__ == "__main__":
     unittest.main()

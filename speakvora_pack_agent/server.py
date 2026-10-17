@@ -1,10 +1,10 @@
 """The agent's web server (standard library). Endpoints: POST /event (from your app, signed), POST /twilio/sms and /twilio/call[/menu] (Twilio, signature checked), POST /slack/command (Slack, signature checked),
 GET /audio/<id>.mp3 (so Twilio can play pack audio), GET /health. A background thread runs the calendar and daily schedules about once a minute."""
-import json, threading, time
+import hmac, json, re, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import dashboard, sources
+from . import dashboard, locations as LC, sources
 from .connectors import signing
 
 
@@ -52,6 +52,26 @@ def make_handler(agent):
                 hits_by.clear()
             return len(hits) > 240
 
+        def _loc(self, method):
+            """/loc/<id>/dashboard and /loc/<id>/dash/api/...: another location's dashboard, shown through this agent. Same rules as the dashboard: this computer only, and the access token (header for the page's calls, a cookie the page sets for the first load)."""
+            if not self._local_only():
+                return self._send(403, {"error": "dashboard_is_local_only"})
+            h = {k.lower(): v for k, v in self.headers.items()}; tok = dashboard.token(agent)
+            cookie = dict(c.strip().split("=", 1) for c in h.get("cookie", "").split(";") if "=" in c)
+            if not (hmac.compare_digest(h.get("x-dashboard-token", "").encode(), tok.encode()) or hmac.compare_digest(cookie.get("svloc", "").encode(), LC.session_cookie(tok).encode())):
+                return self._send(401, {"error": "bad_token"})
+            m = re.match(r"^/loc/([a-z0-9\-]{1,30})(/.*)$", self.path.split("?")[0])
+            if not m:
+                return self._send(404, {"error": "not_found"})
+            raw = self._body() if method == "POST" else b""
+            if method == "POST":
+                origin = self.headers.get("Origin")
+                if origin and urlparse(origin).netloc != self.headers.get("Host", ""):
+                    return self._send(403, {"error": "bad_origin"})
+            code, body, ctype = LC.proxy(agent, m.group(1), method, m.group(2), raw)
+            self.send_response(code); self.send_header("content-type", ctype); self.send_header("content-length", str(len(body))); self.send_header("cache-control", "no-store")
+            self.send_header("content-security-policy", dashboard.CSP.replace("frame-ancestors 'none'", "frame-ancestors 'none'")); self.end_headers(); self.wfile.write(body)
+
         def _dash(self, method):
             if not self._local_only():
                 return self._send(403, {"error": "dashboard_is_local_only", "message": "The dashboard only opens on the computer running the agent. Open http://127.0.0.1:8787/dashboard there."})
@@ -69,6 +89,8 @@ def make_handler(agent):
             p = self.path.split("?")[0]
             if p == "/dashboard" or p.startswith("/dash/api/"):
                 return self._dash("GET")
+            if p.startswith("/loc/"):
+                return self._loc("GET")
             if p == "/health":
                 return self._send(200, {"ok": True, "dry_run": agent.dry, "pack": agent.pack.meta.get("pack"), "workflows": len(agent.workflows), "missing_slots": agent.missing_slots, "missing_required_lines": agent.missing_required, "killed": agent.safe.killed(), "queued": len(agent.state.outbox()), "jobs": agent.state.job_counts()})
             if p.startswith("/audio/"):
@@ -79,6 +101,8 @@ def make_handler(agent):
         def do_POST(self):
             if self.path.split("?")[0].startswith("/dash/api/"):
                 return self._dash("POST")
+            if self.path.split("?")[0].startswith("/loc/"):
+                return self._loc("POST")
             p, raw = self.path.split("?")[0], self._body()
             if self._limited():
                 return self._send(429, {"error": "slow_down", "message": "Too many requests from one sender; wait a minute."})
