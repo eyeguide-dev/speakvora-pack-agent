@@ -77,6 +77,23 @@ def _workflows_for(profile):
         w += [{"name": "quote_followup", "on": {"event": "quote.followup_due"}, "do": [_sms(None, "{{business}}: {{slot:quote_followup}}"), {"action": "notify", "text": "Follow-up task: call {{customer.name}} about their quote. Text sent: {{last.sms}}."}]},
               {"name": "job_followup", "on": {"event": "job.followup_due"}, "do": [_sms(None, "{{business}}: {{slot:job_followup}}"), {"action": "notify", "text": "Follow-up task: check the finished work with {{customer.name}}."}]},
               {"name": "next_visit_due", "on": {"event": "visit.next_due"}, "do": [_sms(None, "{{business}}: {{slot:next_visit_due}}")]}]
+    if profile == "trades" and has("on_the_way"):                                  # a visit or job the customer can follow: booked, on the way, in progress, done
+        jt = lambda st, **k: {"action": "track", "status": st, "flow": "job", **k}   # noqa: E731
+        w += [{"name": "job_scheduled", "on": {"event": "job.scheduled"}, "do": [jt("scheduled"), _sms(None, "{{business}}: {{slot:appointment_confirmed}} {{start_text}} {{slot:track_intro}} {{track.url}}")]},
+              {"name": "job_on_the_way", "on": {"event": "job.on_the_way"}, "do": [jt("on_the_way"), dict(_sms(None, "{{business}}: {{slot:on_the_way}} {{track.url}}"), each_step=True)]},
+              {"name": "job_in_progress", "on": {"event": "job.in_progress"}, "do": [jt("in_progress")]},
+              {"name": "job_completed", "on": {"event": "job.completed"}, "do": [jt("completed"), dict(_sms(None, "{{business}}: {{slot:job_followup}}"), each_step=True)]}]
+    if profile == "auto" and has("repair_received"):                               # a repair order the customer can follow
+        rt = lambda st, **k: {"action": "track", "status": st, "flow": "repair", **k}   # noqa: E731
+        w += [{"name": "repair_received", "on": {"event": "repair.received"}, "do": [rt("received"), _sms(None, "{{business}}: {{slot:repair_received}} {{slot:track_intro}} {{track.url}}")]},
+              {"name": "repair_in_progress", "on": {"event": "repair.in_progress"}, "do": [rt("in_progress")]},
+              {"name": "repair_ready", "on": {"event": "repair.ready"}, "do": [rt("ready"), dict(_sms(None, "{{business}}: {{slot:vehicle_ready}}"), each_step=True)]},
+              {"name": "repair_picked_up", "on": {"event": "repair.picked_up"}, "do": [rt("picked_up")]}]
+    if profile == "support" and has("ticket_created"):                             # a support request the customer can follow
+        kt = lambda st, **k: {"action": "track", "status": st, "flow": "ticket", **k}   # noqa: E731
+        w += [{"name": "ticket_created", "on": {"event": "ticket.created"}, "do": [kt("received"), _sms(None, "{{business}}: {{slot:ticket_created}} {{slot:track_intro}} {{track.url}}")]},
+              {"name": "ticket_in_progress", "on": {"event": "ticket.in_progress"}, "do": [kt("in_progress")]},
+              {"name": "ticket_resolved", "on": {"event": "ticket.resolved"}, "do": [kt("resolved"), dict(_sms(None, "{{business}}: {{slot:ticket_update}}"), each_step=True)]}]
     w += [{"name": "thanks_review", "on": {"event": "visit.completed"}, "do": [_sms(None, "{{business}}: {{slot:thanks_review}} {{fact:review_url}}")]},
           {"name": "sms_hours", "on": {"sms": {"topic": "hours"}}, "do": [{"action": "reply", "text": "{{slot:hours_intro}} {{fact:hours}}"}]},
           {"name": "sms_directions", "on": {"sms": {"topic": "directions"}}, "do": [{"action": "reply", "text": "{{slot:directions_intro}} {{fact:address}}"}]},
@@ -142,7 +159,7 @@ def agent_config(business="YOUR-BUSINESS-NAME"):
 
 
 # Plain-language description of each ready-made workflow, shown in the dashboard and in the pack README.
-NICE = {"quote_followup": "follows up on quotes and creates a task for your team", "job_followup": "checks in after finished work", "next_visit_due": "reminds customers their next visit is due", "order_ready": "tells customers their order is ready", "order_delayed": "apologises for delays", "table_ready": "tells guests their table is ready", "reservation_created": "confirms reservations and adds them to your calendar",
+NICE = {"job_scheduled": "books a visit and texts a link to follow it", "repair_received": "checks a vehicle in and texts a link to follow the repair", "ticket_created": "opens a request and texts a link to follow it", "quote_followup": "follows up on quotes and creates a task for your team", "job_followup": "checks in after finished work", "next_visit_due": "reminds customers their next visit is due", "order_ready": "tells customers their order is ready", "order_delayed": "apologises for delays", "table_ready": "tells guests their table is ready", "reservation_created": "confirms reservations and adds them to your calendar",
             "appointment_created": "confirms bookings and adds them to your calendar", "appointment_reminder_24h": "reminds people a day before (from Google Calendar)", "reservation_reminder_24h": "reminds guests a day before (from Google Calendar)",
             "no_show_followup": "follows up after a no-show", "thanks_review": "thanks customers and asks for a review", "sms_hours": "answers 'what are your hours?' by text", "sms_directions": "answers 'where are you?' by text",
             "sms_person": "passes 'I want a person' to your team on Slack or Teams", "phone_menu": "answers your phone with a menu (hours, booking, status, a person)", "daily_briefing": "posts today's bookings to Slack or Teams each morning",

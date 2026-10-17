@@ -3,8 +3,8 @@ The page shows the business name, the order number you give it and the step. Not
 The page is served by this agent at public_base_url + /track/<code> (the same public address Twilio already uses for audio)."""
 import html, json, os, secrets, sqlite3, threading, time
 
-KIND = {"food": ("Restaurant", "restaurant"), "retail": ("Retail", "store"), "laundry": ("Laundry", "laundry"), "pharmacy": ("Pharmacy", "pharmacy")}
-SHORT = {"received": "Received", "preparing": "Preparing", "ready": "Ready", "picked_up": "Collected", "out_for_delivery": "On the way", "delivered": "Delivered", "cancelled": "Cancelled"}
+KIND = {"trades": ("Home services", "team"), "auto": ("Auto repair", "shop"), "support": ("Support", "support team"), "food": ("Restaurant", "restaurant"), "retail": ("Retail", "store"), "laundry": ("Laundry", "laundry"), "pharmacy": ("Pharmacy", "pharmacy")}
+SHORT = {"scheduled": "Scheduled", "on_the_way": "On the way", "in_progress": "In progress", "completed": "Completed", "resolved": "Resolved", "received": "Received", "preparing": "Preparing", "ready": "Ready", "picked_up": "Collected", "out_for_delivery": "On the way", "delivered": "Delivered", "cancelled": "Cancelled"}
 STEP_WORDS = {"retail": {"received": "Confirmed", "preparing": "Packed", "ready": "Ready", "picked_up": "Collected"}, "laundry": {"received": "Received", "preparing": "Cleaning", "ready": "Ready", "picked_up": "Collected"}}
 HEAD = {"food": {"received": "We have your order.", "preparing": "In the kitchen.", "ready": "Ready for pickup.", "picked_up": "Enjoy your meal.", "out_for_delivery": "On its way to you.", "delivered": "Delivered. Enjoy."},
         "retail": {"received": "Order confirmed.", "preparing": "Getting it ready.", "ready": "Ready for pickup.", "picked_up": "All yours.", "out_for_delivery": "On its way to you.", "delivered": "Delivered."},
@@ -13,7 +13,12 @@ HEAD = {"food": {"received": "We have your order.", "preparing": "In the kitchen
 HEAD_DEFAULT = {"received": "We have your order.", "preparing": "Being prepared.", "ready": "Ready for pickup.", "picked_up": "Picked up.", "out_for_delivery": "On its way to you.", "delivered": "Delivered.", "cancelled": "This order was cancelled."}
 PICKUP = ["received", "preparing", "ready", "picked_up"]
 DELIVERY = ["received", "preparing", "out_for_delivery", "delivered"]
-LABEL = {"received": "Order received", "preparing": "Being prepared", "ready": "Ready for pickup", "picked_up": "Picked up", "out_for_delivery": "Out for delivery", "delivered": "Delivered", "cancelled": "Cancelled"}
+FLOWS = {"job": ["received", "scheduled", "on_the_way", "in_progress", "completed"], "repair": ["received", "in_progress", "ready", "picked_up"], "ticket": ["received", "in_progress", "resolved"]}
+FLOW_WORD = {"order": ("Order", "Pickup estimate"), "job": ("Job", "Arrival window"), "repair": ("Repair", "Ready estimate"), "ticket": ("Ticket", "Response estimate")}
+FLOW_HEAD = {"job": {"received": "We have your request.", "scheduled": "Your visit is booked.", "on_the_way": "On the way to you.", "in_progress": "Work in progress.", "completed": "All done."},
+             "repair": {"received": "Checked in.", "in_progress": "Work in progress.", "ready": "Ready for pickup.", "picked_up": "All collected."},
+             "ticket": {"received": "We have your request.", "in_progress": "We are on it.", "resolved": "Resolved."}}
+LABEL = {"scheduled": "Scheduled", "on_the_way": "On the way", "in_progress": "In progress", "completed": "Completed", "resolved": "Resolved", "received": "Order received", "preparing": "Being prepared", "ready": "Ready for pickup", "picked_up": "Picked up", "out_for_delivery": "Out for delivery", "delivered": "Delivered", "cancelled": "Cancelled"}
 FINAL = ("picked_up", "delivered", "cancelled")
 
 
@@ -51,10 +56,12 @@ def _find(agent, token=None, order=None):
     return _row(r) if r else None
 
 
-def set_status(agent, order, status, delivery=False, delayed=None, eta=None):
+def set_status(agent, order, status, delivery=False, delayed=None, eta=None, flow="order"):
     """Creates the tracker on first use, sets the step, returns {'token','url'}. status is one of LABEL."""
     if status not in LABEL:
         raise ValueError(f"Unknown order step '{status}'. Use: " + ", ".join(LABEL))
+    if flow not in FLOW_WORD:
+        raise ValueError("Unknown tracker type '" + str(flow) + "'. Use order, job, repair or ticket.")
     base = str(agent.cfg.get("public_base_url", "")).rstrip("/")
     if not base or "YOUR-" in base:
         raise ValueError("Set public_base_url in agent.json so customers can open the tracking link.")
@@ -66,8 +73,8 @@ def set_status(agent, order, status, delivery=False, delayed=None, eta=None):
         c = _conn(agent); r = _find(agent, order=order)
         if not r:
             tok = secrets.token_urlsafe(16)
-            c.execute("insert into orders values (?,?,?,?,?,?,?,?,?,?)", (tok, order, json.dumps(DELIVERY if delivery else PICKUP), "received", now, now, "", 0, base, "[]")); r = _find(agent, token=tok)
-        steps = DELIVERY if (delivery and status in DELIVERY) else r["steps"]
+            c.execute("insert into orders values (?,?,?,?,?,?,?,?,?,?)", (tok, order, json.dumps(FLOWS.get(flow) or (DELIVERY if delivery else PICKUP)), "received", now, now, "", 0, base, "[]")); r = _find(agent, token=tok)
+        steps = DELIVERY if (delivery and status in DELIVERY and r["steps"] in (PICKUP, DELIVERY)) else r["steps"]
         hist = (r["history"] + [[now, status]])[-12:]
         d = r["delayed"] if delayed is None else bool(delayed)
         e = r["eta"] if eta is None else " ".join(str(eta).split())[:40]            # the business's own estimate; an empty value clears it
@@ -109,8 +116,11 @@ def get(agent, token):
     words = {**SHORT, **STEP_WORDS.get(prof, {})}; heads = {**HEAD_DEFAULT, **HEAD.get(prof, {})}
     label = lambda s: words.get(s) or LABEL.get(s, s)   # noqa: E731
     delivery = r["steps"] == DELIVERY
+    flow = next((k for k, v in FLOWS.items() if v == r["steps"]), "order"); ref, eta_label = FLOW_WORD[flow]
+    if flow == "order" and delivery:
+        eta_label = "Delivery estimate"
     biz = agent.cfg.get("business") if "YOUR-" not in str(agent.cfg.get("business", "YOUR-")) else "Your order"
-    return {"business": biz, "kind": (kind + " \u00b7 " if kind else "") + ("Delivery" if delivery else "Pickup"), "noun": noun, "order": r["order"], "status": r["status"], "label": LABEL.get(r["status"], r["status"]), "headline": heads.get(r["status"], LABEL.get(r["status"], "")),
+    return {"business": biz, "kind": (kind + " \u00b7 " if kind else "") + ("Delivery" if delivery else "Pickup" if flow == "order" else {"job": "Visit", "repair": "Repair", "ticket": "Request"}[flow]), "noun": noun, "order": r["order"], "status": r["status"], "label": LABEL.get(r["status"], r["status"]), "headline": (FLOW_HEAD.get(flow) or heads).get(r["status"], heads.get(r["status"], LABEL.get(r["status"], ""))), "ref": ref, "eta_label": eta_label,
             "steps": [{"key": s, "label": label(s)} for s in r["steps"]], "delayed": bool(r.get("delayed")), "eta": r.get("eta", ""), "updated": r.get("updated"), "cancelled": r["status"] == "cancelled", "contact": _contact(agent)}
 
 
@@ -165,16 +175,16 @@ function tm(s){try{return new Date(s*1000).toLocaleTimeString([],{hour:'numeric'
 function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
 async function load(){try{const r=await fetch('/track/'+T+'.json',{cache:'no-store'});if(!r.ok)throw 0;const d=await r.json();
 document.getElementById('bn').textContent=d.business;document.getElementById('ini').textContent=d.business.split(/\\s+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');document.getElementById('bk').textContent=d.kind;
-document.getElementById('ord').textContent='Order #'+d.order;document.getElementById('hd').textContent=d.headline;document.getElementById('pl').textContent=d.label;
+document.getElementById('ord').textContent=d.ref+' #'+d.order;document.getElementById('hd').textContent=d.headline;document.getElementById('pl').textContent=d.label;
 const late=document.getElementById('late');late.hidden=!d.delayed;late.textContent=d.delayed?'Running a little late. Thank you for your patience.':'';
 document.getElementById('help').textContent=d.cancelled?'This order was cancelled. Please contact us if you have questions.':'This page updates by itself when your '+d.noun+' sends a new step.';
 const keys=d.steps.map(s=>s.key),at=keys.indexOf(d.status),box=document.getElementById('steps');box.textContent='';
 d.steps.forEach((s,i)=>{const c=el('div','st'+(d.cancelled?'':(i<at?' done':i===at?' cur':'')));const dot=el('div','dot');if(!d.cancelled&&i<at){dot.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" stroke-width="3"><path d="M5 12l5 5 9-10"/></svg>'}c.appendChild(dot);c.appendChild(document.createTextNode(s.label));box.appendChild(c)});
-const eb=document.getElementById('etab');eb.hidden=!d.eta||d.cancelled;if(d.eta){document.getElementById('etal').textContent=(keys.indexOf('delivered')>=0?'Delivery':'Pickup')+' estimate';document.getElementById('et').textContent=d.eta;document.getElementById('ets').textContent='Provided by the '+d.noun}
+const eb=document.getElementById('etab');eb.hidden=!d.eta||d.cancelled;if(d.eta){document.getElementById('etal').textContent=d.eta_label;document.getElementById('et').textContent=d.eta;document.getElementById('ets').textContent='Provided by the '+d.noun}
 document.getElementById('lu').textContent=d.label+(d.updated?' \u00b7 '+tm(d.updated):'');document.getElementById('lt').textContent=tm(d.updated);
 const bt=document.getElementById('btns');bt.textContent='';const ph='<svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>';
 if(d.contact.call){const a=el('a','btn');a.href='tel:'+d.contact.call;a.innerHTML=ph;a.appendChild(document.createTextNode('Call '+d.noun));bt.appendChild(a)}
-if(d.contact.text){const a=el('a','btn');a.href='sms:'+d.contact.text+'?&body='+encodeURIComponent('Question about order #'+d.order);a.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>';a.appendChild(document.createTextNode('Text '+d.noun));bt.appendChild(a)}
+if(d.contact.text){const a=el('a','btn');a.href='sms:'+d.contact.text+'?&body='+encodeURIComponent('Question about '+d.ref.toLowerCase()+' #'+d.order);a.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>';a.appendChild(document.createTextNode('Text '+d.noun));bt.appendChild(a)}
 bt.hidden=!bt.children.length}catch(e){document.getElementById('hd').textContent='This link has expired.';document.getElementById('pl').textContent='Expired';document.getElementById('steps').textContent='';document.getElementById('btns').hidden=true}}
 load();setInterval(load,10000);</script></body></html>"""
 

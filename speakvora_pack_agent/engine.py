@@ -547,7 +547,7 @@ class Agent:
             from . import tracker
             o = ctx.get("order") or {}
             try:
-                r = tracker.set_status(self, a.get("order") or o.get("number") or o.get("id"), str(a.get("status", "")), delivery=bool(a.get("delivery") or o.get("delivery") or str(o.get("type", "")).lower() == "delivery"), delayed=a.get("delayed"), eta=a.get("eta") if "eta" in a else o.get("eta"))
+                r = tracker.set_status(self, a.get("order") or o.get("number") or o.get("id"), str(a.get("status", "")), delivery=bool(a.get("delivery") or o.get("delivery") or str(o.get("type", "")).lower() == "delivery"), delayed=a.get("delayed"), eta=a.get("eta") if "eta" in a else o.get("eta"), flow=str(a.get("flow") or "order"))
             except ValueError as ex:                                                  # for example no public address yet: say so and skip, never crash the workflow
                 raise PackError(str(ex))
             ctx["track"] = {"url": r["url"], "status": a.get("status")}

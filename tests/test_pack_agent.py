@@ -1793,6 +1793,22 @@ class OrderTrackerAndRecords(unittest.TestCase):
         finally:
             r.close()
 
+    def test_jobs_repairs_and_tickets_have_their_own_steps_and_words(self):
+        from speakvora_pack_agent import recipes, tracker
+        r = Rig()
+        try:
+            for prof, flow, st, ref, head in (("trades", "job", "on_the_way", "Job", "On the way to you."), ("auto", "repair", "ready", "Repair", "Ready for pickup."), ("support", "ticket", "resolved", "Ticket", "Resolved.")):
+                r.agent.profile = prof
+                ctx = r.agent.ctx(order={"number": prof + "1"}); r.agent.run_actions("t", [{"action": "track", "status": st, "flow": flow}], ctx); d = tracker.get(r.agent, ctx["track"]["url"].rsplit("/", 1)[1])
+                self.assertEqual((d["ref"], d["headline"]), (ref, head)); self.assertEqual([s["key"] for s in d["steps"]], tracker.FLOWS[flow])
+            names = lambda p: {w["name"] for w in recipes.workflows_for(p)["workflows"]}   # noqa: E731
+            self.assertTrue({"job_scheduled", "job_completed"} <= names("trades")); self.assertTrue({"repair_received", "repair_ready"} <= names("auto")); self.assertTrue({"ticket_created", "ticket_resolved"} <= names("support"))
+            self.assertFalse({"job_scheduled", "repair_received", "ticket_created", "order_received"} & names("clinic"))             # private industries get no public link
+            with self.assertRaises(Exception):
+                tracker.set_status(r.agent, "x", "received", flow="nonsense")
+        finally:
+            r.close()
+
     def test_the_page_shows_eta_contact_and_industry_wording(self):
         from speakvora_pack_agent import tracker
         r = Rig(extra={"facts": {"phone": "+16465550199"}, "twilio": {"from_number": "+19295816269"}})

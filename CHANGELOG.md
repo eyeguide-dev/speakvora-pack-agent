@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.12.0
+Tracking links for more industries: home services and trades (visit: scheduled, on the way, in progress, completed), auto repair (checked in, in progress, ready, collected) and customer-service support (received, in progress, resolved), alongside restaurants, retail, laundry and pharmacy. Each has its own steps, wording and "Job / Repair / Ticket" label, all saved in the Orders tab. New guide to getting a permanent public address (Cloudflare named tunnel, Tailscale Funnel or a small server) and a table of which industries get a link. Private industries (clinics, legal, banking and similar) get no public link. See docs/public-address-setup.md and docs/orders-and-private-records.md.
+
 ## 0.11.0
 Orders tab: every tracking link is saved permanently from the first order (SQLite, order number, steps and times only) with search, copy and open, step history, spreadsheet export, and a warning when a link was made with an address that is no longer your public address. Links no longer expire by default. Setup now asks for the business website, customer service phone, other service numbers, hours and address, and order links cannot go live until those are filled in and the public address has been tested. See docs/orders-and-private-records.md.
 

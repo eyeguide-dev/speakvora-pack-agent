@@ -18,6 +18,7 @@ COMMON = {
     "sorry_mixup": ("Apologise for a mix-up and say it is being fixed.", "We are sorry about the mix-up and the team is fixing it right away."),
     "payment_received": ("Confirm a payment arrived.", "Your payment has been received. Thank you."),
     "menu_prompt": ("Phone menu: press 1 hours, 2 booking, 3 status, 0 a person.", "Thanks for calling. Press one for our opening hours, two to book, three to check on something, or zero to reach a person."),
+    "track_intro": ("Point the customer to their tracking page.", "You can follow its progress here."),
     "status_help": ("Ask for the reference number to look something up.", "Please tell us your reference number and we will check on it for you."),
 }
 APPT = {  # appointment-based businesses: {a} is the word for the booking
@@ -42,7 +43,6 @@ ORDER = {
     "order_preparing": ("Say an order is being prepared.", "We are preparing your order now."),
     "order_picked_up": ("Confirm an order was picked up.", "Your order has been picked up. Thank you."),
     "order_delivered": ("Confirm an order was delivered.", "Your order has been delivered. Thank you."),
-    "track_intro": ("Point the customer to their order tracking page.", "You can follow your order here."),
 }
 PROFILES = {   # profile -> (word for a booking, families used, extra slots)
     "food": ("reservation", ("order", "appt"), {
@@ -68,7 +68,7 @@ PROFILES = {   # profile -> (word for a booking, families used, extra slots)
     "trades": ("visit", ("appt",), {"arrival_window": ("Arrival window reminder.", "Our technician will arrive during your scheduled window. We will message you when they are on the way."), "on_the_way": ("Technician on the way.", "Our technician is on the way to you now."),
                                      "estimate_ready": ("Estimate is ready.", "Your estimate is ready. Reply to approve it or ask a question."), "quote_followup": ("Check in on a quote that was sent.", "Just checking in on the quote we sent. Reply if you have any questions or would like to go ahead."), "job_followup": ("Follow up after finished work.", "Thank you for choosing us. If anything is not right, reply and we will make it right."), "next_visit_due": ("Remind that the next visit is due.", "It is about time for your next visit. Reply and we will find a time that suits you."), "callback_promise": ("Promise a call back after a call.", "Thanks for calling. We will call you back as soon as we can.")}),
     "auto": ("service appointment", ("appt",), {"vehicle_ready": ("Vehicle is ready.", "Your vehicle is ready for pickup."), "service_due": ("Service reminder.", "Your vehicle is due for service. Reply to book a time."),
-                                                 "estimate_ready": ("Estimate is ready.", "Your repair estimate is ready. Reply to approve it or ask a question.")}),
+                                                 "estimate_ready": ("Estimate is ready.", "Your repair estimate is ready. Reply to approve it or ask a question."), "repair_received": ("Confirm a vehicle is checked in.", "We have your vehicle and will keep you updated as the work moves along.")}),
     "education": ("class", ("appt",), {"class_reminder": ("Class reminder.", "Your class starts soon. See you there."), "enrolment_open": ("Enrolment open.", "Enrolment is now open. Reply for details."), "payment_due": ("Fee due.", "A payment is due soon for your enrolment.")}),
     "public": ("appointment", ("appt",), {"application_update": ("Application update.", "There is an update on your application. Please check your account."), "outage_notice": ("Service outage notice.", "We are aware of a service issue and are working on it."),
                                            "documents_needed": ("More documents needed.", "We need a few more documents to continue. Please check your account.")}),

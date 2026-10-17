@@ -1,5 +1,20 @@
 # Order tracking links, pharmacy texts, and private records from your own system
 
+## Which industries get a tracking link
+Any business where the customer waits on something and the page can show a step without showing private details:
+
+| Industry | What the customer follows | Events your system sends |
+|---|---|---|
+| Restaurants, bars, food trucks, catering | Order: received, preparing, ready, collected (or on the way, delivered) | `order.received`, `order.preparing`, `order.ready`, `order.picked_up`, `order.out_for_delivery`, `order.delivered` |
+| Retail, e-commerce, furniture, fashion, gifts, marketplace sellers, returns | Order: confirmed, packed, ready or on the way, collected or delivered | same `order.*` events |
+| Laundry and dry cleaning | Items: received, cleaning, ready, collected (or delivered) | same `order.*` events |
+| Pharmacy and dispensary | Order: received, preparing, ready, collected (never what is in it) | same `order.*` events |
+| Home services and trades | Visit: received, scheduled, on the way, in progress, completed | `job.scheduled`, `job.on_the_way`, `job.in_progress`, `job.completed` |
+| Auto repair and car care | Repair: checked in, in progress, ready, collected | `repair.received`, `repair.in_progress`, `repair.ready`, `repair.picked_up` |
+| Customer service and IT or SaaS support | Request: received, in progress, resolved | `ticket.created`, `ticket.in_progress`, `ticket.resolved` |
+
+Not offered as a public link: clinics and hospitals, legal, banking and lending, collections, corrections, public services and similar, because the status itself is private. For those, a person's status comes only from your own connected records system after they are verified (see below), never from a link.
+
 ## Order tracking (restaurants, laundry, retail and similar)
 When your system sends `order.received`, the customer gets **one text** with a private link, like the ones pizza chains send. The page behind the link shows the order moving through its steps and updates by itself:
 - pickup: received, preparing, ready for pickup, picked up
