@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.10.0
+New order tracking page: Speakvora logo, your business name and initials badge, a headline for each step, a step bar worded for your industry, your own pickup or delivery estimate, the time of the latest update, and Call / Text buttons so a customer can reach your business straight from the page. Pharmacy and dispensary orders get the page too (never showing what was ordered) and keep their texts at placed, ready and picked up. See docs/orders-and-private-records.md.
+
 ## 0.9.1
 First real order-tracker test passed (one text with the link, delivered; the page followed received, preparing, ready, picked up). Fix: a spoken line that is not in the bundle yet no longer leaves a double space in a text.
 

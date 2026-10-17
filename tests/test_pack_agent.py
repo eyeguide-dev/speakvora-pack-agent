@@ -1751,6 +1751,29 @@ class OrderTrackerAndRecords(unittest.TestCase):
         finally:
             r.close()
 
+    def test_the_page_shows_eta_contact_and_industry_wording(self):
+        from speakvora_pack_agent import tracker
+        r = Rig(extra={"facts": {"phone": "+16465550199"}, "twilio": {"from_number": "+19295816269"}})
+        try:
+            r.agent.profile = "laundry"
+            ctx = r.agent.ctx(order={"number": "L9", "eta": "Tomorrow, 9 - 11 AM"}); r.agent.run_actions("t", [{"action": "track", "status": "preparing"}], ctx); tok = ctx["track"]["url"].rsplit("/", 1)[1]
+            d = tracker.get(r.agent, tok)
+            self.assertEqual(d["kind"], "Laundry \u00b7 Pickup"); self.assertEqual(d["eta"], "Tomorrow, 9 - 11 AM"); self.assertEqual(d["headline"], "Being cleaned.")
+            self.assertEqual([s["label"] for s in d["steps"]], ["Received", "Cleaning", "Ready", "Collected"])
+            self.assertEqual(d["contact"], {"call": "+16465550199", "text": "+19295816269"})
+            r.agent.run_actions("t", [{"action": "track", "status": "ready", "eta": ""}], r.agent.ctx(order={"number": "L9"}))
+            d = tracker.get(r.agent, tok); self.assertEqual(d["eta"], ""); self.assertEqual(d["headline"], "Fresh. Folded. Ready.")
+            self.assertIn("speakvora", tracker.page(r.agent, tok).decode())                                                    # our logo and name are on every page
+        finally:
+            r.close()
+
+    def test_pharmacy_gets_the_tracker_and_keeps_its_plain_texts(self):
+        from speakvora_pack_agent import recipes
+        ws = {w["name"]: w for w in recipes.workflows_for("pharmacy")["workflows"]}
+        self.assertEqual(ws["order_received"]["do"][0]["action"], "track")
+        for name in ("order_ready", "order_picked_up"):
+            self.assertTrue(any(a["action"] == "sms" and not a.get("each_step") for a in ws[name]["do"]), name)
+
     def test_the_public_tracking_page_and_its_json(self):
         r = Rig(); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:

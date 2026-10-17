@@ -28,7 +28,7 @@ def localize(doc, lang):
     return _j.loads(txt)
 
 
-TRACK_PROFILES = ('food', 'retail', 'laundry')                                       # businesses whose customers watch an order move through steps
+TRACK_PROFILES = ('food', 'retail', 'laundry', 'pharmacy')                                       # businesses whose customers watch an order move through steps
 LOOKUP_PROFILES = ('clinic', 'pharmacy')                                               # private status comes only from the business's own connected records system
 
 
@@ -43,9 +43,9 @@ def _workflows_for(profile):
             tr = lambda st, **k: {"action": "track", "status": st, **k}              # noqa: E731
             w += [{"name": "order_received", "on": {"event": "order.received"}, "do": [tr("received"), _sms(None, "{{business}}: {{slot:order_received}} {{slot:track_intro}} {{track.url}}")]},
                   {"name": "order_preparing", "on": {"event": "order.preparing"}, "do": [tr("preparing"), dict(_sms(None, "{{business}}: {{slot:order_preparing}} {{track.url}}"), each_step=True)]},
-                  {"name": "order_ready", "on": {"event": "order.ready"}, "do": [tr("ready"), dict(_sms(None, "{{business}}: order {{order.number}} is ready. {{slot:order_ready}}" + (" {{slot:pickup_instructions}}" if has("pickup_instructions") else "")), each_step=True),
+                  {"name": "order_ready", "on": {"event": "order.ready"}, "do": [tr("ready"), dict(_sms(None, "{{business}}: order {{order.number}} is ready. {{slot:order_ready}}" + (" {{slot:pickup_instructions}}" if has("pickup_instructions") else "")), **({} if profile == "pharmacy" else {"each_step": True})),
                                                                               {"action": "notify", "text": "Order {{order.number}} is ready (status page updated)."}]},
-                  {"name": "order_picked_up", "on": {"event": "order.picked_up"}, "do": [tr("picked_up"), dict(_sms(None, "{{business}}: {{slot:order_picked_up}}"), each_step=True)]},
+                  {"name": "order_picked_up", "on": {"event": "order.picked_up"}, "do": [tr("picked_up"), dict(_sms(None, "{{business}}: {{slot:order_picked_up}}"), **({} if profile == "pharmacy" else {"each_step": True}))]},
                   {"name": "order_delayed", "on": {"event": "order.delayed"}, "do": [tr("preparing", delayed=True), _sms(None, "{{business}}: {{slot:order_delayed}} {{track.url}}"), {"action": "notify", "text": "Order {{order.number}} delayed. Text to customer: {{last.sms}}."}]}]
             if has("order_ready_delivery"):
                 w += [{"name": "order_out_for_delivery", "on": {"event": "order.out_for_delivery"}, "do": [tr("out_for_delivery", delivery=True), dict(_sms(None, "{{business}}: {{slot:order_ready_delivery}} {{track.url}}"), each_step=True)]},

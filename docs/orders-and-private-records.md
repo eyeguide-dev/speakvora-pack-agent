@@ -6,10 +6,13 @@ When your system sends `order.received`, the customer gets **one text** with a p
 - delivery: received, preparing, on its way, delivered (send `"delivery": true` in the order, or `order.out_for_delivery`)
 
 Your system just keeps telling the agent where the order is: `order.preparing`, `order.ready`, `order.picked_up`, `order.out_for_delivery`, `order.delivered`, `order.delayed`, `order.cancelled`. Each event updates the page; no more texts go out unless you set `"tracking": {"text_each_step": true}` in `agent.json`.
-The page shows only your business name, the order number and the step: no customer name, number or what was ordered. The code in the link is long and random, the page tells search engines to ignore it, and the link stops working three days after the order is finished. The agent serves the page at `public_base_url/track/<code>`, so the address in `public_base_url` must be reachable by your customers' phones.
+The page carries the Speakvora logo, your business name (with an initials badge), the order number, a headline for the step (for example "In the kitchen."), a step bar worded for your industry (a restaurant says Preparing, a laundry says Cleaning, a store says Packed), your own estimate if you send one, the time of the latest update, and buttons to **call** or **text** your business so a customer with a question reaches someone from the page. It shows no customer name or number and nothing about what was ordered. The code in the link is long and random, the page tells search engines to ignore it, and the link stops working three days after the order is finished. The agent serves the page at `public_base_url/track/<code>`, so the address in `public_base_url` must be reachable by your customers' phones.
+
+### Estimate and contact buttons
+Send `"order": {"number": "1042", "eta": "6:15 - 6:25 PM"}` (or `"eta"` on any order event) to show the estimate card, "provided by the restaurant"; send an empty `eta` to clear it. The **Call** button uses `facts.phone` (or `tracking.contact_phone`) in `agent.json`: set it to the number customers should ring. The **Text** button opens a text to your agent's sending number with the order number filled in, and your agent passes it to your team like any other message.
 
 ## Pharmacy and dispensary
-Customers get a plain text when an order is **placed**, **ready for pickup** and **picked up**. The texts never say what is in the order. A customer who texts or calls can reach staff (press 0 or say "person").
+Customers get a plain text when an order is **placed** (with the tracking link), **ready for pickup** and **picked up**, and the same page shows the steps. The texts and the page never say what is in the order. A customer who texts or calls can reach staff (press 0 or say "person").
 
 ## Health and other private details: only from your own connected system
 The agent never writes or guesses private details. It can pass on an answer **word for word from your records system**, only when all of these hold:
