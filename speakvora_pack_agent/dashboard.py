@@ -5,7 +5,7 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import connect as SU, locations as LC, recipes, sharing, slots as SL
+from . import brain as BR, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
@@ -240,6 +240,20 @@ def handle(agent, method, path, headers, raw):
             out = {"locations": LC.remove(agent, str(json.loads(raw or b"{}").get("id", "")))}
         elif p == "/dash/api/locations/enable" and method == "POST":
             b = json.loads(raw or b"{}"); out = {"locations": LC.set_enabled(agent, bool(b.get("on")), b.get("this_name"))}
+        elif p == "/dash/api/brain" and method == "GET":
+            out = BR.load(agent) | {"configured": BR.configured(agent)}
+        elif p == "/dash/api/brain/learn" and method == "POST":
+            b = json.loads(raw or b"{}"); BR.start_learning_now(agent, str(b.get("website") or ""), str(b.get("notes") or "")); out = BR.load(agent) | {"configured": BR.configured(agent)}
+        elif p == "/dash/api/brain/approve" and method == "POST":
+            out = BR.approve(agent)
+        elif p == "/dash/api/brain/save" and method == "POST":
+            out = BR.edit(agent, json.loads(raw or b"{}").get("profile"))
+        elif p == "/dash/api/brain/forget" and method == "POST":
+            out = BR.forget(agent)
+        elif p == "/dash/api/guardrails" and method == "GET":
+            out = GR.view(agent)
+        elif p == "/dash/api/guardrails" and method == "POST":
+            rawc = SU._raw(agent); rawc["guardrails"] = GR.clean(json.loads(raw or b"{}")); SU._write_raw(agent, rawc); SU._reload(agent); out = GR.view(agent)
         elif p == "/dash/api/pause" and method == "POST":
             on = bool(json.loads(raw or b"{}").get("on")); f = os.path.join(agent.state.dir, "STOP")
             if on:

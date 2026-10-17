@@ -1425,5 +1425,110 @@ class MultiLocation(unittest.TestCase):
         finally:
             sa.shutdown(); sb.shutdown(); a.close(); b.close()
 
+
+class LiveTransfer(unittest.TestCase):
+    """A caller who presses 0 (or asks for a person) is connected to the staff phone right away; with no staff number set the caller hears a polite fallback and the team is told."""
+    def test_pressing_zero_dials_the_staff_phone(self):
+        r = Rig(extra={"facts": {"oncall_phone": "+16465550123"}})
+        try:
+            xml = r.agent.handle_call({"From": "+16465550101"}, "menu", "0")
+            self.assertIn("<Dial", xml); self.assertIn("+16465550123", xml); self.assertIn("answerOnBridge", xml)
+            self.assertTrue(any(x.get("action") == "transfer" and x.get("status") == "sent" for x in r.log()))
+        finally:
+            r.close()
+
+    def test_without_a_staff_number_the_caller_is_not_left_hanging(self):
+        r = Rig(extra={"facts": {"oncall_phone": "YOUR-ONCALL-PHONE"}})
+        try:
+            xml = r.agent.handle_call({"From": "+16465550101"}, "menu", "0")
+            self.assertNotIn("<Dial", xml); self.assertIn("call you back", xml)
+            self.assertTrue(any(x.get("action") == "transfer" and x.get("status") == "skipped" for x in r.log()))
+        finally:
+            r.close()
+
+
+class SmartBrain(unittest.TestCase):
+    """The agent learns the business from the owner's AI, keeps it for review, and uses it only once approved."""
+    AI = {"provider": "openai", "model": "m", "api_key": "k"}
+
+    def _learn(self, r, reply):
+        from speakvora_pack_agent import brain, reasoner
+        orig = reasoner._chat
+        reasoner._chat = lambda cfg, system, user, mt=None: (reply, {})
+        try:
+            return brain.learn(r.agent, "", "We open 9 to 5. Call 555-123-4567 or me@x.com")
+        finally:
+            reasoner._chat = orig
+
+    def test_learned_profile_needs_review_then_feeds_the_prompt(self):
+        from speakvora_pack_agent import brain
+        r = Rig(extra={"reasoner": self.AI})
+        try:
+            d = self._learn(r, '{"summary":"A cafe.","tone":"warm","hours":"9 to 5","services":["coffee"],"policies":[],"faqs":[{"q":"Hours?","a":"9 to 5"}],"unknowns":["parking"]}')
+            self.assertEqual(d["status"], "needs_review"); self.assertEqual(brain.for_prompt(r.agent), "")
+            brain.approve(r.agent); self.assertIn("Q: Hours? A: 9 to 5", brain.for_prompt(r.agent))
+            brain.forget(r.agent); self.assertEqual(brain.load(r.agent)["status"], "none")
+        finally:
+            r.close()
+
+    def test_unusable_answer_is_an_error_not_a_profile(self):
+        r = Rig(extra={"reasoner": self.AI})
+        try:
+            d = self._learn(r, "I cannot help")
+            self.assertEqual(d["status"], "error")
+        finally:
+            r.close()
+
+    def test_sources_exclude_contact_details(self):
+        from speakvora_pack_agent import brain
+        r = Rig(extra={"reasoner": self.AI, "facts": {"oncall_phone": "+16465550123"}})
+        try:
+            text, used = brain.gather(r.agent, "", "Call 646-555-0199 or me@x.com")
+            self.assertNotIn("0199", text); self.assertNotIn("me@x.com", text); self.assertNotIn("0123", text)
+        finally:
+            r.close()
+
+
+class Guardrails(unittest.TestCase):
+    def test_limits_are_clamped_and_actions_filtered(self):
+        from speakvora_pack_agent import guardrails as G
+        c = G.clean({"voice_calls": True, "max_turns": 9999, "max_call_minutes": 0, "allowed_actions": ["notify", "refund"]})
+        self.assertEqual(c["max_turns"], G.CEILING["max_turns"]); self.assertEqual(c["max_call_minutes"], 1); self.assertEqual(c["allowed_actions"], ["notify"])
+        with self.assertRaises(ValueError):
+            G.clean({"max_turns": "lots"})
+
+    def test_asking_for_a_person_is_detected(self):
+        from speakvora_pack_agent import guardrails as G
+        r = Rig()
+        try:
+            for s in ("Can I talk to a person?", "operator please", "let me speak to someone"):
+                self.assertTrue(G.wants_human(r.agent, s), s)
+            self.assertFalse(G.wants_human(r.agent, "What time do you open?"))
+        finally:
+            r.close()
+
+
+class SmartDashboardRoutes(unittest.TestCase):
+    def test_profile_and_limits_over_the_dashboard(self):
+        r = Rig(extra={"reasoner": {"provider": "openai", "model": "m", "api_key": "k"}}); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start()
+        from speakvora_pack_agent import dashboard, brain
+        tok = dashboard.token(r.agent)
+        def call(path, body=None):
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None, method="POST" if body is not None else "GET", headers={"x-dashboard-token": tok, "content-type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as x: return json.loads(x.read())
+        try:
+            self.assertEqual(call("/dash/api/brain")["status"], "none")
+            prof = {"summary": "A cafe.", "services": ["coffee"], "faqs": [{"q": "Hours?", "a": "9 to 5"}]}
+            self.assertEqual(call("/dash/api/brain/save", {"profile": prof})["status"], "needs_review")
+            self.assertEqual(call("/dash/api/brain/approve", {})["status"], "approved")
+            self.assertIn("9 to 5", brain.for_prompt(r.agent))
+            self.assertEqual(call("/dash/api/brain/forget", {})["status"], "none")
+            g = call("/dash/api/guardrails", {"voice_calls": True, "max_turns": 5000, "allowed_actions": ["notify", "refund"]})
+            self.assertTrue(g["settings"]["voice_calls"]); self.assertEqual(g["settings"]["max_turns"], 40); self.assertEqual(g["settings"]["allowed_actions"], ["notify"])
+            self.assertEqual(call("/dash/api/guardrails")["settings"]["max_turns"], 40)
+        finally:
+            srv.shutdown(); srv.server_close(); r.close()
+
+
 if __name__ == "__main__":
     unittest.main()

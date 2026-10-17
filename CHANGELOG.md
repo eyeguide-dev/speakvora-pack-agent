@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.7.0
+Smarter AI. After your AI passes its connection test the agent learns your business (from facts you typed, workflow names, calendar event types, and a website or notes you provide) into a profile you review, edit and approve before the AI uses it; nothing about customers is read and nothing goes to Speakvora. New limits card in Settings with fixed safety rules and ceilings for AI conversations. A caller who presses 0 is connected to your staff phone (new `transfer` workflow action), with a polite fallback when no number is set. Live AI phone conversations and AI text replies are not in this release; their switches are saved but inactive. See docs/smart-ai.md.
+
 ## 0.6.1
 Settings now has an "Open my account" button to your Speakvora account on the website (renew, add a location, licence codes, new versions). The agent itself still needs no internet.
 

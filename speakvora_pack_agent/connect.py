@@ -295,7 +295,9 @@ def test(agent, card, opts=None):
             return _passed(agent, card, msg)
         if card == "ai":
             text = R.ping(agent.cfg.get("reasoner") or {})
-            return _passed(agent, card, f"The AI answered: \"{text.strip()[:60]}\". Reasoning is ready; it only proposes, and you approve.")
+            from . import brain
+            learning = brain.start_learning(agent)                      # the AI works: start learning the business right away (in the background, for the owner to review)
+            return _passed(agent, card, f"The AI answered: \"{text.strip()[:60]}\". Reasoning is ready; it only proposes, and you approve." + (" It is now learning your business: review what it learned in Library." if learning else ""))
         if card == "business":
             return {"ok": True, "message": "Looks complete." if connected(agent, "business") else "Add your business name."}
     except Exception as e:  # noqa: BLE001

@@ -187,6 +187,35 @@ h('div',{class:'btns'},h('button',{class:'btn',on:{click:async e=>{const b=e.cur
 body.appendChild(add);body.appendChild(h('div',{class:'hlp'},'Ten or more locations: email speakvora@gmail.com for volume pricing.'));d.appendChild(body);return d}
 // ---------------------------------------------------------------- start
 function drawState(){const st=$('state');const t=S.paused?'Paused':S.setup.live?'Live':'Practice mode';st.className='state '+(S.paused?'paused':S.setup.live?'live':'practice');$('statetxt').textContent=t;st.onclick=()=>go(S.setup.live||S.paused?'settings':'connect');drawLocBtn()}
+// ---------------------------------------------------------------- SMART AI: business profile (Library) and limits (Settings)
+async function brainCard(box){let d;try{d=await api('/dash/api/brain')}catch(e){return}
+box.appendChild(h('h2',null,'What your AI knows about your business'));const c=h('div',{class:'card'});box.appendChild(c);const p=d.profile||{};
+const st={none:'Nothing learned yet.',learning:'Learning your business now...',needs_review:'Learned. Check it, then approve it. Your AI does not use it until you do.',approved:'Approved. Your AI uses this.',error:d.error||'Something went wrong.'}[d.status]||'';
+c.appendChild(h('div',{class:'small mut'},d.configured?st:'Connect your AI first (Connect tab). It then starts learning your business by itself.'));
+if(d.status==='error'&&d.error)c.appendChild(h('div',{class:'small'},d.error));
+if(d.sources&&d.sources.length)c.appendChild(h('div',{class:'hlp'},'Read: '+d.sources.join(', ')+'. Never customer names, numbers or messages.'));
+if(p.summary){c.appendChild(h('div',{class:'title',style:'font-size:15.5px;margin-top:10px'},p.summary));if(p.hours)c.appendChild(h('div',{class:'small'},'Hours: '+p.hours));if(p.services&&p.services.length)c.appendChild(h('div',{class:'small'},'Offers: '+p.services.join(', ')));(p.faqs||[]).forEach(f=>c.appendChild(h('div',{class:'small',style:'margin-top:6px'},h('b',null,f.q+' '),f.a)));if(p.unknowns&&p.unknowns.length)c.appendChild(h('div',{class:'hlp'},'It could not answer: '+p.unknowns.join('; ')+'. Add these in the notes below.'))}
+const site=h('input',{placeholder:'Your website (optional), https://...',value:d.website||''}),notes=h('textarea',{rows:3,placeholder:'Anything else to know: hours, prices, rules. Do not put customer details here.'});
+c.appendChild(h('div',{class:'fld'},site));c.appendChild(h('div',{class:'fld'},notes));
+const bt=h('div',{class:'btns'});
+bt.appendChild(h('button',{class:'btn primary',on:{click:e=>act(e.currentTarget,async()=>{await post('/dash/api/brain/learn',{website:site.value,notes:notes.value});setTimeout(loadLibrary,4000)},'Learning...')}},d.status==='none'?'Learn my business':'Learn again'));
+if(d.status==='needs_review')bt.appendChild(h('button',{class:'btn',on:{click:e=>act(e.currentTarget,async()=>{await post('/dash/api/brain/approve')},'Approved')}},'Approve'));
+if(d.status!=='none')bt.appendChild(h('button',{class:'btn',on:{click:e=>act(e.currentTarget,async()=>{await post('/dash/api/brain/forget')},'Forgotten')}},'Forget it'));
+c.appendChild(bt);if(d.status==='learning')setTimeout(()=>{if(VIEW==='library')loadLibrary()},4000)}
+async function guardCard(box){let g;try{g=await api('/dash/api/guardrails')}catch(e){return}const s=g.settings;
+box.appendChild(h('h2',null,'Limits for your AI in live conversations'));const c=h('div',{class:'card'});box.appendChild(c);
+c.appendChild(h('div',{class:'small mut'},'Always on, and not changeable:'));g.hard.forEach(x=>c.appendChild(h('div',{class:'small'},'• '+x)));
+const tog=(k,t)=>{const cb=h('input',{type:'checkbox'});cb.checked=!!s[k];cb.onchange=()=>{s[k]=cb.checked};return h('div',{class:'row',style:'align-items:center;margin-top:8px'},h('div',{class:'grow'},t),h('label',{class:'sw'},cb,h('span')))};
+c.appendChild(tog('sms_replies','Let the AI answer texts'));c.appendChild(tog('voice_calls','Let the AI answer phone calls'));
+const num=(k,t)=>{const i=h('input',{type:'number',min:1,max:g.ceiling[k],value:s[k]});i.onchange=()=>{s[k]=parseInt(i.value,10)||1};return h('div',{class:'fld'},h('label',{class:'small'},t+' (up to '+g.ceiling[k]+')'),i)};
+c.appendChild(num('max_turns','Most back-and-forth turns in one conversation'));c.appendChild(num('max_call_minutes','Longest call, minutes'));c.appendChild(num('max_ai_replies_per_hour','Most AI replies per hour'));
+c.appendChild(h('div',{class:'small mut',style:'margin-top:8px'},'Actions the AI may do by itself:'));
+Object.keys(g.actions).forEach(a=>{const cb=h('input',{type:'checkbox'});cb.checked=s.allowed_actions.includes(a);cb.onchange=()=>{const x=new Set(s.allowed_actions);cb.checked?x.add(a):x.delete(a);s.allowed_actions=[...x]};c.appendChild(h('label',{class:'row',style:'gap:8px;align-items:center'},cb,h('span',{class:'small'},g.actions[a])))});
+const bt=(k,t)=>{const i=h('input',{value:(s[k]||[]).join(', ')});i.onchange=()=>{s[k]=i.value.split(',').map(x=>x.trim()).filter(Boolean)};return h('div',{class:'fld'},h('label',{class:'small'},t),i)};
+c.appendChild(bt('blocked_topics','Topics it must hand to a person (comma separated)'));c.appendChild(bt('handoff_words','Words that mean the caller wants a person'));
+c.appendChild(h('div',{class:'hlp'},g.staff_phone_set?'A caller who asks for a person is connected to your staff number right away.':'Set your staff phone number (Connect) so a caller who asks for a person can be connected. Until then they are told someone will call back.'));
+c.appendChild(h('div',{class:'btns'},h('button',{class:'btn primary',on:{click:e=>act(e.currentTarget,async()=>{await post('/dash/api/guardrails',s)},'Saved')}},'Save limits')))}
+{const _ll=loadLibrary,_ls=loadSettings;loadLibrary=async function(){await _ll();await brainCard($('v-library'))};loadSettings=async function(){await _ls();await guardCard($('v-settings'))}}
 async function refreshAll(){try{S=await api('/dash/api/summary');JOBS=(await api('/dash/api/jobs')).jobs}catch(e){$('v-home').textContent=e.status===401?'Open the address printed when the agent started (it ends with #token=...).':'Could not load: '+e.message;return}drawState();document.title=(S.pack.title||'Your voice bundle')+' | Speakvora';if(VIEW==='home')renderHome();if(VIEW==='connect')loadConnect(true);if(VIEW==='library')loadLibrary();if(VIEW==='settings')loadSettings()}
 (async()=>{drawTabs();await refreshAll();if(START)go(START);else if(S&&!S.setup.connected&&!JOBS.length)go('connect');if(ADDSHEET){await new Promise(r=>setTimeout(r,1200));if(SETUP)addSheet()}setInterval(()=>{if(VIEW==='home')refreshAll()},15000)})();
 </script></body></html>""".replace("__LOGO__", LOGO)

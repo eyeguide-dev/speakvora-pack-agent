@@ -39,7 +39,7 @@
       "1": [{"action": "play", "audio": ["hours_intro"]}, {"action": "reply", "text": "{{fact:hours}}"}],
       "2": [{"action": "play", "audio": ["reservation_help"]}, {"action": "slack", "channel": "#host", "text": "Caller {{call.from}} asked about a reservation."}],
       "3": [{"action": "play", "audio": ["order_status_help"]}, {"action": "slack", "channel": "#front", "text": "Caller {{call.from}} asked about an order."}],
-      "0": [{"action": "play", "audio": ["handoff_person"]}, {"action": "slack", "channel": "#front", "text": "Caller {{call.from}} wants a person."}]}}}}, "do": []},
+      "0": [{"action": "play", "audio": ["handoff_person"]}, {"action": "slack", "channel": "#front", "text": "Caller {{call.from}} wants a person."}, {"action": "transfer", "to": "{{fact:oncall_phone}}"}]}}}}, "do": []},
   {"name": "daily_briefing", "on": {"schedule": {"at": "09:30"}}, "do": [
     {"action": "slack", "channel": "#host", "text": "Today's reservations:\n{{today_text}}"}]},
   {"name": "slack_say", "on": {"slack_command": "/say"}, "do": [

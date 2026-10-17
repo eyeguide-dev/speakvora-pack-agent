@@ -66,7 +66,7 @@ def _workflows_for(profile):
               "1": [{"action": "play", "audio": ["hours_intro"]}, {"action": "reply", "text": "{{fact:hours}}"}],
               "2": [{"action": "notify", "text": "Caller {{call.from}} wants to book or change a booking."}, {"action": "reply", "text": "Thanks, the team will call you back."}],
               "3": [{"action": "play", "audio": ["status_help"]}, {"action": "notify", "text": "Caller {{call.from}} asked for a status update."}],
-              "0": [{"action": "play", "audio": ["handoff_person"]}, {"action": "notify", "text": "Caller {{call.from}} wants a person."}]}}}}, "do": []},
+              "0": [{"action": "play", "audio": ["handoff_person"]}, {"action": "notify", "text": "Caller {{call.from}} wants a person."}, {"action": "transfer", "to": "{{fact:oncall_phone}}"}]}}}}, "do": []},
           {"name": "daily_briefing", "on": {"schedule": {"at": "09:30"}}, "do": [{"action": "notify", "text": "Today:\n{{today_text}}"}]},
           {"name": "slack_say", "on": {"slack_command": "/say"}, "do": [_sms("{{command.arg2}}", "{{business}}: {{slotvar:command.arg1}}"), {"action": "reply", "text": "Text to {{command.arg2}} ({{last.sms}}): {{slotvar:command.arg1}}"}]}]
     if profile == "devops":

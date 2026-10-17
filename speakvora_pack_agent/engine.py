@@ -601,7 +601,8 @@ class Agent:
             self._need(rc.get("model") and (rc.get("api_key") or rc.get("base_url")), "Reasoning", "add the reasoner section (provider, model, api_key) in agent.json")
             if self.state.sent_since(3600, kind="reason") >= int(rc.get("max_per_hour", 20)):
                 self.record(wf, kind, "blocked", reason="reason_limit"); return {"status": "blocked", "reason": "reason_limit"}
-            text, usage = R.ask(rc, user)
+            from . import brain
+            text, usage = R.ask(rc, brain.for_prompt(self) + user)
             self.safe.sent("reason", "model")
             res = R.parse(text); kept, dropped = R.validate(res["proposals"], allow, contacts, channels, hosts)
             result = {"summary": res["summary"], "reasoning": res["reasoning"], "proposals": kept, "dropped": dropped, "sent_to_model": user[:4000], "sent_chars": len(user), "model": rc.get("model"), "usage": usage}
@@ -768,6 +769,8 @@ class Agent:
         opt = (menu.get("options") or {}).get(digits)
         if not opt:
             return twiml_menu([], f"{base}/twilio/call/menu", "Sorry, that was not an option. Please try again.")
+        xfer = [a for a in opt if isinstance(a, dict) and a.get("action") == "transfer"]
+        opt = [a for a in opt if not (isinstance(a, dict) and a.get("action") == "transfer")]
         out = {"reply": "", "play": []}
         self.run_actions(wf["name"], opt, ctx, out)
         urls = []
@@ -780,6 +783,14 @@ class Agent:
         if out["reply"]:
             from xml.sax.saxutils import escape
             xml += f"<Say>{escape(out['reply'])}</Say>"
+        if xfer:                                                                  # connect the caller to a person right now (the staff phone from agent.json facts.oncall_phone)
+            from xml.sax.saxutils import escape, quoteattr
+            to = S.norm_phone(T.render(str(xfer[0].get("to") or "{{fact:oncall_phone}}"), ctx, self.pack))
+            if to and "YOUR-" not in to and len(to) >= 8:
+                self.record(wf["name"], "transfer", "sent", to=to)
+                return xml + f'<Dial timeout="25" answerOnBridge="true"><Number>{escape(to)}</Number></Dial><Say>{escape(xfer[0].get("say_if_busy") or "Sorry, nobody could pick up. We will call you back as soon as we can.")}</Say><Hangup/></Response>'
+            self.record(wf["name"], "transfer", "skipped", reason="no staff phone number set (facts.oncall_phone)")
+            xml += "<Say>Sorry, nobody is available to take your call right now. We will call you back as soon as we can.</Say>"
         return xml + "<Hangup/></Response>"
 
     def handle_slack_command(self, form):
