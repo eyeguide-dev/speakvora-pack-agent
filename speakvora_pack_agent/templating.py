@@ -40,6 +40,8 @@ def render(text, ctx, pack=None):
         v = lookup(ctx, key)
         return "" if v is None else str(v)
     out = _RX.sub(sub, str(text))
+    if "{{order.extra_minutes}}" in str(text) and not lookup(ctx, "order.extra_minutes"):                 # no minutes were sent: leave out "(about  more minutes)" instead of printing a gap
+        out = re.sub(r"\s*\(\s*(?:about\s+)?[^\d()]{0,24}\)", "", out)
     return re.sub(r"(?<=\S) {2,}(?=\S)", " ", out) if "{{" in str(text) else out                  # a line that is not in the pack yet leaves no double gap in the text
 
 

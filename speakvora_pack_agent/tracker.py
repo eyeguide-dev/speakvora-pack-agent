@@ -83,7 +83,7 @@ def set_status(agent, order, status, delivery=False, delayed=None, eta=None, flo
             c.execute("insert into orders (token,order_no,steps,status,created,updated,eta,delayed,base,history,pushed,flow) values (?,?,?,?,?,?,?,?,?,?,?,?)", (tok, order, json.dumps(FLOWS.get(flow) or (DELIVERY if delivery else PICKUP)), "received", now, now, "", 0, base, "[]", 0, flow)); r = _find(agent, token=tok)
         steps = DELIVERY if (delivery and status in DELIVERY and r["steps"] in (PICKUP, DELIVERY)) else r["steps"]
         hist = (r["history"] + [[now, status]])[-12:]
-        d = r["delayed"] if delayed is None else bool(delayed)
+        d = (r["delayed"] and status == r["status"]) if delayed is None else bool(delayed)            # "running late" ends when the order moves to its next step
         e = r["eta"] if eta is None else " ".join(str(eta).split())[:40]            # the business's own estimate; an empty value clears it
         c.execute("update orders set steps=?, status=?, updated=?, eta=?, delayed=?, history=?, pushed=0 where token=?", (json.dumps(steps), status, now, e, int(d), json.dumps(hist), r["token"]))
     if hosted:

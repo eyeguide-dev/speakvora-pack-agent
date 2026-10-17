@@ -1895,6 +1895,20 @@ class OrderTrackerAndRecords(unittest.TestCase):
         finally:
             r.close()
 
+    def test_running_late_clears_when_the_order_moves_on_and_a_missing_minutes_value_leaves_no_gap(self):
+        from speakvora_pack_agent import tracker, templating
+        r = Rig(extra={"tracking": {"enabled": True}})
+        try:
+            ctx = lambda: r.agent.ctx(order={"number": "D1"})   # noqa: E731
+            r.agent.run_actions("t", [{"action": "track", "status": "preparing", "delayed": True}], ctx()); c = ctx()
+            tok = tracker._find(r.agent, order="D1")["token"]; self.assertTrue(tracker.get(r.agent, tok)["delayed"])
+            r.agent.run_actions("t", [{"action": "track", "status": "preparing"}], ctx()); self.assertTrue(tracker.get(r.agent, tok)["delayed"])        # same step again: still late
+            r.agent.run_actions("t", [{"action": "track", "status": "ready"}], ctx()); self.assertFalse(tracker.get(r.agent, tok)["delayed"])           # next step: no longer late
+            self.assertEqual(templating.render("Late (about {{order.extra_minutes}} more minutes)", {"order": {}}, r.agent.pack), "Late")
+            self.assertEqual(templating.render("Late (about {{order.extra_minutes}} more minutes)", {"order": {"extra_minutes": 10}}, r.agent.pack), "Late (about 10 more minutes)")
+        finally:
+            r.close()
+
     def test_the_page_shows_eta_contact_and_industry_wording(self):
         from speakvora_pack_agent import tracker
         r = Rig(extra={"tracking": {"enabled": True}, "facts": {"phone": "+16465550199"}, "twilio": {"from_number": "+19295816269"}})

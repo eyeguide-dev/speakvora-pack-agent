@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.14.1
+Found in the first live test of hosted order pages: "running a little late" now clears when the order moves to its next step, and a delay text sent without a minutes value no longer prints "(about more minutes)".
+
 ## 0.14.0
 Order tracking pages are optional (a switch in the dashboard, off by default; off means customers are texted at each step as before). Pairing replaces the API key chore: a business saves its details in its Speakvora account, makes a one-time code, types it into the dashboard, and the agent sets itself up with a key that can create order pages and nothing else. Sign-up now asks what you do (an industry, or developer for everything) and the account page tailors itself. All guides refreshed, with a new overview. See docs/overview.md and docs/orders-and-private-records.md.
 
