@@ -124,7 +124,7 @@ def make_handler(agent):
                     if ev and src.get("as") == "sms":                              # any provider's inbound text: answered through your sms_provider
                         return self._send(200, {"replied": bool(agent.sms_via_provider(ev.get("from") or (ev.get("customer") or {}).get("phone"), ev.get("body", "")))})
                     return self._send(200, agent.handle_event(ev) if ev else {"ignored": True})
-                if p in ("/twilio/sms", "/twilio/call", "/twilio/call/menu", "/twilio/status"):
+                if p in ("/twilio/sms", "/twilio/call", "/twilio/call/menu", "/twilio/call/menu2", "/twilio/status"):
                     params = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items()}
                     if not agent.twilio.check_signature(self._public(), params, self.headers.get("X-Twilio-Signature", "")):
                         return self._send(403, {"error": "bad_signature"})
@@ -134,7 +134,7 @@ def make_handler(agent):
                         from .connectors.twilio import twiml_message
                         reply = agent.handle_sms(params)
                         return self._send(200, twiml_message(reply) if reply else "<Response></Response>", "text/xml")
-                    return self._send(200, agent.handle_call(params, "start" if p == "/twilio/call" else "menu", params.get("Digits", "")), "text/xml")
+                    return self._send(200, agent.handle_call(params, "start" if p == "/twilio/call" else ("menu2" if p.endswith("menu2") else "menu"), params.get("Digits", "")), "text/xml")
                 if p == "/slack/command":
                     if not agent.slack.verify(raw, self.headers.get("X-Slack-Request-Timestamp", ""), self.headers.get("X-Slack-Signature", "")):
                         return self._send(401, {"error": "bad_signature"})

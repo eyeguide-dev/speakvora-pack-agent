@@ -425,6 +425,11 @@ class Agent:
                 a2 = {"action": "calendar_create", "title": args["title"], "start": args["start"], "minutes": args["minutes"]}
             if remember:
                 self.set_policy(decision=(f"{j['wf']}:{k}", "auto"))
+            from . import industry_rules
+            bad = industry_rules.violation(self, args.get("text", "")) if k in ("sms", "email", "slack", "teams") else ""
+            if bad and k in ("sms", "email"):                                              # an AI-written customer message that breaks the industry's rules is never sent
+                self.state.update_proposal(jid, i, state="failed", status="blocked_by_industry_rule", reason=bad)
+                out.append({"index": i, "state": "failed", "status": "blocked_by_industry_rule"}); continue
             ctx["_approved"] = True
             cj = f"{jid}:p{i}"
             try:
@@ -606,8 +611,8 @@ class Agent:
             self._need(rc.get("model") and (rc.get("api_key") or rc.get("base_url")), "Reasoning", "add the reasoner section (provider, model, api_key) in agent.json")
             if self.state.sent_since(3600, kind="reason") >= int(rc.get("max_per_hour", 20)):
                 self.record(wf, kind, "blocked", reason="reason_limit"); return {"status": "blocked", "reason": "reason_limit"}
-            from . import brain
-            text, usage = R.ask(rc, brain.for_prompt(self) + user)
+            from . import brain, industry_rules
+            text, usage = R.ask(rc, brain.for_prompt(self) + industry_rules.prompt(self) + user)
             self.safe.sent("reason", "model")
             res = R.parse(text); kept, dropped = R.validate(res["proposals"], allow, contacts, channels, hosts)
             result = {"summary": res["summary"], "reasoning": res["reasoning"], "proposals": kept, "dropped": dropped, "sent_to_model": user[:4000], "sent_chars": len(user), "model": rc.get("model"), "usage": usage}
@@ -677,7 +682,8 @@ class Agent:
         """Call about once a minute: queued actions, calendar reminders and daily schedules."""
         self.flush_outbox()
         from . import sharing
-        from . import learned
+        from . import learned, privacy
+        privacy.scrub(self)                                                      # customer details are cleaned from finished jobs and old log lines after the days you chose
         learned.auto(self)                                                       # repeated AI lines become library lines, inside the monthly budget, if switched on
         sharing.auto(self)                                                       # missing phrases go to Speakvora once a day, if the person agreed
         if self.inbox.configured:
@@ -758,6 +764,32 @@ class Agent:
             self.run_actions("inbound_sms", [{"action": "sms", "to": who, "text": reply, "raw": True}], self.ctx(customer={"sms_consent": True}))
         return reply
 
+    SPEECH_WORDS = {"1": ("hours", "open", "close", "closing", "address", "where", "location", "directions"), "2": ("book", "booking", "appointment", "schedule", "reschedule", "cancel", "quote", "estimate", "visit"),
+                    "3": ("status", "order", "ready", "late", "update", "progress", "arrive")}
+
+    def _speech_on(self):
+        return bool((self.cfg.get("twilio") or {}).get("speech_input")) and self.pack.language == "en"
+
+    def _speech_hints(self, menu):
+        if not self._speech_on():
+            return ""
+        ws = menu.get("words") or self.SPEECH_WORDS
+        return ", ".join(sorted({w for v in ws.values() for w in v} | {"person", "manager", "operator", "human"}))[:480]
+
+    def _speech_choice(self, menu, said):
+        """The menu option a caller's spoken words mean, or ''. Asking for a person always wins, so nobody is trapped in the menu."""
+        said = str(said or "").strip()
+        if not said or not self._speech_on():
+            return ""
+        from . import guardrails
+        if guardrails.wants_human(self, said):
+            return "0"
+        words = set(re.findall(r"[a-z']+", said.lower()))
+        for k, ws in (menu.get("words") or self.SPEECH_WORDS).items():
+            if words & set(ws):
+                return k
+        return ""
+
     def handle_call(self, params, step="start", digits=""):
         """An inbound call from Twilio -> TwiML. The workflow with on.call.menu plays a prompt, then runs the actions of the pressed digit."""
         wf = next((w for w in self.workflows if (w.get("on") or {}).get("call")), None)
@@ -772,10 +804,14 @@ class Agent:
             except (PackError, AudioError):
                 pass
             pre = [self._line_part(x) for x in self._required("menu")]
-            return twiml_menu(urls, f"{base}/twilio/call/menu", T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), pre=pre)
+            return twiml_menu(urls, f"{base}/twilio/call/menu", T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), pre=pre, speech_hints=self._speech_hints(menu))
+        digits = (digits or "").strip() or self._speech_choice(menu, params.get("SpeechResult", ""))
+        if not digits or digits not in (menu.get("options") or {}):
+            if step == "menu2" and "0" in (menu.get("options") or {}):         # twice without an answer: do not leave the caller stuck, connect them to a person
+                digits = "0"
+            else:
+                return twiml_menu([], f"{base}/twilio/call/menu2", "Sorry, I did not catch that. " + T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), speech_hints=self._speech_hints(menu))
         opt = (menu.get("options") or {}).get(digits)
-        if not opt:
-            return twiml_menu([], f"{base}/twilio/call/menu", "Sorry, that was not an option. Please try again.")
         xfer = [a for a in opt if isinstance(a, dict) and a.get("action") == "transfer"]
         opt = [a for a in opt if not (isinstance(a, dict) and a.get("action") == "transfer")]
         out = {"reply": "", "play": []}

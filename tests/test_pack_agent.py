@@ -1169,7 +1169,7 @@ class Web(unittest.TestCase):
         code, xml = self.twilio("/twilio/call", {"From": "+16465550101"}); self.assertIn("<Gather", xml); self.assertIn(f"http://127.0.0.1:{self.port}/audio/", xml)
         code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "Digits": "1"}); self.assertIn("<Play>", xml); self.assertIn("Tue-Sun 5-10 PM.", xml); self.assertIn("<Hangup/>", xml)
         code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "Digits": "0"}); self.assertIn("<Play>", xml); self.assertTrue(any("wants a person" in q["json"]["text"] for q in self.r.mock.calls("chat.postMessage")))
-        code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "Digits": "9"}); self.assertIn("not an option", xml)
+        code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "Digits": "9"}); self.assertIn("did not catch that", xml); self.assertIn("/twilio/call/menu2", xml)
 
     def test_audio_endpoint_serves_the_pack(self):
         code = urllib.request.urlopen(f"http://127.0.0.1:{self.port}/audio/w02.mp3").status; self.assertEqual(code, 200)
@@ -1611,6 +1611,70 @@ class PhraseBox(unittest.TestCase):
             L.add(r.agent, v["suggested"][0]["id"]); self.assertEqual(len(L.view(r.agent)["items"]), 1); self.assertEqual(L.view(r.agent)["suggested"], [])
         finally:
             L._voice, reasoner._chat = orig; r.close()
+
+
+class ServiceCallFlow(unittest.TestCase):
+    def test_spoken_requests_pick_the_menu_option_and_a_person_always_wins(self):
+        r = Rig(extra={"twilio": {"speech_input": True}, "facts": {"oncall_phone": "+16465550123"}})
+        try:
+            self.assertIn('input="dtmf speech"', r.agent.handle_call({"From": "+16465550101"}, "start"))
+            self.assertIn("Dial", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "can I talk to a manager"}, "menu", ""))
+            xml = r.agent.handle_call({"From": "+16465550101", "SpeechResult": "what time are you open"}, "menu", "")
+            self.assertNotIn("Dial", xml); self.assertIn("Tue-Sun 5-10 PM", xml)
+        finally:
+            r.close()
+
+    def test_speech_is_off_unless_switched_on(self):
+        r = Rig()
+        try:
+            self.assertNotIn("speech", r.agent.handle_call({"From": "+16465550101"}, "start"))
+        finally:
+            r.close()
+
+    def test_two_misses_connect_the_caller_to_a_person(self):
+        r = Rig(extra={"facts": {"oncall_phone": "+16465550123"}})
+        try:
+            first = r.agent.handle_call({"From": "+16465550101"}, "menu", "")
+            self.assertIn("/twilio/call/menu2", first); self.assertNotIn("Dial", first)
+            self.assertIn("Dial", r.agent.handle_call({"From": "+16465550101"}, "menu2", ""))
+        finally:
+            r.close()
+
+    def test_service_business_gets_follow_up_workflows_with_tasks(self):
+        from speakvora_pack_agent import recipes
+        names = {w["name"]: w for w in recipes.workflows_for("trades")["workflows"]}
+        self.assertTrue({"quote_followup", "job_followup", "next_visit_due"} <= set(names))
+        self.assertTrue(any(a.get("action") == "notify" and "Follow-up task" in a["text"] for a in names["quote_followup"]["do"]))
+        self.assertNotIn("quote_followup", {w["name"] for w in recipes.workflows_for("clinic")["workflows"]})
+
+
+class IndustryRulesAndPrivacy(unittest.TestCase):
+    def test_a_clinic_message_with_health_details_is_blocked(self):
+        from speakvora_pack_agent import industry_rules as IR
+        r = Rig(extra={"industry_profile": "clinic"})
+        try:
+            r.agent.profile = "clinic"
+            self.assertEqual(IR.violation(r.agent, "Your test result is ready, call us"), "test result")
+            self.assertEqual(IR.violation(r.agent, "Your appointment is at 3 PM tomorrow"), "")
+            self.assertIn("Appointment times and places only", IR.prompt(r.agent))
+        finally:
+            r.close()
+
+    def test_old_customer_details_are_removed_and_waiting_jobs_are_kept(self):
+        from speakvora_pack_agent import privacy
+        r = Rig(extra={"guardrails": {"keep_details_days": 1}})
+        try:
+            st = r.agent.state
+            st.job_create("old", "wf", "sms", {"to": "+16465550101", "text": "Hi Ann, your table"}, {"customer": {"name": "Ann"}}, "sent")
+            st.job_create("wait", "wf", "sms", {"to": "+16465550102", "text": "later"}, {"customer": {"name": "Bo"}}, "queued")
+            st.log(workflow="wf", to="+16465550101", status="sent")
+            r.now[0] += 3 * 86400
+            out = privacy.scrub(r.agent, force=True)
+            self.assertEqual(out["jobs"], 1); self.assertEqual(st.data["jobs"]["old"]["ctx"], {}); self.assertEqual(st.data["jobs"]["old"]["a"]["text"], "(removed)")
+            self.assertEqual(st.data["jobs"]["wait"]["ctx"]["customer"]["name"], "Bo")
+            self.assertNotIn("6465550101", open(st.log_path).read())
+        finally:
+            r.close()
 
 
 if __name__ == "__main__":

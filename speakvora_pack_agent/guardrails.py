@@ -13,13 +13,13 @@ HARD = [
 CEILING = {"max_turns": 40, "max_call_minutes": 20, "max_ai_replies_per_hour": 200, "phrase_chars_per_month": 20000}
 FLOOR = {"learn_after": (2, 20)}
 DEFAULTS = {"sms_replies": False, "voice_calls": False, "max_turns": 12, "max_call_minutes": 6, "max_ai_replies_per_hour": 30, "allowed_actions": [], "blocked_topics": ["medical advice", "legal advice", "emergencies"],
-            "handoff_words": ["person", "human", "agent", "operator", "manager", "representative", "someone"], "after_hours": "message", "auto_learn_phrases": False, "learn_after": 3, "phrase_chars_per_month": 3000}
+            "handoff_words": ["person", "human", "agent", "operator", "manager", "representative", "someone"], "after_hours": "message", "auto_learn_phrases": False, "learn_after": 3, "phrase_chars_per_month": 3000, "keep_details_days": 7}
 ACTIONS = {"notify": "Tell my team in Slack or Teams", "sms": "Send a confirmation text", "calendar_create": "Add a booking to my calendar"}      # nothing that moves money or changes a customer record
 
 
 def view(agent):
     cur = {**DEFAULTS, **(agent.cfg.get("guardrails") or {})}
-    return {"settings": cur, "hard": HARD, "ceiling": CEILING, "actions": ACTIONS, "staff_phone_set": bool(re.sub(r"\D", "", str((agent.cfg.get("facts") or {}).get("oncall_phone", ""))) and "YOUR-" not in str((agent.cfg.get("facts") or {}).get("oncall_phone", "")))}
+    return {"settings": cur, "hard": HARD, "ceiling": {**CEILING, "keep_details_days": 90}, "actions": ACTIONS, "staff_phone_set": bool(re.sub(r"\D", "", str((agent.cfg.get("facts") or {}).get("oncall_phone", ""))) and "YOUR-" not in str((agent.cfg.get("facts") or {}).get("oncall_phone", "")))}
 
 
 def clean(v):
@@ -31,6 +31,10 @@ def clean(v):
             cur[k] = max(1, min(int((v or {}).get(k, DEFAULTS[k])), hi))
         except (TypeError, ValueError):
             raise ValueError(f"{k.replace('_', ' ').capitalize()} must be a number up to {hi}.")
+    try:
+        cur["keep_details_days"] = max(0, min(int((v or {}).get("keep_details_days", 7)), 90))
+    except (TypeError, ValueError):
+        raise ValueError("Days to keep customer details must be a number from 0 to 90.")
     cur["auto_learn_phrases"] = bool((v or {}).get("auto_learn_phrases"))
     try:
         cur["learn_after"] = max(2, min(int((v or {}).get("learn_after", 3)), 20))

@@ -56,6 +56,10 @@ def _workflows_for(profile):
               {"name": "sms_reschedule", "on": {"sms": {"topic": "reschedule"}}, "do": [
                   {"action": "reply", "text": "{{slot:reschedule_help}}"}, {"action": "notify", "text": "Booking request by text from {{sms.from}}: {{sms.body}}"}]},
               {"name": "ready_for_you", "on": {"event": "appointment.ready"}, "do": [_sms(None, "{{business}}: {{slot:ready_for_you}}")]}]
+    if has("quote_followup"):                                                       # service business: follow-ups your own system triggers when they are due, each also creates a task for the team
+        w += [{"name": "quote_followup", "on": {"event": "quote.followup_due"}, "do": [_sms(None, "{{business}}: {{slot:quote_followup}}"), {"action": "notify", "text": "Follow-up task: call {{customer.name}} about their quote. Text sent: {{last.sms}}."}]},
+              {"name": "job_followup", "on": {"event": "job.followup_due"}, "do": [_sms(None, "{{business}}: {{slot:job_followup}}"), {"action": "notify", "text": "Follow-up task: check the finished work with {{customer.name}}."}]},
+              {"name": "next_visit_due", "on": {"event": "visit.next_due"}, "do": [_sms(None, "{{business}}: {{slot:next_visit_due}}")]}]
     w += [{"name": "thanks_review", "on": {"event": "visit.completed"}, "do": [_sms(None, "{{business}}: {{slot:thanks_review}} {{fact:review_url}}")]},
           {"name": "sms_hours", "on": {"sms": {"topic": "hours"}}, "do": [{"action": "reply", "text": "{{slot:hours_intro}} {{fact:hours}}"}]},
           {"name": "sms_directions", "on": {"sms": {"topic": "directions"}}, "do": [{"action": "reply", "text": "{{slot:directions_intro}} {{fact:address}}"}]},
@@ -121,7 +125,7 @@ def agent_config(business="YOUR-BUSINESS-NAME"):
 
 
 # Plain-language description of each ready-made workflow, shown in the dashboard and in the pack README.
-NICE = {"order_ready": "tells customers their order is ready", "order_delayed": "apologises for delays", "table_ready": "tells guests their table is ready", "reservation_created": "confirms reservations and adds them to your calendar",
+NICE = {"quote_followup": "follows up on quotes and creates a task for your team", "job_followup": "checks in after finished work", "next_visit_due": "reminds customers their next visit is due", "order_ready": "tells customers their order is ready", "order_delayed": "apologises for delays", "table_ready": "tells guests their table is ready", "reservation_created": "confirms reservations and adds them to your calendar",
             "appointment_created": "confirms bookings and adds them to your calendar", "appointment_reminder_24h": "reminds people a day before (from Google Calendar)", "reservation_reminder_24h": "reminds guests a day before (from Google Calendar)",
             "no_show_followup": "follows up after a no-show", "thanks_review": "thanks customers and asks for a review", "sms_hours": "answers 'what are your hours?' by text", "sms_directions": "answers 'where are you?' by text",
             "sms_person": "passes 'I want a person' to your team on Slack or Teams", "phone_menu": "answers your phone with a menu (hours, booking, status, a person)", "daily_briefing": "posts today's bookings to Slack or Teams each morning",

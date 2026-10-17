@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.8.0
+Service-business call flow: callers can say what they want (opt-in, English) as well as press a key; asking for a person always connects to your staff phone; two misses connect a person instead of looping. Follow-up workflows with team tasks for quotes, finished work and next visits. Industry rules (what the AI may never say, blocked terms that stop an AI-written message from being sent) for clinic, pharmacy, legal, finance, collections, corrections, education, public services and more. Customer details are removed from finished jobs and old log lines after the days you choose. See docs/industry-rules.md.
+
 ## 0.7.1
 Library now has an Add your own phrases box (one phrase per line, each voiced once and added to your library) and Suggest more with my AI. Lines your AI keeps saying become library lines: when your connected AI writes the same generic customer line several times, you can add it to your library (voiced once, then instant, free and offline), or switch on automatic adding inside a monthly character budget. Digits, emails, links and names are never learned. See docs/smart-ai.md.
 
