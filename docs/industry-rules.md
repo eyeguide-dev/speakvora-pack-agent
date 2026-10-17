@@ -1,7 +1,7 @@
 # Service-business call flow, industry rules and customer-data privacy
 
 ## The call flow (every bundle, tuned for service businesses)
-A caller hears the required "automated call" notice, then your menu prompt. They can press a key or, if you switch on `twilio.speech_input` in `agent.json` (English bundles; Twilio bills speech recognition a little extra), just say it:
+A caller hears the required "automated call" notice, then your menu prompt. They can press a key or, if you switch on `twilio.speech_input` in `agent.json` (English bundles; Twilio bills speech recognition a little extra), just say it. The agent asks Twilio for its phone-call recognition model, and for health bundles (clinic, pharmacy, dispensary) the more accurate, slightly dearer "enhanced" version; set `twilio.speech_enhanced` to true or false to choose:
 - **hours / address / where are you** → option 1 (plays your hours line, says your hours)
 - **book / appointment / reschedule / quote / estimate** → option 2 (tells the team to call back)
 - **status / order / running late** → option 3

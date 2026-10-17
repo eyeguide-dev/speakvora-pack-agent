@@ -74,6 +74,7 @@ class Agent:
         """Applies a changed agent.json / secrets / workflows without a restart (the dashboard's Save). The same cfg object is updated in place because the web server holds a reference to it."""
         keep = {k: self.cfg[k] for k in ("dry_run",) if k in self.cfg}
         self.cfg.clear(); self.cfg.update(new_cfg); self.cfg.update(keep)
+        self.audio.base = str(self.cfg.get("public_base_url", "")).rstrip("/")             # the address phones fetch audio from: a changed public address must apply at once, not after a restart
         self._init_services(); self._load_workflows()
         oc = str((self.cfg.get("facts") or {}).get("oncall_phone", ""))
         if oc and "YOUR-" not in oc and oc not in (self.cfg.setdefault("recipients", {}).setdefault("allow", [])):
@@ -834,6 +835,11 @@ class Agent:
     SPEECH_WORDS = {"1": ("hours", "open", "close", "closing", "address", "where", "location", "directions"), "2": ("book", "booking", "appointment", "schedule", "reschedule", "cancel", "quote", "estimate", "visit"),
                     "3": ("status", "order", "ready", "late", "update", "progress", "arrive")}
 
+    def _speech_enhanced(self):
+        """Twilio's more accurate (and a little dearer) phone-call speech recognition. On by default for health bundles, where a misheard word matters; set twilio.speech_enhanced to true or false to choose."""
+        v = (self.cfg.get("twilio") or {}).get("speech_enhanced")
+        return bool(v) if v is not None else self.profile in ("clinic", "pharmacy", "dispensary")
+
     def _speech_on(self):
         return bool((self.cfg.get("twilio") or {}).get("speech_input")) and self.pack.language == "en"
 
@@ -873,8 +879,8 @@ class Agent:
             except (PackError, AudioError):
                 pass
             pre = [self._line_part(x) for x in self._required("menu")]
-            return twiml_menu(urls, f"{base}/twilio/call/menu", T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), pre=pre, speech_hints=self._speech_hints(menu), no_input_url=f"{base}/twilio/call/menu")
-        said = re.sub(r"[^a-z0-9' ]+", " ", str(params.get("SpeechResult", "")).lower()).strip()
+            return twiml_menu(urls, f"{base}/twilio/call/menu", T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), pre=pre, speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), no_input_url=f"{base}/twilio/call/menu")
+        said = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", str(params.get("SpeechResult", "")).lower())).strip()                  # "No, thanks." becomes "no thanks"
         if said and os.environ.get("SV_DEBUG_SPEECH"):
             self.state.log(workflow=wf["name"], action="call_speech", status="heard", dry_run=False, step=step, heard=said[:80])         # test aid only: what the caller said, never on by default
         from . import controls
@@ -887,16 +893,16 @@ class Agent:
             return "<Response><Say>If a child, a pet or anyone may have swallowed something harmful, call Poison Control now at one, eight hundred, two two two, one two two two, or call nine one one if they are unwell. For a pet, call a vet. This line cannot send help.</Say><Hangup/></Response>"
         if guard == "secret":                                                      # passwords, codes and card numbers are never taken on this line
             self.record(wf["name"], "secret_refused", "said")
-            return twiml_menu([], f"{base}/twilio/call/menu2", "Please do not say passwords, codes or card numbers on this call. I cannot take them. Press 0 or say person for a team member, or press 1 for hours.", speech_hints=self._speech_hints(menu), no_input_url=f"{base}/twilio/call/menu3")
+            return twiml_menu([], f"{base}/twilio/call/menu2", "Please do not say passwords, codes or card numbers on this call. I cannot take them. Press 0 or say person for a team member, or press 1 for hours.", speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), no_input_url=f"{base}/twilio/call/menu3")
         bye = bool(re.search(r"\b(bye|goodbye|nope|nah|nothing|no thank you|no thanks|that's all|that is all|that's it|that is it|all done|all set|i'm good|im good|i am good)\b", said)) or said == "no"
         digits = (digits or "").strip() or self._speech_choice(menu, said)
-        if bye and not digits and step == "menu":
+        if bye and not digits and step in ("menu", "menu2"):
             return "<Response><Say>Thanks for calling. Goodbye.</Say><Hangup/></Response>"
         if not digits or digits not in (menu.get("options") or {}):
             if step in ("menu2", "menu3") and "0" in (menu.get("options") or {}):         # a second miss: do not leave the caller stuck, connect them to a person
                 digits = "0"
             else:
-                return twiml_menu([], f"{base}/twilio/call/menu2", "Sorry, I did not catch that. " + T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), speech_hints=self._speech_hints(menu), no_input_url=f"{base}/twilio/call/menu3")
+                return twiml_menu([], f"{base}/twilio/call/menu2", "Sorry, I did not catch that. " + T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack), speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), no_input_url=f"{base}/twilio/call/menu3")
         opt = (menu.get("options") or {}).get(digits)
         xfer = [a for a in opt if isinstance(a, dict) and a.get("action") == "transfer"]
         opt = [a for a in opt if not (isinstance(a, dict) and a.get("action") == "transfer")]
@@ -923,7 +929,7 @@ class Agent:
         if menu.get("again", True):                                               # after an answer, ask whether there is anything else; silence or "no" ends the call politely
             from xml.sax.saxutils import quoteattr
             hints = "no, no thanks, goodbye, hours, book, status, person" if self._speech_on() else ""
-            mode = f' input="dtmf speech" speechTimeout="auto" bargeIn="true" hints={quoteattr(hints)}' if hints else ' input="dtmf"'
+            mode = (f' input="dtmf speech" speechTimeout="auto" speechModel="phone_call"' + (' enhanced="true"' if self._speech_enhanced() else '') + f' bargeIn="true" hints={quoteattr(hints)}') if hints else ' input="dtmf"'
             return xml + f'<Gather{mode} numDigits="1" action={quoteattr(base + "/twilio/call/menu")} method="POST" timeout="6"><Say>Is there anything else I can help with? Press 1 for hours, 2 to book, 3 for a status, or 0 for a person.</Say></Gather><Say>Thanks for calling. Goodbye.</Say><Hangup/></Response>'
         return xml + "<Hangup/></Response>"
 

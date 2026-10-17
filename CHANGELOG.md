@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.15.1
+Found in the first real call test of the health flow: a changed public address now applies to call audio at once (before, calls failed with "application error" until a restart); "No, thanks." with punctuation or double spaces now ends the call (it used to be read as an unknown answer and connect a person); speech recognition now uses Twilio's phone-call model, and the more accurate enhanced one by default for health bundles. Tested on real calls: hours then goodbye, a clinical question connecting staff, a child exposure (Poison Control), an emergency (911), and order status with no records system connected.
+
 ## 0.15.0
 Clinics, hospitals, pharmacies and dispensaries. Dispensaries get their own profile (ID reminder with the ready text, ready is not pickup clearance, no product or dosing talk). Health bundles hand any symptom, result, medicine, dose, condition or pregnancy question to a person on calls and texts, answer general questions (parking, visiting, departments, billing) from facts you type, handle poison and child or pet exposure with Poison Control and 911, and keep order texts free of what was ordered. Pharmacy refill texts tell staff without taking details. More draft controls are enforced in code. See docs/health-industries.md.
 

@@ -1653,6 +1653,35 @@ class ServiceCallFlow(unittest.TestCase):
         finally:
             r.close()
 
+    def test_no_thanks_with_punctuation_ends_the_call_even_after_a_missed_answer(self):
+        r = Rig()
+        try:
+            for said in ("No, thanks.", "no  thanks", "Nope!", "that's all, thank you"):
+                self.assertIn("Goodbye", r.agent.handle_call({"From": "+16465550101", "SpeechResult": said}, "menu", ""), said)
+            self.assertIn("Goodbye", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "No, thanks."}, "menu2", ""))              # also on the second ask
+            self.assertNotIn("Goodbye", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "mumble"}, "menu", ""))
+        finally:
+            r.close()
+
+    def test_speech_uses_the_phone_call_model_and_the_enhanced_one_for_health(self):
+        r = Rig(extra={"twilio": {"speech_input": True}})
+        try:
+            xml = r.agent.handle_call({"From": "+16465550101"}, "start"); self.assertIn('speechModel="phone_call"', xml); self.assertNotIn("enhanced", xml)
+            r.agent.profile = "pharmacy"; self.assertIn('enhanced="true"', r.agent.handle_call({"From": "+16465550101"}, "start"))
+            r.agent.cfg["twilio"]["speech_enhanced"] = False; self.assertNotIn("enhanced", r.agent.handle_call({"From": "+16465550101"}, "start"))
+        finally:
+            r.close()
+
+    def test_a_changed_public_address_applies_to_call_audio_without_a_restart(self):
+        from speakvora_pack_agent import connect
+        r = Rig()
+        try:
+            self.assertIn("agent.test", r.agent.handle_call({"From": "+16465550101"}, "start"))
+            connect.save(r.agent, "business", {"public_base_url": "https://new-address.example"})
+            xml = r.agent.handle_call({"From": "+16465550101"}, "start"); self.assertIn("https://new-address.example/audio/", xml); self.assertNotIn("agent.test", xml)
+        finally:
+            r.close()
+
     def test_service_business_gets_follow_up_workflows_with_tasks(self):
         from speakvora_pack_agent import recipes
         names = {w["name"]: w for w in recipes.workflows_for("trades")["workflows"]}
