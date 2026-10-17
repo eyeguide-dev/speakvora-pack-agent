@@ -121,7 +121,19 @@ def sync(agent):
 
 def business_details(agent):
     f = agent.cfg.get("facts") or {}; trk = agent.cfg.get("tracking") or {}
-    return {"name": agent.cfg.get("business"), "phone": trk.get("contact_phone") or f.get("phone"), "sms_number": (agent.cfg.get("twilio") or {}).get("from_number"), "website": f.get("website"), "hours": f.get("hours"), "profile": getattr(agent, "profile", "generic")}
+    return {"name": agent.cfg.get("business"), "phone": trk.get("contact_phone") or f.get("phone"), "sms_number": (agent.cfg.get("twilio") or {}).get("from_number"), "website": f.get("website"), "hours": f.get("hours"), "address": f.get("address"), "profile": getattr(agent, "profile", "generic")}
+
+
+def _clean_details(agent):
+    """The business details as Speakvora will take them: placeholders dropped, phone numbers only if they carry a country code."""
+    import re
+    b = {k: (str(v).strip() if v and "YOUR-" not in str(v) and not str(v).startswith("env:") else "") for k, v in business_details(agent).items()}
+    for k in ("phone", "sms_number"):
+        if b[k] and not re.fullmatch(r"\+\d{8,15}", b[k].replace(" ", "")):
+            b[k] = ""
+    if b["website"] and not b["website"].startswith("https://"):
+        b["website"] = ""
+    return b
 
 
 def push_business(agent):
@@ -129,7 +141,7 @@ def push_business(agent):
     key = sharing._key(agent)
     if not key:
         raise ValueError("Add your Speakvora API key first.")
-    b = {k: (str(v) if v and "YOUR-" not in str(v) and not str(v).startswith("env:") else "") for k, v in business_details(agent).items()}
+    b = _clean_details(agent)
     try:
         st, r = sharing.web.request("PUT", sharing.host() + "/api/v1/track/business", {"x-api-key": key}, body=b, timeout=15)
     except sharing.web.HttpError as e:
@@ -146,7 +158,7 @@ def push_business(agent):
 def pages_current(agent):
     """True when the business details Speakvora holds are the ones saved here."""
     op = agent.state.data.get("order_pages") or {}
-    b = {k: (str(v) if v and "YOUR-" not in str(v) and not str(v).startswith("env:") else "") for k, v in business_details(agent).items()}
+    b = _clean_details(agent)
     return bool(op) and op.get("hash") == hashlib.sha256(json.dumps(b, sort_keys=True).encode()).hexdigest()
 
 

@@ -391,10 +391,15 @@ def set_workflow(agent, name, enabled):
 
 
 def tracking_needed(agent):
-    try:
-        return any(w.get("enabled", True) and "track" in _kinds(w) for w in _workflow_file(agent).get("workflows", []))
-    except Exception:  # noqa: BLE001
-        return False
+    """Order pages are optional: they are needed only once the business has switched them on."""
+    return bool((agent.cfg.get("tracking") or {}).get("enabled")) and any(w.get("enabled", True) and "track" in _kinds(w) for w in _workflow_file(agent).get("workflows", []))
+
+
+def set_tracking(agent, on):
+    """The switch on the dashboard: give customers an order tracking link (needs the business details and a paired Speakvora account)."""
+    raw = _raw(agent); raw.setdefault("tracking", {})["enabled"] = bool(on)
+    _write_raw(agent, raw); _reload(agent)
+    return order_pages(agent)
 
 
 ORDER_PAGE_FIELDS = (("business", "Business name"), ("website", "Business website"), ("phone", "Customer service phone"), ("hours", "Opening hours"), ("address", "Address"))
@@ -409,13 +414,36 @@ def order_pages(agent):
     if hosted and not has_key:
         missing.append("Speakvora API key")
     done = not missing and ((tracker.pages_current(agent) and bool((agent.state.data.get("tested") or {}).get("order_pages"))) if hosted else bool((agent.state.data.get("tested") or {}).get("public_address")))
-    return {"needed": tracking_needed(agent), "complete": done, "missing": missing, "has_key": has_key, "hosted": hosted, "preview_url": (agent.state.data.get("order_pages") or {}).get("preview_url", "")}
+    return {"enabled": bool((agent.cfg.get("tracking") or {}).get("enabled")), "available": any("track" in _kinds(w) for w in _workflow_file(agent).get("workflows", [])), "needed": tracking_needed(agent), "complete": done, "missing": missing, "has_key": has_key, "hosted": hosted, "preview_url": (agent.state.data.get("order_pages") or {}).get("preview_url", "")}
+
+
+def pair_account(agent, code):
+    """Swaps the short code from the account page for a key that can only create order pages, and fills in the business details the account already holds. Switches order pages on."""
+    from . import sharing
+    code = re.sub(r"[^A-Za-z0-9-]", "", str(code or "")).upper()
+    if not re.fullmatch(r"SV-[A-Z0-9]{4}-[A-Z0-9]{4}", code):
+        raise SetupError("The code looks like SV-ABCD-EFGH. Make one in your Speakvora account under Bundles, Order pages.")
+    try:
+        st, r = web.request("POST", sharing.host() + "/api/v1/track/pair", body={"code": code}, timeout=15)
+    except web.HttpError as e:
+        body = e.body if isinstance(getattr(e, "body", None), dict) else {}
+        raise SetupError(body.get("detail") or "That code was not accepted. Make a new one in your account.")
+    except Exception:  # noqa: BLE001
+        raise SetupError("No internet connection right now. Try again when you are online.")
+    r = r if isinstance(r, dict) else {}
+    if not r.get("api_key"):
+        raise SetupError("Speakvora did not return a key. Make a new code and try again.")
+    b = r.get("business") or {}
+    vals = {"api_key": r["api_key"], "business": b.get("name"), "website": b.get("website"), "phone": b.get("phone"), "hours": b.get("hours"), "address": b.get("address")}
+    return setup_order_pages(agent, {k: v for k, v in vals.items() if v})
 
 
 def setup_order_pages(agent, values):
     """One step for the business: save the details and the key, create the hosted pages, return the sample link. values: business, website, phone, service_numbers, hours, address, api_key."""
     from . import tracker
     v = {k: str(x).strip() for k, x in (values or {}).items() if x is not None}
+    if not (agent.cfg.get("tracking") or {}).get("enabled"):
+        set_tracking(agent, True)
     biz = {k: v[k] for k in ("business", "website", "phone", "service_numbers", "hours", "address") if v.get(k)}
     if biz:
         save(agent, "business", biz)

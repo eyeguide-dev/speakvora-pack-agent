@@ -1693,7 +1693,7 @@ class IndustryRulesAndPrivacy(unittest.TestCase):
 class OrderTrackerAndRecords(unittest.TestCase):
     def test_tracker_gives_one_link_and_the_page_follows_the_steps(self):
         from speakvora_pack_agent import tracker
-        r = Rig()
+        r = Rig(extra={"tracking": {"enabled": True}})
         try:
             ctx = r.agent.ctx(order={"number": "A17"}, customer={"name": "Ann", "phone": "+16465550101", "sms_consent": True})
             res = r.agent.run_actions("t", [{"action": "track", "status": "received"}], ctx); self.assertEqual(res[0]["status"], "ok")      # logged as ok, not as an error
@@ -1711,7 +1711,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
             r.close()
 
     def test_later_step_texts_are_off_unless_switched_on(self):
-        r = Rig()
+        r = Rig(extra={"tracking": {"enabled": True}})
         try:
             acts = [{"action": "track", "status": "preparing"}, {"action": "sms", "to": "{{customer.phone}}", "text": "Preparing {{track.url}}", "each_step": True}]
             ctx = lambda: r.agent.ctx(order={"number": "B2"}, customer={"phone": "+16465550101", "sms_consent": True})
@@ -1746,7 +1746,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
 
     def test_a_missing_line_leaves_no_double_space(self):
         from speakvora_pack_agent import templating
-        r = Rig()
+        r = Rig(extra={"tracking": {"enabled": True}})
         try:
             self.assertEqual(templating.render("Bella: {{slot:not_a_real_slot}} {{fact:hours}}", {"facts": {"hours": "9-5"}}, r.agent.pack), "Bella: 9-5")
         finally:
@@ -1754,7 +1754,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
 
     def test_hosted_pages_push_only_the_step_and_retry_when_offline(self):
         from speakvora_pack_agent import tracker, sharing
-        r = Rig(extra={"speakvora": {"api_key": "key-123"}, "facts": {"website": "https://bella.example", "phone": "+16465550199"}}); sent = []; orig = sharing.web.request; fail = [True]
+        r = Rig(extra={"tracking": {"enabled": True}, "speakvora": {"api_key": "key-123"}, "facts": {"website": "https://bella.example", "phone": "+16465550199"}}); sent = []; orig = sharing.web.request; fail = [True]
         def fake(method, url, headers=None, body=None, **k):
             if fail[0]:
                 raise OSError("offline")
@@ -1776,7 +1776,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
 
     def test_creating_the_order_pages_sends_the_business_details_and_needs_a_key(self):
         from speakvora_pack_agent import tracker, sharing
-        r = Rig(extra={"facts": {"website": "https://bella.example", "phone": "+16465550199", "hours": "Daily 11-10"}}); got = []; orig = sharing.web.request
+        r = Rig(extra={"tracking": {"enabled": True}, "facts": {"website": "https://bella.example", "phone": "+16465550199", "hours": "Daily 11-10"}}); got = []; orig = sharing.web.request
         sharing.web.request = lambda method, url, headers=None, body=None, **k: (got.append((method, url, headers, body)) or (200, {"ok": True, "preview_url": "https://speakvora.com/o/preview-zz"}))
         try:
             with self.assertRaises(ValueError):
@@ -1788,9 +1788,40 @@ class OrderTrackerAndRecords(unittest.TestCase):
         finally:
             sharing.web.request = orig; r.close()
 
+    def test_order_pages_are_optional_off_means_a_text_at_each_step_and_no_link(self):
+        r = Rig()                                                                                       # tracking never switched on
+        try:
+            acts = [{"action": "track", "status": "ready"}, {"action": "sms", "to": "{{customer.phone}}", "text": "Ready. {{track.line}}", "each_step": True}]
+            res = r.agent.run_actions("t", acts, r.agent.ctx(order={"number": "O1"}, customer={"phone": "+16465550101", "sms_consent": True}))
+            self.assertEqual([x["status"] for x in res][0], "skipped"); self.assertEqual(res[1]["status"], "sent")                          # the step text still goes out
+            body = r.mock.calls("Messages.json")[-1]["form"]["Body"]; self.assertTrue(body.startswith("Ready.") and "http" not in body)                                              # and carries no empty link
+            from speakvora_pack_agent import connect
+            self.assertFalse(connect.order_pages(r.agent)["needed"]); self.assertFalse(any("order" in c["text"].lower() and "pages" in c["text"].lower() for c in connect.readiness(r.agent)["checks"]))                    # nothing about order pages blocks going live
+            self.assertTrue(connect.set_tracking(r.agent, True)["enabled"]); self.assertFalse(connect.set_tracking(r.agent, False)["enabled"])
+        finally:
+            r.close()
+
+    def test_pairing_with_a_code_sets_the_account_key_and_the_business_details(self):
+        from speakvora_pack_agent import connect, sharing
+        r = Rig(); calls = []; orig = sharing.web.request
+        def fake(method, url, headers=None, body=None, **k):
+            calls.append((method, url, body))
+            if url.endswith("/track/pair"):
+                return 200, {"api_key": "svt_paired_key", "business": {"name": "Fresh Fold", "website": "https://freshfold.example", "phone": "+16465550142", "hours": "Mon-Sat 8-7", "address": "9 Oak St"}}
+            return 200, {"ok": True, "preview_url": "https://speakvora.com/o/preview-p"}
+        sharing.web.request = fake
+        try:
+            with self.assertRaises(connect.SetupError):
+                connect.pair_account(r.agent, "nonsense")
+            out = connect.pair_account(r.agent, "sv-abcd-efgh")
+            self.assertTrue(out["enabled"] and out["complete"] and out["has_key"]); self.assertEqual(sharing._key(r.agent), "svt_paired_key"); self.assertEqual(r.agent.cfg["business"], "Fresh Fold"); self.assertEqual(r.agent.cfg["facts"]["address"], "9 Oak St")
+            self.assertEqual(calls[0][2], {"code": "SV-ABCD-EFGH"})
+        finally:
+            sharing.web.request = orig; r.close()
+
     def test_order_pages_setup_is_one_step_and_blocks_going_live_until_done(self):
         from speakvora_pack_agent import connect, tracker, sharing
-        r = Rig(); got = []; orig = sharing.web.request
+        r = Rig(extra={"tracking": {"enabled": True}}); got = []; orig = sharing.web.request
         sharing.web.request = lambda method, url, headers=None, body=None, **k: (got.append((method, url, body)) or (200, {"ok": True, "preview_url": "https://speakvora.com/o/preview-q1"}))
         try:
             wf = json.load(open(r.agent.cfg["workflows"])); wf["workflows"].append({"name": "order_received", "on": {"event": "order.received"}, "do": [{"action": "track", "status": "received"}]}); json.dump(wf, open(r.agent.cfg["workflows"], "w")); r.agent._load_workflows()
@@ -1809,7 +1840,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
 
     def test_orders_are_saved_listed_searched_and_exported_and_old_links_flagged(self):
         from speakvora_pack_agent import tracker
-        r = Rig()
+        r = Rig(extra={"tracking": {"enabled": True}})
         try:
             for n in ("5001", "5002", "6001"):
                 r.agent.run_actions("t", [{"action": "track", "status": "received"}], r.agent.ctx(order={"number": n})); r.now[0] += 60
@@ -1825,7 +1856,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
 
     def test_old_in_memory_links_move_into_the_permanent_list(self):
         from speakvora_pack_agent import tracker
-        r = Rig()
+        r = Rig(extra={"tracking": {"enabled": True}})
         try:
             r.agent.state.data["tracks"] = {"oldtoken1234567890": {"order": "77", "steps": ["received", "preparing", "ready", "picked_up"], "status": "ready", "created": 1, "updated": 2, "history": [[2, "ready"]]}}
             self.assertEqual(tracker.get(r.agent, "oldtoken1234567890")["status"], "ready"); self.assertNotIn("tracks", r.agent.state.data)
@@ -1834,7 +1865,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
 
     def test_order_links_need_real_business_details_and_a_tested_public_address_before_going_live(self):
         from speakvora_pack_agent import connect
-        r = Rig()
+        r = Rig(extra={"tracking": {"enabled": True}})
         try:
             wf = json.load(open(r.agent.cfg["workflows"])); wf["workflows"].append({"name": "order_received", "on": {"event": "order.received"}, "do": [{"action": "track", "status": "received"}]}); json.dump(wf, open(r.agent.cfg["workflows"], "w")); r.agent._load_workflows()
             miss = [c["text"] for c in connect.readiness(r.agent)["checks"] if not c["ok"]]
@@ -1850,7 +1881,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
 
     def test_jobs_repairs_and_tickets_have_their_own_steps_and_words(self):
         from speakvora_pack_agent import recipes, tracker
-        r = Rig()
+        r = Rig(extra={"tracking": {"enabled": True}})
         try:
             for prof, flow, st, ref, head in (("trades", "job", "on_the_way", "Job", "On the way to you."), ("auto", "repair", "ready", "Repair", "Ready for pickup."), ("support", "ticket", "resolved", "Ticket", "Resolved.")):
                 r.agent.profile = prof
@@ -1866,7 +1897,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
 
     def test_the_page_shows_eta_contact_and_industry_wording(self):
         from speakvora_pack_agent import tracker
-        r = Rig(extra={"facts": {"phone": "+16465550199"}, "twilio": {"from_number": "+19295816269"}})
+        r = Rig(extra={"tracking": {"enabled": True}, "facts": {"phone": "+16465550199"}, "twilio": {"from_number": "+19295816269"}})
         try:
             r.agent.profile = "laundry"
             ctx = r.agent.ctx(order={"number": "L9", "eta": "Tomorrow, 9 - 11 AM"}); r.agent.run_actions("t", [{"action": "track", "status": "preparing"}], ctx); tok = ctx["track"]["url"].rsplit("/", 1)[1]
@@ -1888,7 +1919,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
             self.assertTrue(any(a["action"] == "sms" and not a.get("each_step") for a in ws[name]["do"]), name)
 
     def test_the_public_tracking_page_and_its_json(self):
-        r = Rig(); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start()
+        r = Rig(extra={"tracking": {"enabled": True}}); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:
             ctx = r.agent.ctx(order={"number": "C3"}); r.agent.run_actions("t", [{"action": "track", "status": "ready"}], ctx); tok = ctx["track"]["url"].rsplit("/", 1)[1]
             html = urllib.request.urlopen(f"http://127.0.0.1:{port}/track/{tok}").read().decode(); self.assertIn("C3", html); self.assertIn("noindex", html)
@@ -1909,7 +1940,7 @@ class OrderTrackerAndRecords(unittest.TestCase):
 
     def test_the_controls_catalog_loads_per_industry(self):
         from speakvora_pack_agent import controls
-        r = Rig()
+        r = Rig(extra={"tracking": {"enabled": True}})
         try:
             r.agent.profile = "pharmacy"; v = controls.view(r.agent)
             self.assertGreater(v["counts"]["rules"], 100); self.assertGreaterEqual(v["counts"]["enforced"], 5); self.assertFalse(v["ready"])

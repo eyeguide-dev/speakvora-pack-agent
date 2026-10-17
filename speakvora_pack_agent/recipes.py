@@ -41,14 +41,14 @@ def _workflows_for(profile):
     if has("order_ready"):
         if profile in TRACK_PROFILES:                                                  # one text with a tracking link; the page then shows each step (pizza-tracker style); a text per step is opt-in (tracking.text_each_step)
             tr = lambda st, **k: {"action": "track", "status": st, **k}              # noqa: E731
-            w += [{"name": "order_received", "on": {"event": "order.received"}, "do": [tr("received"), _sms(None, "{{business}}: {{slot:order_received}} {{slot:track_intro}} {{track.url}}")]},
-                  {"name": "order_preparing", "on": {"event": "order.preparing"}, "do": [tr("preparing"), dict(_sms(None, "{{business}}: {{slot:order_preparing}} {{track.url}}"), each_step=True)]},
+            w += [{"name": "order_received", "on": {"event": "order.received"}, "do": [tr("received"), _sms(None, "{{business}}: {{slot:order_received}} {{track.line}}")]},
+                  {"name": "order_preparing", "on": {"event": "order.preparing"}, "do": [tr("preparing"), dict(_sms(None, "{{business}}: {{slot:order_preparing}} {{track.line}}"), each_step=True)]},
                   {"name": "order_ready", "on": {"event": "order.ready"}, "do": [tr("ready"), dict(_sms(None, "{{business}}: order {{order.number}} is ready. {{slot:order_ready}}" + (" {{slot:pickup_instructions}}" if has("pickup_instructions") else "")), **({} if profile == "pharmacy" else {"each_step": True})),
                                                                               {"action": "notify", "text": "Order {{order.number}} is ready (status page updated)."}]},
                   {"name": "order_picked_up", "on": {"event": "order.picked_up"}, "do": [tr("picked_up"), dict(_sms(None, "{{business}}: {{slot:order_picked_up}}"), **({} if profile == "pharmacy" else {"each_step": True}))]},
-                  {"name": "order_delayed", "on": {"event": "order.delayed"}, "do": [tr("preparing", delayed=True), _sms(None, "{{business}}: {{slot:order_delayed}} {{track.url}}"), {"action": "notify", "text": "Order {{order.number}} delayed. Text to customer: {{last.sms}}."}]}]
+                  {"name": "order_delayed", "on": {"event": "order.delayed"}, "do": [tr("preparing", delayed=True), _sms(None, "{{business}}: {{slot:order_delayed}} {{track.line}}"), {"action": "notify", "text": "Order {{order.number}} delayed. Text to customer: {{last.sms}}."}]}]
             if has("order_ready_delivery"):
-                w += [{"name": "order_out_for_delivery", "on": {"event": "order.out_for_delivery"}, "do": [tr("out_for_delivery", delivery=True), dict(_sms(None, "{{business}}: {{slot:order_ready_delivery}} {{track.url}}"), each_step=True)]},
+                w += [{"name": "order_out_for_delivery", "on": {"event": "order.out_for_delivery"}, "do": [tr("out_for_delivery", delivery=True), dict(_sms(None, "{{business}}: {{slot:order_ready_delivery}} {{track.line}}"), each_step=True)]},
                       {"name": "order_delivered", "on": {"event": "order.delivered"}, "do": [tr("delivered", delivery=True), dict(_sms(None, "{{business}}: {{slot:order_delivered}}"), each_step=True)]}]
         else:                                                                           # pharmacy and others: a plain text at each main step, never naming what was ordered
             w += [{"name": "order_received", "on": {"event": "order.received"}, "do": [_sms(None, "{{business}}: {{slot:order_received}}")]},
@@ -79,19 +79,19 @@ def _workflows_for(profile):
               {"name": "next_visit_due", "on": {"event": "visit.next_due"}, "do": [_sms(None, "{{business}}: {{slot:next_visit_due}}")]}]
     if profile == "trades" and has("on_the_way"):                                  # a visit or job the customer can follow: booked, on the way, in progress, done
         jt = lambda st, **k: {"action": "track", "status": st, "flow": "job", **k}   # noqa: E731
-        w += [{"name": "job_scheduled", "on": {"event": "job.scheduled"}, "do": [jt("scheduled"), _sms(None, "{{business}}: {{slot:appointment_confirmed}} {{start_text}} {{slot:track_intro}} {{track.url}}")]},
-              {"name": "job_on_the_way", "on": {"event": "job.on_the_way"}, "do": [jt("on_the_way"), dict(_sms(None, "{{business}}: {{slot:on_the_way}} {{track.url}}"), each_step=True)]},
+        w += [{"name": "job_scheduled", "on": {"event": "job.scheduled"}, "do": [jt("scheduled"), _sms(None, "{{business}}: {{slot:appointment_confirmed}} {{start_text}} {{track.line}}")]},
+              {"name": "job_on_the_way", "on": {"event": "job.on_the_way"}, "do": [jt("on_the_way"), dict(_sms(None, "{{business}}: {{slot:on_the_way}} {{track.line}}"), each_step=True)]},
               {"name": "job_in_progress", "on": {"event": "job.in_progress"}, "do": [jt("in_progress")]},
               {"name": "job_completed", "on": {"event": "job.completed"}, "do": [jt("completed"), dict(_sms(None, "{{business}}: {{slot:job_followup}}"), each_step=True)]}]
     if profile == "auto" and has("repair_received"):                               # a repair order the customer can follow
         rt = lambda st, **k: {"action": "track", "status": st, "flow": "repair", **k}   # noqa: E731
-        w += [{"name": "repair_received", "on": {"event": "repair.received"}, "do": [rt("received"), _sms(None, "{{business}}: {{slot:repair_received}} {{slot:track_intro}} {{track.url}}")]},
+        w += [{"name": "repair_received", "on": {"event": "repair.received"}, "do": [rt("received"), _sms(None, "{{business}}: {{slot:repair_received}} {{track.line}}")]},
               {"name": "repair_in_progress", "on": {"event": "repair.in_progress"}, "do": [rt("in_progress")]},
               {"name": "repair_ready", "on": {"event": "repair.ready"}, "do": [rt("ready"), dict(_sms(None, "{{business}}: {{slot:vehicle_ready}}"), each_step=True)]},
               {"name": "repair_picked_up", "on": {"event": "repair.picked_up"}, "do": [rt("picked_up")]}]
     if profile == "support" and has("ticket_created"):                             # a support request the customer can follow
         kt = lambda st, **k: {"action": "track", "status": st, "flow": "ticket", **k}   # noqa: E731
-        w += [{"name": "ticket_created", "on": {"event": "ticket.created"}, "do": [kt("received"), _sms(None, "{{business}}: {{slot:ticket_created}} {{slot:track_intro}} {{track.url}}")]},
+        w += [{"name": "ticket_created", "on": {"event": "ticket.created"}, "do": [kt("received"), _sms(None, "{{business}}: {{slot:ticket_created}} {{track.line}}")]},
               {"name": "ticket_in_progress", "on": {"event": "ticket.in_progress"}, "do": [kt("in_progress")]},
               {"name": "ticket_resolved", "on": {"event": "ticket.resolved"}, "do": [kt("resolved"), dict(_sms(None, "{{business}}: {{slot:ticket_update}}"), each_step=True)]}]
     w += [{"name": "thanks_review", "on": {"event": "visit.completed"}, "do": [_sms(None, "{{business}}: {{slot:thanks_review}} {{fact:review_url}}")]},

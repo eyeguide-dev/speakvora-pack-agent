@@ -9,3 +9,6 @@
 * **Placeholders.** Anything still containing `YOUR-...` is never sent.
 * **Your app is safe.** The agent is a separate process; it never touches your database. A failing service can not stop the others, and the app never waits for the agent.
 * **Honesty.** The voices are synthetic. Tell people they are hearing an automated voice where the law or good practice requires it. Not for medical advice, emergencies or patient information.
+* **A person is always one request away.** Pressing 0 or saying "person", "manager" or "operator" connects your staff phone; two missed answers on a call connect a person instead of looping. Nobody is trapped in a menu.
+* **Emergencies and secrets (speech input on).** A caller describing an emergency is told to call 911 and the menu stops. Passwords, codes and card numbers are refused and never recorded.
+* **AI limits.** Your AI cannot refund, charge, cancel or delete; it only proposes, and you approve. Fixed rules and ceilings are in Settings.

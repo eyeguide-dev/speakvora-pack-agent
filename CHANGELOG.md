@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.14.0
+Order tracking pages are optional (a switch in the dashboard, off by default; off means customers are texted at each step as before). Pairing replaces the API key chore: a business saves its details in its Speakvora account, makes a one-time code, types it into the dashboard, and the agent sets itself up with a key that can create order pages and nothing else. Sign-up now asks what you do (an industry, or developer for everything) and the account page tailors itself. All guides refreshed, with a new overview. See docs/overview.md and docs/orders-and-private-records.md.
+
 ## 0.13.0
 Order pages are now hosted by Speakvora (speakvora.com/o/<code>): a business sets nothing up. On first sign-in the dashboard asks once for its business details and Speakvora API key and creates the pages in one step; going live is blocked until that is done. Links are created even offline and the page catches up when the agent reconnects; only the order number, step and the business's public details are sent, never customer details. Changing a business detail updates every page. The public-address guide is gone (self-hosting remains as an advanced option). See docs/orders-and-private-records.md.
 

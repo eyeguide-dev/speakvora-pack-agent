@@ -252,6 +252,10 @@ def handle(agent, method, path, headers, raw):
             out = BR.forget(agent)
         elif p == "/dash/api/orderpages" and method == "GET":
             out = SU.order_pages(agent)
+        elif p == "/dash/api/orderpages/switch" and method == "POST":
+            out = SU.set_tracking(agent, bool(json.loads(raw or b"{}").get("on")))
+        elif p == "/dash/api/orderpages/pair" and method == "POST":
+            out = SU.pair_account(agent, json.loads(raw or b"{}").get("code"))
         elif p == "/dash/api/orderpages/setup" and method == "POST":
             out = SU.setup_order_pages(agent, json.loads(raw or b"{}"))
         elif p == "/dash/api/orders" and method == "GET":

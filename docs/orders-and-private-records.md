@@ -26,13 +26,21 @@ The page carries the Speakvora logo, your business name (with an initials badge)
 ### Estimate and contact buttons
 Send `"order": {"number": "1042", "eta": "6:15 - 6:25 PM"}` (or `"eta"` on any order event) to show the estimate card, "provided by the restaurant"; send an empty `eta` to clear it. The **Call** button uses `facts.phone` (or `tracking.contact_phone`) in `agent.json`: set it to the number customers should ring. The **Text** button opens a text to your agent's sending number with the order number filled in, and your agent passes it to your team like any other message.
 
-### Speakvora hosts the pages: nothing to set up
-The first time a business opens its dashboard, the **Set up your order pages** card asks once for its business name, website, customer service phone (the Call button), other service numbers, opening hours, address and Speakvora API key (speakvora.com, your account, Voice API, Create a key). One button, **Create my order pages**, saves them and creates the hosted pages. Going live is blocked until that is done. After that, every customer link looks like `https://speakvora.com/o/<random code>`: it works even when the business's computer is off, never changes, and needs no domain, tunnel or public address.
+### Order pages are optional, and Speakvora hosts them
+Tracking links are a switch, off by default. With it off, customers are simply texted at each step. Switch it on in the dashboard (Connect, **Order tracking pages**) only if you want the link. Nothing else to set up: no domain, tunnel or address.
 
-What goes to Speakvora for a page: the order number, its step and times, your estimate text, and your business details (name, phone, website, hours). **Never** the customer's name, number or message, or what was ordered. If the internet is down when an order changes, the link is still created and the page catches up as soon as the agent is back online. Change a business detail in the dashboard and every page updates.
+**How a business turns them on (about two minutes):**
+1. In your Speakvora account (speakvora.com, **Bundles, Order pages**) fill in your business name, website, customer service phone (it becomes the Call button), hours and address, and press **Save details**. Then press **Create pairing code**. The code looks like `SV-ABCD-EFGH`, works once and lasts 15 minutes.
+2. In your bundle's dashboard open **Connect**, switch **Order tracking pages** on, type the code and press **Pair**. The agent swaps the code for a key that can create order pages and nothing else, fills in the details from your account and creates your pages. A sample page link appears so you see your branded page straight away.
+3. Going live now includes a line for order pages until this is done.
+(Prefer not to use the account page? Fill the details in the dashboard and paste a Speakvora API key instead. Setting `"tracking": {"mode": "self"}` plus a `public_base_url` serves the pages from your own agent.)
+Signing up asks what you do (an industry, or developer for everything), so the account page shows the order-page tools only to businesses that can use them.
+
+After that every customer link looks like `https://speakvora.com/o/<random code>`: it works even when the business's computer is off, never changes, and updates itself. If the internet is down when an order changes, the link is still created and the page catches up when the agent is back online. Change a business detail in the dashboard or the account and every page updates. To stop using a paired bundle, remove it under Order pages in your account: its key stops working at once.
+
+What goes to Speakvora for a page: the order number, its step and times, your estimate text, and your business details (name, phone, website, hours, address). **Never** the customer's name, number or message, or what was ordered.
 
 Every link is also saved on the business's own computer the moment it is made (`agent-state/orders.db`) and listed in the dashboard's **Orders** tab (search by order number, copy or open the link, see the step history, export to a spreadsheet). Links never expire. The list holds the order number, steps and times only.
-Advanced: set `"tracking": {"mode": "self"}` and a `public_base_url` to serve the pages from your own agent instead.
 
 ## Pharmacy and dispensary
 Customers get a plain text when an order is **placed** (with the tracking link), **ready for pickup** and **picked up**, and the same page shows the steps. The texts and the page never say what is in the order. A customer who texts or calls can reach staff (press 0 or say "person").

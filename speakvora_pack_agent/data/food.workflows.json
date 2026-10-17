@@ -13,7 +13,7 @@
     {
      "action": "sms",
      "to": "{{customer.phone}}",
-     "text": "{{business}}: {{slot:order_received}} {{slot:track_intro}} {{track.url}}"
+     "text": "{{business}}: {{slot:order_received}} {{track.line}}"
     }
    ]
   },
@@ -30,7 +30,7 @@
     {
      "action": "sms",
      "to": "{{customer.phone}}",
-     "text": "{{business}}: {{slot:order_preparing}} {{track.url}}",
+     "text": "{{business}}: {{slot:order_preparing}} {{track.line}}",
      "each_step": true
     }
    ]
@@ -67,7 +67,7 @@
     {
      "action": "sms",
      "to": "{{customer.phone}}",
-     "text": "{{business}}: {{slot:order_ready_delivery}} {{track.url}}",
+     "text": "{{business}}: {{slot:order_ready_delivery}} {{track.line}}",
      "each_step": true
     }
    ]

@@ -154,7 +154,7 @@ class Agent:
         results = []
         for idx, a in enumerate(actions):
             kind = a.get("action")
-            if a.get("each_step") and not (self.cfg.get("tracking") or {}).get("text_each_step"):         # a text for every order step is opt-in: by default the customer gets one text with a tracking link
+            if a.get("each_step") and self._tracking_on() and not (self.cfg.get("tracking") or {}).get("text_each_step"):         # with order pages on, the customer gets one text with their link and the page shows the rest; without them every step is texted as before
                 continue
             if a.get("if") and not self._when_ok(a["if"], ctx):                  # per-action condition, e.g. {"if": {"customer.prefers_call": "*"}}
                 continue
@@ -180,6 +180,10 @@ class Agent:
             except Exception as e:  # noqa: BLE001 - a broken connection never stops the workflow
                 self.record(wf_name, "mirror", "error", error=str(e)[:200])
         return results
+
+    def _tracking_on(self):
+        """Order pages are optional: a business switches them on in the dashboard (Connect, Order pages). Off, order events simply text the customer at each step."""
+        return bool((self.cfg.get("tracking") or {}).get("enabled"))
 
     def _render_reason(self, a, ctx):
         """Like normal rendering, but {{path}} on its own resolves to the real value (a list, a record) so a workflow can hand the model structured data it fetched."""
@@ -544,13 +548,19 @@ class Agent:
         if kind == "log":
             self.record(wf, kind, "ok", text=a.get("text", "")); return {"status": "ok"}
         if kind == "track":
+            if not self._tracking_on():
+                return {"status": "skipped"}                                              # no log noise, no link, and the texts below simply leave the link out
             from . import tracker
             o = ctx.get("order") or {}
             try:
                 r = tracker.set_status(self, a.get("order") or o.get("number") or o.get("id"), str(a.get("status", "")), delivery=bool(a.get("delivery") or o.get("delivery") or str(o.get("type", "")).lower() == "delivery"), delayed=a.get("delayed"), eta=a.get("eta") if "eta" in a else o.get("eta"), flow=str(a.get("flow") or "order"))
             except ValueError as ex:                                                  # for example no public address yet: say so and skip, never crash the workflow
                 raise PackError(str(ex))
-            ctx["track"] = {"url": r["url"], "status": a.get("status")}
+            try:
+                intro = self.pack.text("track_intro")
+            except PackError:
+                intro = ""
+            ctx["track"] = {"url": r["url"], "status": a.get("status"), "line": (intro + " " + r["url"]).strip()}          # {{track.line}} = a short invitation and the link, or nothing when order pages are off
             st = "dry_run" if self.dry else "ok"
             self.record(wf, kind, st, step=a.get("status"), order=str(a.get("order") or o.get("number") or o.get("id"))); return {"status": st}
         if kind == "lookup":
