@@ -1743,6 +1743,14 @@ class OrderTrackerAndRecords(unittest.TestCase):
         finally:
             E.web.request = orig; r.close()
 
+    def test_a_missing_line_leaves_no_double_space(self):
+        from speakvora_pack_agent import templating
+        r = Rig()
+        try:
+            self.assertEqual(templating.render("Bella: {{slot:not_a_real_slot}} {{fact:hours}}", {"facts": {"hours": "9-5"}}, r.agent.pack), "Bella: 9-5")
+        finally:
+            r.close()
+
     def test_the_public_tracking_page_and_its_json(self):
         r = Rig(); srv = serve(r.agent, "127.0.0.1", 0); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:

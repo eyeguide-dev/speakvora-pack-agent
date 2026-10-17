@@ -39,7 +39,8 @@ def render(text, ctx, pack=None):
             return "" if v is None else str(v)
         v = lookup(ctx, key)
         return "" if v is None else str(v)
-    return _RX.sub(sub, str(text))
+    out = _RX.sub(sub, str(text))
+    return re.sub(r"(?<=\S) {2,}(?=\S)", " ", out) if "{{" in str(text) else out                  # a line that is not in the pack yet leaves no double gap in the text
 
 
 def render_obj(o, ctx, pack=None):

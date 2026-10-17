@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.9.1
+First real order-tracker test passed (one text with the link, delivered; the page followed received, preparing, ready, picked up). Fix: a spoken line that is not in the bundle yet no longer leaves a double space in a text.
+
 ## 0.9.0
 Order tracking links: customers get one text with a private page that follows their order (received, preparing, ready, picked up; or on its way, delivered); later texts are opt-in. Pharmacy and dispensary texts at order placed, ready and picked up, never naming the contents. Private details only from your own connected records system, only to a number your system lists, only after you approve the settings that make that safe; erased from the agent's own records right after sending. A 1,140-rule draft catalog of industry call-handling controls with the policy settings to complete, shown in Settings, and the first controls enforced in code (emergency redirect, no passwords or card numbers, caller ID is never identity). Laundry bundles now have order workflows. See docs/orders-and-private-records.md.
 
