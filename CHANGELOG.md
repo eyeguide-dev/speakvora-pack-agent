@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.16.0
+Calls now open with "You can speak, or use your keypad", then give the options; "anything else?" waits up to 10 seconds, "yes" reads the options again, and a pause mid-sentence is no longer cut off on health bundles (they wait 2 seconds). Every line the agent speaks on a call (greeting, re-ask, anything else, goodbye, staff unavailable, transfer busy, emergency 911, poison control, secret refused) is now a recordable line: when your bundle has the recording, calls play it; otherwise the phone provider's voice is used. 25 new lines are being voiced for all bundles. Tested on real calls and texts to a clinic bundle: hours, goodbye, test results to staff, chest pain (911), order status without a records system, a parking text answered from your facts, and a clinical text handed to staff.
+
 ## 0.15.1
 Found in the first real call test of the health flow: a changed public address now applies to call audio at once (before, calls failed with "application error" until a restart); "No, thanks." with punctuation or double spaces now ends the call (it used to be read as an unknown answer and connect a person); speech recognition now uses Twilio's phone-call model, and the more accurate enhanced one by default for health bundles. Tested on real calls: hours then goodbye, a clinical question connecting staff, a child exposure (Poison Control), an emergency (911), and order status with no records system connected.
 

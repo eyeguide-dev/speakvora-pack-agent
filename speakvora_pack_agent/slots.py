@@ -19,6 +19,18 @@ COMMON = {
     "payment_received": ("Confirm a payment arrived.", "Your payment has been received. Thank you."),
     "menu_prompt": ("Phone menu: press 1 hours, 2 booking, 3 status, 0 a person.", "Thanks for calling. Press one for our opening hours, two to book, three to check on something, or zero to reach a person."),
     "track_intro": ("Point the customer to their tracking page.", "You can follow its progress here."),
+    "menu_ask_speech": ("Re-ask the options after the caller was not understood.", "You can speak, or use your keypad. Say or press one for hours, two to book, three for status, or zero for a person."),
+    "call_not_understood": ("Said when speech was not understood.", "Sorry, I did not catch that."),
+    "call_anything_else": ("Asked after every answer; the caller may speak or press a key.", "Is there anything else I can help with? You can speak, or use your keypad."),
+    "call_goodbye": ("Ends a call politely.", "Thanks for calling. Goodbye."),
+    "call_staff_unavailable": ("Nobody could be reached by phone and a call back is promised.", "Sorry, nobody is available to take your call right now. We will call you back as soon as we can."),
+    "call_transfer_busy": ("The staff phone did not pick up.", "Sorry, nobody could pick up. We will call you back as soon as we can."),
+    "call_emergency_redirect": ("An emergency is described: 911.", "If this is an emergency, hang up and call nine one one now. This line cannot send emergency help."),
+    "call_poison_redirect": ("A child, pet or person may have swallowed something harmful: Poison Control.", "If a child, a pet or anyone may have swallowed something harmful, call Poison Control now at one, eight hundred, two two two, one two two two."),
+    "call_poison_followup": ("Follows the Poison Control line.", "Call nine one one if they are unwell. For a pet, call a vet. This line cannot send help."),
+    "call_secret_refused": ("A caller starts to say a password, code or card number.", "Please do not say passwords, codes or card numbers on this call. I cannot take them. Press zero or say person for a team member, or press one for hours."),
+    "call_details_texted": ("Private details were sent by text, not spoken.", "I have sent the details by text to the number we have on file."),
+    "menu_prompt_speech": ("Phone menu for callers who can speak or press a key.", "Thanks for calling. You can speak, or use your keypad. Say or press one for hours, two to book, three for status, or zero for a person."),
     "status_help": ("Ask for the reference number to look something up.", "Please tell us your reference number and we will check on it for you."),
 }
 APPT = {  # appointment-based businesses: {a} is the word for the booking

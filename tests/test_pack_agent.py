@@ -1672,6 +1672,36 @@ class ServiceCallFlow(unittest.TestCase):
         finally:
             r.close()
 
+    def test_call_lines_use_the_recording_when_the_bundle_has_them_and_the_phone_voice_when_not(self):
+        r = Rig(extra={"twilio": {"speech_input": True}, "facts": {"oncall_phone": "+16465550123"}})
+        try:
+            self.assertIn("<Say>Thanks for calling. Goodbye.</Say>", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "no thanks"}, "menu", ""))
+            self.assertIn("<Say>If this is an emergency", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "chest pain"}, "menu", ""))
+            r.agent.pack.by_id["w01"] = dict(r.agent.pack.by_id.get("w01") or {"id": "w01", "text": "Thanks for calling. Goodbye.", "file": "workflow_lines/w01.mp3"}); r.agent.pack.slots["call_goodbye"] = "w01"; r.agent.pack.slots["call_emergency_redirect"] = "w01"
+            bye = r.agent.handle_call({"From": "+16465550101", "SpeechResult": "no thanks"}, "menu", ""); self.assertIn("<Play>", bye); self.assertNotIn("<Say>", bye)
+            self.assertIn("<Play>", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "chest pain"}, "menu", ""))
+        finally:
+            r.close()
+
+    def test_the_greeting_says_you_can_speak_or_use_the_keypad_then_gives_the_options(self):
+        r = Rig(extra={"twilio": {"speech_input": True}})
+        try:
+            xml = r.agent.handle_call({"From": "+16465550101"}, "start")
+            self.assertIn("You can speak, or use your keypad. Say or press one for hours", xml); self.assertIn('speechTimeout="auto"', xml)
+            self.assertIn("You can speak, or use your keypad", r.agent.handle_call({"From": "+16465550101", "SpeechResult": "mumble"}, "menu", ""))                       # the re-ask repeats it
+            more = r.agent.handle_call({"From": "+16465550101"}, "menu", "1")
+            self.assertIn("anything else I can help with? You can speak, or use your keypad", more); self.assertIn('timeout="10"', more)                                             # it then waits for yes, a word or a key
+            again = r.agent.handle_call({"From": "+16465550101", "SpeechResult": "Yes."}, "menu", ""); self.assertIn("Say or press one for hours", again); self.assertNotIn("Goodbye", again)   # "yes" gives the options again
+            r.agent.profile = "clinic"; self.assertIn('speechTimeout="2"', r.agent.handle_call({"From": "+16465550101"}, "start"))
+            r.agent.cfg["twilio"]["speech_timeout"] = 3; self.assertIn('speechTimeout="3"', r.agent.handle_call({"From": "+16465550101"}, "start"))
+        finally:
+            r.close()
+        r = Rig()                                                                                                                                                              # speech off: the keypad menu is unchanged
+        try:
+            xml = r.agent.handle_call({"From": "+16465550101"}, "start"); self.assertNotIn("You can speak", xml); self.assertIn("/audio/", xml); self.assertIn('timeout="6"', r.agent.handle_call({"From": "+16465550101"}, "menu", "1"))
+        finally:
+            r.close()
+
     def test_a_changed_public_address_applies_to_call_audio_without_a_restart(self):
         from speakvora_pack_agent import connect
         r = Rig()
