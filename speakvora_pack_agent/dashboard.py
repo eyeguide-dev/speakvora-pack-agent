@@ -5,9 +5,9 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
+from . import activity as AC, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
 
-CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
 
 
@@ -134,6 +134,10 @@ def request_phrases(agent, body):
     return {"sent": r["sent"], "message": r["message"], "slots": [p["slot"] for p in picked]}
 
 
+def jobs_for_display(agent):
+    return [_job(j) for j in agent.state.jobs(None)][-300:][::-1]
+
+
 def handle(agent, method, path, headers, raw):
     """Returns (status, body bytes, content type, extra headers)."""
     u = urlparse(path); p = u.path
@@ -250,6 +254,10 @@ def handle(agent, method, path, headers, raw):
             out = BR.edit(agent, json.loads(raw or b"{}").get("profile"))
         elif p == "/dash/api/brain/forget" and method == "POST":
             out = BR.forget(agent)
+        elif p == "/dash/api/activity" and method == "GET":
+            qs = parse_qs(u.query); out = AC.activity(agent, jobs_for_display(agent), (qs.get("kind") or [""])[0], int((qs.get("offset") or ["0"])[0] or 0))
+        elif p == "/dash/api/phrases" and method == "GET":
+            qs = parse_qs(u.query); out = AC.phrases(agent, (qs.get("q") or [""])[0], int((qs.get("offset") or ["0"])[0] or 0), cat=(qs.get("cat") or [""])[0])
         elif p == "/dash/api/chat" and method == "GET":
             out = {"history": CH.history(agent), "configured": BR.configured(agent)}
         elif p == "/dash/api/chat" and method == "POST":

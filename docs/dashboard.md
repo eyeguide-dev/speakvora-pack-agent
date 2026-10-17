@@ -1,41 +1,33 @@
 # The dashboard
 
-A small page that runs inside your agent, on your own machine. Start the agent and open the address it prints (`.../dashboard#token=...`). The part after `#` is your access token: it never goes to a server and never appears in a log. It is kept in `agent-state/dashboard-token`, or set your own with `SV_DASHBOARD_TOKEN`.
+A small page that runs inside your agent, on your own computer. Start the agent and open the address it prints (`.../dashboard#token=...`). The part after `#` is your access token: it never goes to a server and never appears in a log. It is kept in `agent-state/dashboard-token`, or set your own with `SV_DASHBOARD_TOKEN`.
 
-Four places (a bar at the bottom on a phone, at the top on a computer), plus an orange **Locations** button when you have a commercial licence ([multi-location.md](multi-location.md)).
+It is built so a business owner can set everything up alone: four places on a bar at the bottom, plain words, one big button for the thing you came to do, and every detail one tap away. At the top: your business name (tap it for your business details, and your locations if you have several) and a green **Agent live** or amber **Practice mode** pill (tap it to go live).
 
-## Home: what needs you
-A plain card for everything that needs a decision, with big buttons:
-* **Approve / Decline** for an action the agent is holding (see Settings, Ask me first) and for each suggestion from your AI. Switch on **Remember my choice** and the same kind of action is done automatically next time (or never, if you declined). Saved choices are listed in Settings and can be reset.
-* **It arrived / It did not: send again** when the agent could not tell whether something arrived.
-* **Try again / Dismiss** for something that failed, with the reason in plain words.
-Below that: what is waiting for the internet, and **What the agent has done**, a simple feed in sentences ("Text message to Ann Lee: Delivered") with filters for Problems, Texts, Calls, Slack and Teams, Email and My apps. Tap an item for the details.
+## Home: your day at a glance
+* **Handled / Needs you / Orders** counts for today.
+* **All caught up**, or the cards that need you: big **Approve** and **Decline** buttons for anything the agent is holding (and for each suggestion from your AI). **Remember my choice** does the same thing automatically next time (or never, if you declined). A message the agent could not confirm shows **It arrived** or **It did not: send again**; a failure shows **Try again** or **Dismiss** with the reason in plain words.
+* **Phrases to review**: drafts from your assistant waiting in the Library.
+* **Ask Speakvora**: a box to ask or tell your own AI something ("Summarize today", "Write phrases"). It only suggests.
+* **Latest activity**: calls, texts, orders and messages in plain sentences; **View all** filters by calls, texts, needed a person, orders and problems. Tap a call or text for its summary and (if switched on) its words.
 
-## Connect: the assistant, calls and texts, orders and every connection
-Everything that talks to the outside world is on this one tab, top to bottom:
-* **Ask your assistant** (a big box at the top). Ask your own AI about your calls and texts ("Which calls needed a person today?") or tell it what to write ("Write six friendly reminder lines", "Make this greeting warmer: ..."). It answers from short summaries of recent conversations (never the words said) and can propose phrases, which wait until you press **Add to library**. It cannot send, change settings or approve anything. It needs your AI connected (the AI card below); 30 messages an hour.
-* **Calls and texts** (tap to open): see below.
-* **Orders and tracking links** (tap to open, when your bundle has them): see below.
-* **Order tracking pages (optional)** and your **Speakvora account** pairing.
-* Then every connection, with a **+ Add** button: Slack (with a ready-made app manifest), Microsoft Teams, texts and calls (Twilio), Google or Outlook calendar, email, AI reasoning with your own key, tools that start workflows (Shopify, GitHub, GitLab, PagerDuty, Stripe, Calendly, point of sale), and **your own apps** (send to them, let them send events here, or connect your records system for verified private lookups). At the top: **Order tracking pages (optional)** and your **Speakvora account** pairing. Below the connections: switch each workflow on or off, and a **Go live** checklist. Setup details: [connect-dashboard.md](connect-dashboard.md).
-
-### Calls and texts: every conversation, how it ended, and (if you switch it on) the words
-Every call and text the agent handles is listed with the time, the channel, the caller's number with only the last two digits showing, the topics (opening hours, booking, status, a person...), how it ended (answered, connected to staff, told to call 911, opted out, ended politely, not understood) and a one-sentence summary. Filters: calls, texts, needed a person, emergencies and refusals; search by topic, outcome or (if saved) what was said.
-**Keep what was said (transcripts)** is a switch, **off by default**. On, the words of each call and text are saved on this computer with emails, phone numbers and card-like numbers removed first; a password, code or card number said on a call is never saved; private details from your records system show as "[private details withheld]". The words are deleted after the days you set for customer details (Settings); the topics, outcome and summary stay. **Write a summary with my AI** asks your own AI for a two-sentence summary of one conversation, only when you press it. **Delete this one** and **Delete all** remove conversations for good.
-
-### Orders: every tracking link, saved
-Shown when your bundle sends order, visit, repair or request tracking links ([orders-and-private-records.md](orders-and-private-records.md)). Every link is saved from the first one and never expires. Search by order number, copy or open a link, see the step history, export everything to a spreadsheet.
+## Connect: Apps, Assistant, Orders
+* **Apps**: what is connected (Twilio texts and calls, Slack, Google Calendar, your AI...), a search box, and every app you can add with a **Connect** button: Microsoft Teams, Email, tools such as Shopify, GitHub, PagerDuty, Stripe, Calendly and point of sale, and **My apps** (send to your own system, or let your system send events here). Tap a connected app to change or test it.
+* **Assistant**: a chat with your own AI about your calls and texts, or to have it write phrases. It answers from short summaries (never the words said) and cannot send, change settings or approve anything. **What your assistant knows about your business**: the profile it learned (from your facts, workflow names and optional website and notes), for you to review, approve or forget. Needs your AI connected.
+* **Orders**: every order tracking link, saved for good: search by order number, **Active** and **Completed**, **Copy link**, **Open**, **History**, **Export** to a spreadsheet. **Tracking page appearance** turns the links on or off and sets what customers see (your business name, phone, hours); see [orders-and-private-records.md](orders-and-private-records.md).
 
 ## Library
-* **Add your own phrases**: one phrase per line, each voiced once in your bundle's voice and added to your library (instant, free and offline afterwards). **Suggest more with my AI** proposes similar lines for you to add. **Lines your AI keeps saying** become one-click additions. See [smart-ai.md](smart-ai.md).
-* **What your AI knows about your business**: the profile your connected AI learned, for you to review, edit, approve or forget.
-* How complete your bundle is, missing lines (the agent can ask Speakvora for them, with your permission), and a banner when a newer version of your bundle exists.
+Your phrases, organized: how many are **saved** and how many are **to review**.
+* **Saved**: every line your bundle can say (play any of them), your own lines first. A row of filters is always shown (All, Orders, Reservations, Hours & info, Payments, Greetings, Help & safety, Added by you); slide it sideways to see more. **Add your own phrases** (one per line, each voiced once, then free and instant) and **Suggest more with my AI**. **Missing phrases** opens the lines your workflows use that the bundle lacks, so Speakvora can write them.
+* **To review**: drafts from your assistant and lines your AI keeps repeating. Tick what you want and press **Add to library**; **x** removes a draft. See [smart-ai.md](smart-ai.md).
 
 ## Settings
-* **Ask me first**, **My saved choices**, **Pause everything** (the kill switch), and **Let the agent ask Speakvora for missing lines**.
-* **Limits for your AI in live conversations**: the rules that are always on, your own limits inside fixed ceilings, the monthly budget for new voiced lines, how long customer names and numbers stay on this computer. See [smart-ai.md](smart-ai.md) and [industry-rules.md](industry-rules.md).
-* **Call handling controls**: the draft rules for your industry, the policy settings to complete, and which controls the agent already enforces. Private records stay off until you approve them. See [orders-and-private-records.md](orders-and-private-records.md).
-* **Your commercial licence** and **Open my account** (renew, add a location, new versions).
+* **Ask before sending**: customer texts, phone calls, emails. Switch on and the agent shows each one on Home to approve first.
+* **AI controls**: **What your AI can do** (switch each action on or off, and choose "also tell my app"), **Go live**, **Answer texts** and **Answer calls** (shown as coming soon); **Built-in safeguards** (always on, plus your own limits and the monthly budget for new voiced lines).
+* **Location** (only with several locations): tap 1, 2, 3... to switch between them.
+* **Saved automations**, **Missing phrase requests**, **Locations & license** (commercial licence for several branches), **Speakvora account** (billing, renewals, updates).
+* **Your business details**, **Privacy & data** (transcripts of calls and texts, off by default, and how many days customer details stay), **Call handling controls** (the draft rules for your industry).
+* **Pause all sending**: stops every send until you resume. Nothing is lost.
 
 ## Sharing missing phrases with Speakvora
 When a workflow needs a spoken line your bundle does not have, the agent can tell Speakvora so the line gets written, checked, recorded and added to the next version of every bundle for that industry and language (included in your 12-month licence). It is **off until you switch it on**. What is sent: the moment the line is for, an example sentence, your industry, language and bundle name. Never customer names, numbers or messages.

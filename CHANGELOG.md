@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.19.0
+A new dashboard design, built so a business owner can set everything up alone. Four places (Home, Connect, Library, Settings) in a dark, app-like look. Home: your day at a glance, approvals, phrases to review, an Ask Speakvora box and the latest activity. Connect: Apps (connected apps and a Connect button for each app you can add), Assistant (chat with your own AI and what it knows about your business) and Orders (tracking links, searchable, saved for good). Library: saved phrases you can play, add your own, drafts to review and add in one tap, missing phrases. Settings: ask before sending, AI conversations and safeguards, saved automations, locations and licence, privacy, call handling controls and pause. Everything that used to be on the old tabs is still there, one tap away. See docs/dashboard.md.
+
 ## 0.18.0
 Fewer tabs: the dashboard is now Home, Connect, Library and Settings. The Connect tab holds an **Ask your assistant** box (ask your own AI about recent calls and texts, or have it write or reword phrases; it only suggests), a **Calls and texts** section and an **Orders** section, then every connection. Calls and texts shows each conversation with its time, topics, how it ended and a one-line summary, with search and filters. Transcripts are optional and off by default: the words are saved here, cleaned of emails, phone numbers and card-like numbers, never including a password, code or card number said on a call or private details from your records system, and deleted after the days you set. A button writes an AI summary of one conversation when you ask. See docs/dashboard.md.
 

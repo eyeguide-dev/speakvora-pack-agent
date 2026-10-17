@@ -2249,5 +2249,33 @@ class AssistantBox(unittest.TestCase):
             reasoner._chat = orig; srv.shutdown(); srv.server_close(); r.close()
 
 
+class DashboardDesign(unittest.TestCase):
+    def test_the_page_has_the_four_places_and_the_screens_the_owner_asked_for(self):
+        from speakvora_pack_agent import ui
+        for s in ("Your day, at a glance", "Ask Speakvora", "Latest activity", "Find an app", "AI controls", "What your AI can do", "Order tracking", "Tracking page appearance", "Your phrases, organized.", "New phrase drafts", "Add to library", "Missing phrases", "Ask before sending", "Built-in safeguards", "Saved automations", "Locations & license", "Pause all sending"):
+            self.assertIn(s, ui.PAGE, s)
+        for tab in ("['home','Home'", "['connect','Connect'", "['library','Library'", "['settings','Settings'"):
+            self.assertIn(tab, ui.PAGE)
+        self.assertNotIn("click:manageSheet}},h('div',{class:'tile'},ic('sliders'))", ui.PAGE)       # the AI controls live in Settings, not on the Connect tab
+        self.assertEqual(ui.PAGE.count("<body>"), 1); self.assertNotIn("['calls','Calls'", ui.PAGE); self.assertNotIn("['orders','Orders','box']", ui.PAGE)       # no extra tabs: calls and orders live inside Connect and Home
+
+    def test_activity_and_phrase_lists(self):
+        from speakvora_pack_agent import activity as AC, dashboard
+        r = Rig(extra={"twilio": {"speech_input": True}, "transcripts": {"enabled": True}, "tracking": {"enabled": True}})
+        try:
+            r.agent.handle_call({"From": "+16465550101", "CallSid": "C1"}, "menu", "1"); r.agent.run_actions("t", [{"action": "track", "status": "ready"}], r.agent.ctx(order={"number": "9"}))
+            r.event("order.ready", customer=CUST, order={"number": 5})
+            items = AC.activity(r.agent, dashboard.jobs_for_display(r.agent))["items"]; kinds = {i["kind"] for i in items}; self.assertTrue({"call", "order", "sent"} <= kinds)
+            self.assertEqual([i["kind"] for i in AC.activity(r.agent, dashboard.jobs_for_display(r.agent), "call")["items"]], ["call"]); self.assertTrue(all(i["kind"] == "order" for i in AC.activity(r.agent, [], "order")["items"]))
+            p = AC.phrases(r.agent); self.assertEqual(p["total"], p["saved"]); self.assertTrue(p["items"][0]["text"]); self.assertEqual(AC.phrases(r.agent, "zzzzzz")["total"], 0); self.assertGreater(AC.phrases(r.agent, "ready")["total"], 0)
+            tok = dashboard.token(r.agent); st, body, ct, h = dashboard.handle(r.agent, "GET", "/dash/api/activity?kind=order", {"x-dashboard-token": tok}, b""); self.assertEqual(st, 200); self.assertIn("items", json.loads(body))
+            st, body, ct, h = dashboard.handle(r.agent, "GET", "/dash/api/phrases?q=ready", {"x-dashboard-token": tok}, b""); self.assertEqual(st, 200); self.assertGreater(json.loads(body)["total"], 0)
+            g = {x["key"]: x["n"] for x in AC.phrases(r.agent)["groups"]}; self.assertEqual(g["all"], p["saved"]); self.assertIn("orders", g); self.assertIn("mine", g)
+            self.assertEqual(AC.phrases(r.agent, cat="orders")["total"], g["orders"]); self.assertEqual(AC.group_of("order_ready", "", "x"), "orders"); self.assertEqual(AC.group_of("", "", "Your table is ready"), "reservations")
+            self.assertIn("media-src 'self'", dashboard.CSP)                                                        # so a saved phrase can be played
+        finally:
+            r.close()
+
+
 if __name__ == "__main__":
     unittest.main()
