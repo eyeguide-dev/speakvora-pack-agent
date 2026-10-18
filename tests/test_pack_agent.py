@@ -690,7 +690,7 @@ class ConnectTab(unittest.TestCase):
         self.call("POST", "/dash/api/setup/save", {"card": "ai", "values": {"provider": "openai", "base_url": self.r.mock.url, "api_key": "sk-abc12345", "model": "my-model"}}); self.assertTrue(self.card("ai")["connected"])
         self.r.mock.model_text = "OK"; st, r = self.call("POST", "/dash/api/setup/test", {"card": "ai", "opts": {}}); self.assertTrue(r["ok"]); self.assertIn("OK", r["message"])
         q = [x for x in self.r.mock.requests if x["path"].endswith("/chat/completions")][-1]; self.assertEqual(q["auth"], "Bearer sk-abc12345"); self.assertEqual(q["json"]["model"], "my-model"); self.assertLess(q["json"]["max_tokens"], 20)
-        self.assertNotIn("sk-abc12345", open(self.r.agent.cfg["_path"]).read()); self.assertEqual(self.card("ai")["fields"][2]["hint"], "...2345")
+        self.assertNotIn("sk-abc12345", open(self.r.agent.cfg["_path"]).read()); self.assertEqual(self.card("ai")["fields"][1]["hint"], "...2345")
         self.call("POST", "/dash/api/setup/save", {"card": "ai", "values": {"provider": "local"}}); self.assertEqual(self.r.agent.cfg["reasoner"]["provider"], "openai")
 
     def test_workflows_can_be_switched_on_and_off_and_say_what_they_need(self):
@@ -1397,10 +1397,10 @@ class MultiLocation(unittest.TestCase):
             H = {"x-dashboard-token": ta}
             self.assertEqual(self.call(pa, "POST", "/dash/api/locations/add", {"name": "Uptown", "url": f"http://127.0.0.1:{pb}", "token": tb}, H)[0], 200)
             s, r, _ = self.call(pa, "POST", "/dash/api/locations/add", {"name": "Midtown", "url": f"http://127.0.0.1:{pb}", "token": tb}, H); self.assertEqual(s, 400); self.assertIn("covers 2 locations", r["message"])
-            a.agent.cfg["licence"] = {"code": self.mkcode(a, 2, until=time.time() - 5 * 86400)}                                              # ended 5 days ago: still inside the 30-day grace period
+            a.agent.cfg["licence"] = {"code": self.mkcode(a, 2, until=a.agent.now() - 5 * 86400)}                                              # ended 5 days ago: still inside the 30-day grace period
             self.assertEqual(self.call(pa, "GET", "/dash/api/summary", headers=H)[1]["locations"]["licence"]["state"], "grace")
             self.assertTrue(self.call(pa, "GET", "/dash/api/summary", headers=H)[1]["locations"]["enabled"])
-            a.agent.cfg["licence"] = {"code": self.mkcode(a, 2, until=time.time() - 40 * 86400)}                                             # past the grace period: the menu is hidden, the bundle keeps working
+            a.agent.cfg["licence"] = {"code": self.mkcode(a, 2, until=a.agent.now() - 40 * 86400)}                                             # past the grace period: the menu is hidden, the bundle keeps working
             loc = self.call(pa, "GET", "/dash/api/summary", headers=H)[1]["locations"]; self.assertEqual(loc["licence"]["state"], "expired"); self.assertFalse(loc["enabled"])
             self.assertEqual(self.call(pa, "GET", "/dash/api/locations", headers=H)[0], 400); self.assertEqual(self.call(pa, "GET", "/loc/uptown/dashboard", headers={**H})[0], 403)
         finally:
@@ -2279,3 +2279,453 @@ class DashboardDesign(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveConversation(unittest.TestCase):
+    """Your own AI answers texts and calls turn by turn, inside hard limits. The AI is replaced by a scripted one here."""
+    AI = {"provider": "openai", "model": "demo", "api_key": "demo"}
+
+    def rig(self, sms=True, voice=True, dry=False, **g):
+        return Rig(dry=dry, extra={"reasoner": self.AI, "twilio": {"speech_input": True}, "facts": {"oncall_phone": "+16465550123", "phone": "+16465550199", "hours": "Tue-Sun 5-10 PM.", "address": "12 Main St"},
+                                   "guardrails": {"sms_replies": sms, "voice_calls": voice, **g}})
+
+    def is_filler(self, xml):
+        import html
+        from speakvora_pack_agent import converse
+        return any(f in html.unescape(xml) for f in converse.FILLERS)
+
+    def script(self, answers, delay=0.0):
+        from speakvora_pack_agent import converse
+        calls = []
+        def fake(cfg, system, user, max_tokens=None):
+            calls.append(user)
+            if delay:
+                time.sleep(delay)
+            a = answers[min(len(calls) - 1, len(answers) - 1)]
+            if isinstance(a, Exception):
+                raise a
+            return json.dumps(a), {}
+        old = converse.R._chat; converse.R._chat = fake; self.addCleanup(lambda: setattr(converse.R, "_chat", old)); return calls
+
+    def test_text_is_answered_with_disclosure_once_and_is_recorded(self):
+        r = self.rig(); calls = self.script([{"say": "We do have a patio, open Tuesday to Sunday.", "action": "continue"}, {"say": "Happy to help.", "action": "continue"}])
+        try:
+            a = r.agent.handle_sms({"From": "+16465550142", "Body": "do you guys have outdoor seating"}); b = r.agent.handle_sms({"From": "+16465550142", "Body": "ok thanks a lot"})
+            self.assertIn("automated assistant", a); self.assertIn("patio", a); self.assertNotIn("automated assistant", b); self.assertIn("Business: Bella", calls[0]); self.assertIn("Customer: do you guys have outdoor seating", calls[1])
+            from speakvora_pack_agent import conversations as CV
+            self.assertEqual(CV.list_(r.agent)["items"][0]["outcome"], "answered")
+        finally:
+            r.close()
+
+    def test_an_approved_line_is_chosen_by_number_and_played_verbatim(self):
+        r = self.rig(); line = "Good news, your order is ready for pickup."
+        calls = self.script([{"say": "something else entirely", "line": "L4", "action": "continue"}])
+        try:
+            out = r.agent.handle_sms({"From": "+16465550142", "Body": "is the kitchen finished with my food yet, ready for me"})
+            self.assertIn("L4: " + line, calls[0]); self.assertIn("phone: +16465550199", calls[0]); self.assertIn(line, out); self.assertNotIn("something else", out)
+        finally:
+            r.close()
+
+    def test_the_hard_limits_hand_off_and_never_say_the_answer(self):
+        for bad in ({"say": "Call the owner on 646 555 7788 for that.", "action": "continue"}, {"say": "That dish is only $4.99 today.", "action": "continue"}, {"say": "I am a real person here.", "action": "continue"}, ["x"]):
+            r = self.rig(); self.script([bad if isinstance(bad, dict) else RuntimeError("down")])
+            try:
+                out = r.agent.handle_sms({"From": "+16465550142", "Body": "tell me more"})
+                self.assertRegex(out, "someone from the team|team member"); self.assertNotIn("4.99", out); self.assertNotIn("7788", out)
+                from speakvora_pack_agent import conversations as CV
+                self.assertTrue(CV.list_(r.agent)["items"][0]["needs_person"])
+            finally:
+                r.close()
+
+    def test_a_known_phone_number_and_a_stated_price_are_allowed_when_approved(self):
+        r = self.rig(); self.script([{"say": "You can also call us on 646 555 0199.", "action": "continue"}])
+        try:
+            self.assertIn("646 555 0199", r.agent.handle_sms({"From": "+16465550142", "Body": "what is your number"}))
+        finally:
+            r.close()
+
+    def test_asking_for_a_person_and_every_cap_skip_the_ai(self):
+        r = self.rig(max_turns=1); calls = self.script([{"say": "Sure.", "action": "continue"}])
+        try:
+            self.assertRegex(r.agent.handle_sms({"From": "+16465550142", "Body": "can I talk to a person"}), "someone from the team|team member"); self.assertEqual(calls, [])
+            r.agent.handle_sms({"From": "+16465550143", "Body": "hello there"}); self.assertEqual(len(calls), 1)
+            self.assertRegex(r.agent.handle_sms({"From": "+16465550143", "Body": "and another thing"}), "someone from the team|team member"); self.assertEqual(len(calls), 1)         # max_turns reached
+        finally:
+            r.close()
+
+    def test_off_by_default_and_practice_mode_sends_nothing(self):
+        r = self.rig(sms=False); calls = self.script([{"say": "Hi", "action": "continue"}])
+        try:
+            self.assertEqual(r.agent.handle_sms({"From": "+16465550142", "Body": "hello there"}), ""); self.assertEqual(calls, [])
+        finally:
+            r.close()
+        r = self.rig(dry=True); self.script([{"say": "We have a patio.", "action": "continue"}])
+        try:
+            self.assertEqual(r.agent.handle_sms({"From": "+16465550142", "Body": "do you have outdoor seating"}), "")
+            self.assertTrue(any(x.get("action") == "would_reply" and "We have a patio" in x.get("text", "") for x in r.log()))
+        finally:
+            r.close()
+
+    def test_emergency_secrets_and_opt_out_never_reach_the_ai(self):
+        r = self.rig(); calls = self.script([{"say": "Hi", "action": "continue"}])
+        try:
+            for said in ("he is not breathing", "my card number is 4242", "please stop calling me"):
+                r.agent.handle_call({"From": "+16465550142", "CallSid": "C" + said[:3], "SpeechResult": said}, "menu", "")
+            self.assertEqual(calls, [])
+        finally:
+            r.close()
+
+    def test_a_call_is_a_conversation_with_an_open_microphone(self):
+        r = self.rig(); self.script([{"say": "We have a quiet patio too.", "action": "continue"}, {"say": "Glad to help. Goodbye.", "action": "end"}])
+        try:
+            g = r.agent.handle_call({"From": "+16465550142", "CallSid": "CA1"}, "start", "")
+            self.assertIn("automated assistant", g); self.assertIn('input="dtmf speech"', g)
+            x = r.agent.handle_call({"From": "+16465550142", "CallSid": "CA1", "SpeechResult": "do you have outdoor seating"}, "menu", "")
+            self.assertIn("quiet patio", x); self.assertIn("<Gather", x)
+            y = r.agent.handle_call({"From": "+16465550142", "CallSid": "CA1", "SpeechResult": "that would be perfect for us"}, "menu", "")
+            self.assertIn("Goodbye", y); self.assertIn("<Hangup/>", y)
+            m = r.agent.handle_call({"From": "+16465550142", "CallSid": "CA2", "SpeechResult": "what time are you open"}, "menu", "")
+            self.assertIn("Play", m)                                                                   # the menu's recorded answer still wins: instant and free
+        finally:
+            r.close()
+
+    def test_a_slow_answer_is_covered_by_a_filler_and_finished_on_the_wait_route(self):
+        import re as _re
+        r = self.rig(); self.script([{"say": "We do have a patio.", "action": "continue"}], delay=1.8)
+        try:
+            xml = r.agent.handle_call({"From": "+16465550142", "CallSid": "CA3", "SpeechResult": "do you have outdoor seating"}, "menu", "")
+            m = _re.search(r"/twilio/call/wait/([0-9a-f]{10})", xml); self.assertTrue(m, xml); self.assertTrue(self.is_filler(xml), xml)
+            done = r.agent.call_wait(m.group(1), {"From": "+16465550142", "CallSid": "CA3"})
+            for _ in range(2):                                                                                          # still working: another short line, then the answer
+                if "<Redirect" not in done:
+                    break
+                self.assertTrue(self.is_filler(done), done); done = r.agent.call_wait(m.group(1), {"From": "+16465550142", "CallSid": "CA3"})
+            self.assertIn("We do have a patio", done); self.assertIn("<Gather", done)
+            from speakvora_pack_agent import conversations as CV
+            self.assertEqual(CV.list_(r.agent)["items"][0]["channel"], "call")
+        finally:
+            r.close()
+
+    def test_an_ai_failure_on_a_call_connects_a_person(self):
+        r = self.rig(); self.script([RuntimeError("down")])
+        try:
+            x = r.agent.handle_call({"From": "+16465550142", "CallSid": "CA4", "SpeechResult": "do you have outdoor seating"}, "menu", "")
+            self.assertIn("<Dial", x)
+        finally:
+            r.close()
+
+
+class KnowledgeBase(LiveConversation):
+    """Documents the live AI answers from: stored and searched on this computer."""
+    MENU = ("Pasta night is every Tuesday and costs $18 per person, including dessert.\n\nWe are fully gluten free on Sundays only. Call 646 555 0199 to book a private room for ten or more guests.\n\n"
+            "Our cancellation policy: cancel up to 24 hours before a booking and your deposit is returned in full.")
+
+    def test_sources_are_chunked_searched_and_unsafe_passages_dropped(self):
+        from speakvora_pack_agent import knowledge as KN
+        r = self.rig()
+        try:
+            KN.add_text(r.agent, "Menu notes", self.MENU + "\n\nStaff note: card 4242 4242 4242 4242 and password: hunter2")
+            v = KN.view(r.agent); self.assertEqual(len(v["sources"]), 1); self.assertGreaterEqual(v["sources"][0]["dropped"], 1)
+            self.assertNotIn("4242", KN.text_all(r.agent)); self.assertNotIn("hunter2", KN.text_all(r.agent))
+            top = KN.search(r.agent, "how much is pasta night"); self.assertIn("$18", top[0][1])
+            self.assertEqual(KN.search(r.agent, "do you sell motorcycles"), [])
+            self.assertIn("cancel", KN.search(r.agent, "what is your cancellation policy")[0][1].lower())
+            with self.assertRaises(ValueError): KN.add_text(r.agent, "x", "tiny")
+            KN.remove(r.agent, v["sources"][0]["id"]); self.assertEqual(KN.view(r.agent)["sources"], [])
+        finally:
+            r.close()
+
+    def test_files_word_and_pdf_and_unsupported(self):
+        import base64, io, zipfile
+        from speakvora_pack_agent import knowledge as KN
+        r = self.rig()
+        try:
+            z = io.BytesIO(); zf = zipfile.ZipFile(z, "w"); zf.writestr("word/document.xml", "<w:document><w:p><w:r><w:t>Happy hour runs from four to six on weekdays.</w:t></w:r></w:p><w:p><w:r><w:t>Kids eat free on Mondays.</w:t></w:r></w:p></w:document>"); zf.close()
+            KN.add_file(r.agent, "Specials.docx", base64.b64encode(z.getvalue()).decode()); self.assertIn("Kids eat free", KN.text_all(r.agent))
+            pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nstream\nBT /F1 12 Tf (Parking is free in the east lot after six in the evening.) Tj ET\nendstream\nendobj\n"
+            KN.add_file(r.agent, "Info.pdf", base64.b64encode(pdf).decode()); self.assertIn("Parking is free", KN.text_all(r.agent))
+            with self.assertRaises(ValueError): KN.add_file(r.agent, "scan.pdf", base64.b64encode(b"%PDF-1.4 nothing").decode())
+            with self.assertRaises(ValueError): KN.add_file(r.agent, "x.exe", base64.b64encode(b"MZ" * 40).decode())
+        finally:
+            r.close()
+
+    def test_the_ai_gets_the_passages_may_quote_their_prices_and_gaps_are_collected(self):
+        from speakvora_pack_agent import knowledge as KN, converse
+        r = self.rig(); KN.add_text(r.agent, "Menu notes", self.MENU)
+        calls = self.script([{"say": "Pasta night is every Tuesday and costs $18 per person.", "action": "continue"}, {"say": "Let me have someone check on that.", "action": "handoff"}])
+        try:
+            out = r.agent.handle_sms({"From": "+16465550142", "Body": "how much is the pasta night thing"})
+            self.assertIn("APPROVED DOCUMENTS", calls[0]); self.assertIn("$18", calls[0]); self.assertIn("$18", out)                       # a price from your documents is approved
+            r.agent.handle_sms({"From": "+16465550143", "Body": "do you cater weddings for two hundred guests"})
+            self.assertEqual(KN.view(r.agent)["gaps"][0]["q"], "do you cater weddings for two hundred guests")
+            KN.add_text(r.agent, "Catering", "We cater weddings for up to two hundred guests with a custom menu.")
+            self.assertEqual(KN.view(r.agent)["gaps"], [])                                                                                   # answering a gap clears it
+            t = converse.try_it(r.agent, "how much is pasta night"); self.assertIn("Menu notes", t["sources"])
+        finally:
+            r.close()
+
+    def test_dashboard_routes(self):
+        import base64
+        from speakvora_pack_agent import dashboard
+        r = self.rig(); tok = dashboard.token(r.agent); H = {"x-dashboard-token": tok}
+        try:
+            def call(m, p, b=None):
+                st, body, ct, h = dashboard.handle(r.agent, m, p, H, json.dumps(b).encode() if b is not None else b""); return st, json.loads(body)
+            st, o = call("POST", "/dash/api/knowledge/text", {"title": "Hours note", "text": "We close at ten on weekdays and eleven on weekends, kitchen included."}); self.assertEqual(st, 200); sid = o["added"]["id"]
+            st, o = call("GET", "/dash/api/knowledge"); self.assertEqual(o["sources"][0]["title"], "Hours note")
+            st, o = call("GET", "/dash/api/knowledge/source?id=" + sid); self.assertIn("close at ten", o["text"])
+            st, o = call("POST", "/dash/api/knowledge/upload", {"name": "faq.txt", "data": base64.b64encode(b"Gift cards can be bought at the front desk any day we are open.").decode()}); self.assertEqual(st, 200)
+            st, o = call("POST", "/dash/api/knowledge/remove", {"id": sid}); self.assertEqual(len(o["sources"]), 1)
+            self.script([{"say": "Gift cards are sold at the front desk.", "action": "continue"}])
+            st, o = call("POST", "/dash/api/knowledge/try", {"question": "can I buy a gift card"}); self.assertEqual(st, 200); self.assertIn("front desk", o["answer"])
+        finally:
+            r.close()
+
+
+class AiCardRemoval(unittest.TestCase):
+    def test_the_ai_key_can_be_removed_and_the_ai_form_is_the_simple_one(self):
+        from speakvora_pack_agent import connect as SU, ui, secrets_store as SS
+        r = Rig()
+        try:
+            SU.save(r.agent, "ai", {"provider": "anthropic", "api_key": "sk-ant-abc12345", "model": "claude-haiku-5-5", "base_url": ""})
+            self.assertTrue(SU.connected(r.agent, "ai")); self.assertIn("sk-ant-abc12345", json.dumps(SS.read(r.agent.state.dir)))
+            SU.disconnect(r.agent, "ai"); self.assertFalse(SU.connected(r.agent, "ai")); self.assertNotIn("sk-ant-abc12345", json.dumps(SS.read(r.agent.state.dir)))
+            self.assertNotIn("sk-ant-abc12345", open(r.agent.cfg["_path"]).read())
+            with self.assertRaises(SU.SetupError): SU.disconnect(r.agent, "business")
+            for s in ("function aiForm", "Claude", "ChatGPT", "Save and test", "Remove my key", "claude-haiku-5-5", "/dash/api/setup/disconnect"):
+                self.assertIn(s, ui.PAGE, s)
+        finally:
+            r.close()
+
+
+class ModelRefusesTemperature(unittest.TestCase):
+    def test_the_call_is_repeated_without_temperature_when_the_model_refuses_it(self):
+        from speakvora_pack_agent import reasoner as R, web
+        seen = []
+        def fake(method, url, headers, body=None, timeout=0):
+            seen.append(dict(body))
+            if "temperature" in body:
+                raise web.HttpError(400, '{"error":{"message":"`temperature` is deprecated for this model."}}')
+            return 200, {"content": [{"type": "text", "text": "OK"}], "usage": {}}
+        old = R.web.request; R.web.request = fake
+        try:
+            self.assertEqual(R._chat({"provider": "anthropic", "model": "m", "api_key": "k"}, "s", "u")[0], "OK"); self.assertEqual(["temperature" in b for b in seen], [True, False])
+        finally:
+            R.web.request = old
+
+
+class InstantAnswers(LiveConversation):
+    def test_a_saved_question_is_answered_instantly_with_the_owners_words_and_no_ai_call(self):
+        from speakvora_pack_agent import knowledge as KN
+        r = self.rig(); calls = self.script([{"say": "AI answer", "action": "continue"}])
+        try:
+            KN.note_gap(r.agent, "do you have outdoor seating"); KN.add_qa(r.agent, "Do you have outdoor seating?", "Yes, we have a quiet patio with eight tables.")
+            self.assertEqual(KN.view(r.agent)["gaps"], [])
+            out = r.agent.handle_sms({"From": "+16465550142", "Body": "hey do you guys have any outdoor seating"})
+            self.assertIn("quiet patio with eight tables", out); self.assertEqual(calls, [])
+            r.agent.handle_sms({"From": "+16465550143", "Body": "do you take reservations"}); self.assertEqual(len(calls), 1)             # something else still goes to the AI
+            self.assertIsNone(KN.qa_match(r.agent, "do you have parking")); self.assertTrue(KN.qa_match(r.agent, "outdoor seating?"))
+            with self.assertRaises(ValueError): KN.add_qa(r.agent, "x", "no")
+        finally:
+            r.close()
+
+
+class ToolConnections(unittest.TestCase):
+    def test_every_tool_has_a_guide_a_secret_a_test_and_a_remove(self):
+        from speakvora_pack_agent import connect as SU, secrets_store as SS
+        r = Rig()
+        try:
+            for n in ("github", "gitlab", "pagerduty", "stripe", "shopify", "calendly", "pos"):
+                v = SU.tool_view(r.agent, n); self.assertFalse(v["added"]); self.assertTrue(v["steps"] and v["events"] and v["title"])
+                if v["mode"] == "paste":
+                    with self.assertRaises(SU.SetupError): SU.tool_save(r.agent, n, "")                       # the tool's own secret is required
+                    with self.assertRaises(SU.SetupError): SU.tool_save(r.agent, n, "short")
+                    o = SU.tool_save(r.agent, n, "whsec_abcdefgh12345678")
+                else:
+                    o = SU.tool_save(r.agent, n); self.assertGreater(len(o["secret"]), 20); self.assertEqual(SU.tool_secret(r.agent, n)["secret"], o["secret"])
+                self.assertTrue(o["added"]); t = SU.tool_test(r.agent, n); self.assertTrue(t["ok"], (n, t)); self.assertIn("Connected", t["message"])
+                self.assertTrue(next(x for x in SU.catalog(r.agent) if x["id"] == ("pos" if n == "pos" else n))["added"])
+                SU.tool_remove(r.agent, n); self.assertFalse(SU.tool_view(r.agent, n)["added"]); self.assertFalse(SU.tool_view(r.agent, n)["secret_set"])
+            with self.assertRaises(SU.SetupError): SU.tool_view(r.agent, "../etc")
+        finally:
+            r.close()
+
+    def test_a_real_message_marks_the_tool_as_connected_and_a_missing_public_address_is_explained(self):
+        import hmac, hashlib
+        from speakvora_pack_agent import connect as SU, server
+        r = Rig(extra={"public_base_url": "https://YOUR-PUBLIC-ADDRESS-FOR-THIS-AGENT"})
+        try:
+            o = SU.tool_save(r.agent, "github"); t = SU.tool_test(r.agent, "github")
+            self.assertFalse(t["ok"]); self.assertIn("public", t["message"])
+        finally:
+            r.close()
+
+
+class PairWithACode(unittest.TestCase):
+    def test_a_code_from_the_account_page_gives_the_agent_its_own_key(self):
+        from speakvora_pack_agent import connect as SU, secrets_store as SS, web, sharing
+        r = Rig(); calls = []
+        def fake(method, url, headers=None, body=None, timeout=0):
+            calls.append((url, body)); return 200, {"api_key": "sv_pairedkey1234567890", "kind": "agent", "business": {"name": "Bell and Basil"}}
+        old = web.request; web.request = fake
+        try:
+            with self.assertRaises(SU.SetupError): SU.pair_agent(r.agent, "nope")
+            o = SU.pair_agent(r.agent, "sv-abcd-ef23"); self.assertTrue(o["paired"]); self.assertEqual(o["kind"], "agent")
+            self.assertTrue(calls[0][0].endswith("/api/v1/track/pair")); self.assertEqual(calls[0][1], {"code": "SV-ABCD-EF23"})
+            self.assertEqual(sharing._key(r.agent), "sv_pairedkey1234567890"); self.assertNotIn("sv_pairedkey1234567890", open(r.agent.cfg["_path"]).read())      # the key lives in the secrets file, not agent.json
+            web.request = lambda *a, **k: (_ for _ in ()).throw(web.HttpError(404, {"detail": "That code was already used."}))
+            with self.assertRaises(SU.SetupError) as c: SU.pair_agent(r.agent, "SV-ABCD-EF23")
+            self.assertIn("already used", str(c.exception))
+        finally:
+            web.request = old; r.close()
+
+
+class AiMayDoThings(LiveConversation):
+    """The AI can ask for the actions the owner allowed, and only those; they go through the usual checks."""
+    def test_allowed_actions_run_and_others_are_ignored(self):
+        r = self.rig(allowed_actions=["notify", "sms"]); calls = self.script([{"say": "Thanks Ann, I have noted a plumber visit for Tuesday morning.", "action": "continue",
+                                                                                 "do": [{"type": "notify", "text": "Ann Lee wants a plumber on Tuesday morning, leaking sink."}, {"type": "calendar_create", "title": "Plumber", "start": "2026-10-20T09:00"}, {"type": "refund", "text": "refund 50"}]}])
+        try:
+            out = r.agent.handle_sms({"From": "+16465550142", "Body": "I need a plumber on Tuesday morning for a leaking sink"})
+            self.assertIn("plumber visit", out); self.assertIn("ACTIONS you may request", calls[0]); self.assertIn("notify:", calls[0]); self.assertNotIn("calendar_create:", calls[0])      # only what the owner allowed is offered
+            texts = [q["json"]["text"] for q in r.mock.calls("chat.postMessage")]; self.assertEqual(len(texts), 1); self.assertIn("leaking sink", texts[0])                    # notify went to the team; calendar and refund were dropped
+            self.assertEqual(r.mock.calls("events"), [])
+        finally:
+            r.close()
+
+    def test_nothing_is_offered_or_done_when_no_action_is_allowed(self):
+        r = self.rig(); calls = self.script([{"say": "Noted.", "action": "continue", "do": [{"type": "notify", "text": "tell the team now please"}]}])
+        try:
+            r.agent.handle_sms({"From": "+16465550142", "Body": "I need a plumber on Tuesday morning for a leaking sink"})
+            self.assertNotIn("ACTIONS you may request", calls[0]); self.assertEqual(r.mock.calls("chat.postMessage"), [])
+        finally:
+            r.close()
+
+
+class InsightsView(LiveConversation):
+    def test_insights_count_conversations_ai_answers_and_gaps(self):
+        from speakvora_pack_agent import activity as AC, dashboard, knowledge as KN
+        r = self.rig(); self.script([{"say": "We have a patio.", "action": "continue"}, {"say": "x", "action": "handoff"}])
+        try:
+            r.agent.handle_sms({"From": "+16465550142", "Body": "do you have outdoor seating"}); r.agent.handle_sms({"From": "+16465550143", "Body": "do you cater weddings for two hundred guests"})
+            i = AC.insights(r.agent, 7); self.assertEqual(i["texts"], 2); self.assertEqual(i["ai_text_answers"], 1); self.assertEqual(i["ai_text_handoffs"], 1); self.assertEqual(i["person_pct"], 50)
+            self.assertTrue(any("cater" in g["q"] for g in i["gaps"])); self.assertIsNotNone(i["ai_median_ms"] is None or i["ai_median_ms"] >= 0)
+            tok = dashboard.token(r.agent); st, body, ct, h = dashboard.handle(r.agent, "GET", "/dash/api/insights?days=30", {"x-dashboard-token": tok}, b""); self.assertEqual(st, 200); self.assertEqual(json.loads(body)["days"], 30)
+        finally:
+            r.close()
+
+
+class SimpleConnections(unittest.TestCase):
+    def test_twilio_finds_numbers_and_points_one_at_the_agent(self):
+        from speakvora_pack_agent import connect as SU
+        r = Rig(extra={"public_base_url": "https://agent.example"})
+        try:
+            nums = SU.twilio_numbers(r.agent)["numbers"]; self.assertTrue(nums)                       # the mock Twilio lists numbers
+            with self.assertRaises(SU.SetupError): SU.twilio_point(r.agent, "123")
+            o = SU.twilio_point(r.agent, "+15550001111"); self.assertEqual(o["calls"], "https://agent.example/twilio/call"); self.assertEqual(o["texts"], "https://agent.example/twilio/sms")
+        finally:
+            r.close()
+        r = Rig(extra={"public_base_url": "https://YOUR-PUBLIC-ADDRESS-FOR-THIS-AGENT"})
+        try:
+            with self.assertRaises(SU.SetupError) as c: SU.twilio_point(r.agent, "+15550001111")
+            self.assertIn("public web address", str(c.exception))
+        finally:
+            r.close()
+
+    def test_the_forms_are_the_simple_ones(self):
+        from speakvora_pack_agent import ui
+        for s in ("function emailForm", "function twilioForm", "Find my numbers", "Incoming webhook URL", "Advanced: slash commands", "Point '+number+' at my agent", "Gmail needs an app password"):
+            self.assertIn(s, ui.PAGE, s)
+
+
+class VoiceCheck(unittest.TestCase):
+    def test_voice_check_needs_the_key_and_reports_use(self):
+        from speakvora_pack_agent import connect as SU, learned
+        r = Rig(extra={"public_base_url": "https://agent.example", "speakvora": {"api_key": "sv_testkey1234567890"}})
+        try:
+            old = learned._voice; learned._voice = lambda agent, text: (b"ID3fake", ".mp3")
+            o = SU.voice_check(r.agent); self.assertTrue(o["ok"]); self.assertTrue(o["url"].startswith("/audio/talk_")); self.assertEqual(o["live_chars_used"], 0); self.assertGreater(o["live_chars_cap"], 0)
+            self.assertIsNotNone(r.agent.audio.serve(o["url"].rsplit("/", 1)[1].rsplit(".", 1)[0]))                  # the dashboard can play it
+            learned._voice = lambda agent, text: (_ for _ in ()).throw(ValueError("Speakvora did not return audio for that line."))
+            with self.assertRaises(SU.SetupError): SU.voice_check(r.agent)
+        finally:
+            learned._voice = old; r.close()
+        r = Rig()
+        try:
+            with self.assertRaises(SU.SetupError) as c: SU.voice_check(r.agent)
+            self.assertIn("Speakvora agent", str(c.exception))
+        finally:
+            r.close()
+
+
+class OutOfScopeIsAHandoff(LiveConversation):
+    def test_an_unrelated_question_gets_the_ais_own_no_information_line_and_a_person(self):
+        r = self.rig(); self.script([{"say": "I don't have that information. Let me get someone to help you.", "action": "handoff"}])
+        try:
+            out = r.agent.handle_sms({"From": "+16465550142", "Body": "do you sell jeans"})
+            self.assertIn("I don't have that information", out); self.assertNotIn("team member has been notified", out)
+            from speakvora_pack_agent import conversations as CV
+            self.assertTrue(CV.list_(r.agent)["items"][0]["needs_person"])
+        finally:
+            r.close()
+
+
+class StaffTransfer(LiveConversation):
+    def test_a_person_request_dials_the_staff_phone_even_when_the_bundle_has_no_transfer_step(self):
+        r = self.rig(); self.script([{"say": "I don't have that information. Let me get someone to help you.", "action": "handoff"}])
+        try:
+            x = r.agent.handle_call({"From": "+16465550142", "CallSid": "CB1", "SpeechResult": "do you sell clothes"}, "menu", "")
+            self.assertIn("<Dial", x); self.assertIn("+16465550123", x); self.assertIn("I don&apos;t have that information", x.replace("'", "&apos;")) if "&apos;" in x else self.assertIn("have that information", x)
+            y = r.agent.handle_call({"From": "+16465550142", "CallSid": "CB2", "SpeechResult": "I want to speak to a person"}, "menu", "")
+            self.assertIn("<Dial", y)                                                                 # asking for a person never needs the AI
+            z = r.agent.handle_call({"From": "+16465550142", "CallSid": "CB3"}, "menu", "0"); self.assertIn("<Dial", z)           # pressing 0 too
+        finally:
+            r.close()
+
+
+class MenuPrices(LiveConversation):
+    def test_a_price_listed_as_a_plain_number_in_your_menu_is_approved_and_an_unlisted_one_is_not(self):
+        from speakvora_pack_agent import knowledge as KN
+        r = self.rig(); KN.add_text(r.agent, "Menu", "Antipasti. Crispy Calamari 16 Golden calamari with lemon. Caesar Salad 11 Romaine and parmesan. Tiramisu 9.50 Espresso soaked ladyfingers.")
+        self.script([{"say": "The Crispy Calamari is $16.", "action": "continue"}, {"say": "The Tiramisu is $9.50.", "action": "continue"}, {"say": "The Caesar Salad is $12.", "action": "continue"}])
+        try:
+            a = r.agent.handle_sms({"From": "+16465550142", "Body": "how much is the calamari"}); self.assertIn("$16", a)
+            b = r.agent.handle_sms({"From": "+16465550143", "Body": "how much is the tiramisu"}); self.assertIn("$9.50", b)
+            c = r.agent.handle_sms({"From": "+16465550144", "Body": "how much is the caesar"}); self.assertNotIn("$12", c)               # 12 is not on the menu: never said
+        finally:
+            r.close()
+
+
+class DetailedTextsGoToTheAi(LiveConversation):
+    def test_a_detailed_booking_text_goes_to_the_ai_and_a_short_keyword_text_stays_instant(self):
+        r = self.rig(allowed_actions=["notify", "sms"]); calls = self.script([{"say": "Thanks Bilal, the host will confirm your table for four tomorrow at seven.", "action": "continue", "do": [{"type": "notify", "text": "Bilal wants a table for 4 tomorrow at 7pm."}, {"type": "sms", "text": "Your request was received."}]}])
+        try:
+            out = r.agent.handle_sms({"From": "+16465550142", "Body": "I want to book a table for 4 tomorrow at 7pm my name is Bilal"})
+            self.assertIn("host will confirm", out); self.assertEqual(len(calls), 1); self.assertNotIn("sms:", calls[0].lower().split("actions you may request")[1].split("conversation so far")[0])     # no sms action offered in a text conversation
+            self.assertEqual(len(r.mock.calls("chat.postMessage")), 1); self.assertEqual(r.mock.calls("Messages.json"), [])                                                    # the team was told, no second text
+            self.assertIn("Tue-Sun", r.agent.handle_sms({"From": "+16465550143", "Body": "hours"}))                                                                              # one word: instant, no AI
+            self.assertEqual(len(calls), 1)
+        finally:
+            r.close()
+
+
+class DetailedCallsGoToTheAi(LiveConversation):
+    def test_a_long_request_on_a_call_goes_to_the_ai_but_a_short_one_keeps_the_instant_menu_answer(self):
+        r = self.rig(); calls = self.script([{"say": "The host will confirm your table for four tomorrow at seven.", "action": "continue"}])
+        try:
+            short = r.agent.handle_call({"From": "+16465550142", "CallSid": "CD1", "SpeechResult": "book a table"}, "menu", ""); self.assertEqual(calls, []); self.assertIn("Play", short)
+            long = r.agent.handle_call({"From": "+16465550142", "CallSid": "CD2", "SpeechResult": "I would like to book a table for four tomorrow at seven please"}, "menu", "")
+            self.assertEqual(len(calls), 1); self.assertIn("host will confirm", long.replace("&apos;", "'"))
+            keypad = r.agent.handle_call({"From": "+16465550142", "CallSid": "CD3"}, "menu", "2"); self.assertEqual(len(calls), 1)               # pressing a key never needs the AI
+        finally:
+            r.close()
+
+
+class PlainErrors(unittest.TestCase):
+    def test_connection_failures_say_what_to_check(self):
+        import smtplib
+        from speakvora_pack_agent import connect as SU, web
+        self.assertIn("password", SU._explain(smtplib.SMTPServerDisconnected("closed")))
+        self.assertIn("app password", SU._explain(smtplib.SMTPAuthenticationError(535, b"bad")))
+        self.assertIn("typos", SU._explain(web.NetworkDown("nodename nor servname provided")))
+        self.assertIn("check the key", SU._explain(web.HttpError(401, {})))

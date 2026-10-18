@@ -43,7 +43,7 @@ def pending(agent):
 
 
 def _key(agent=None):
-    """Your Speakvora API key: the SPEAKVORA_KEY environment variable, or the one typed into the dashboard (Connect, Your Speakvora account)."""
+    """Your Speakvora API key: the SPEAKVORA_KEY environment variable, or the one typed into the dashboard (Connect, Speakvora agent)."""
     v = os.environ.get("SPEAKVORA_KEY") or ""
     if not v and agent is not None:
         v = str(((agent.cfg.get("speakvora") or {}).get("api_key")) or "")

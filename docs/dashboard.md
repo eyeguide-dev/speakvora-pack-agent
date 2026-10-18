@@ -9,10 +9,10 @@ It is built so a business owner can set everything up alone: four places on a ba
 * **All caught up**, or the cards that need you: big **Approve** and **Decline** buttons for anything the agent is holding (and for each suggestion from your AI). **Remember my choice** does the same thing automatically next time (or never, if you declined). A message the agent could not confirm shows **It arrived** or **It did not: send again**; a failure shows **Try again** or **Dismiss** with the reason in plain words.
 * **Phrases to review**: drafts from your assistant waiting in the Library.
 * **Ask Speakvora**: a box to ask or tell your own AI something ("Summarize today", "Write phrases"). It only suggests.
-* **Latest activity**: calls, texts, orders and messages in plain sentences; **View all** filters by calls, texts, needed a person, orders and problems. Tap a call or text for its summary and (if switched on) its words.
+* **Latest activity**: calls, texts, orders and messages in plain sentences, with an **Insights** button (conversations, how many needed a person, texts your AI answered, how fast it answered, top topics and the questions it could not answer, for 7 or 30 days); **View all** filters by calls, texts, needed a person, orders and problems. Tap a call or text for its summary and (if switched on) its words.
 
 ## Connect: Apps, Assistant, Orders
-* **Apps**: what is connected (Twilio texts and calls, Slack, Google Calendar, your AI...), a search box, and every app you can add with a **Connect** button: Microsoft Teams, Email, tools such as Shopify, GitHub, PagerDuty, Stripe, Calendly and point of sale, and **My apps** (send to your own system, or let your system send events here). Tap a connected app to change or test it.
+* **Apps**: what is connected (Twilio texts and calls, Slack, Google Calendar, your AI...), a search box, and every app you can add with a **Connect** button: Microsoft Teams, Email, tools such as Shopify, GitHub, GitLab, PagerDuty, Stripe, Calendly and point of sale (each opens a step-by-step guide with your address, a secret to copy or paste, a **Save and test** button and a **Connected** state; see [tool-connections.md](tool-connections.md)), and **My apps** (send to your own system, or let your system send events here). Tap a connected app to change or test it.
 * **Assistant**: a chat with your own AI about your calls and texts, or to have it write phrases. It answers from short summaries (never the words said) and cannot send, change settings or approve anything. **What your assistant knows about your business**: the profile it learned (from your facts, workflow names and optional website and notes), for you to review, approve or forget. Needs your AI connected.
 * **Orders**: every order tracking link, saved for good: search by order number, **Active** and **Completed**, **Copy link**, **Open**, **History**, **Export** to a spreadsheet. **Tracking page appearance** turns the links on or off and sets what customers see (your business name, phone, hours); see [orders-and-private-records.md](orders-and-private-records.md).
 
@@ -21,11 +21,13 @@ Your phrases, organized: how many are **saved** and how many are **to review**.
 * **Saved**: every line your bundle can say (play any of them), your own lines first. A row of filters is always shown (All, Orders, Reservations, Hours & info, Payments, Greetings, Help & safety, Added by you); slide it sideways to see more. **Add your own phrases** (one per line, each voiced once, then free and instant) and **Suggest more with my AI**. **Missing phrases** opens the lines your workflows use that the bundle lacks, so Speakvora can write them.
 * **To review**: drafts from your assistant and lines your AI keeps repeating. Tick what you want and press **Add to library**; **x** removes a draft. See [smart-ai.md](smart-ai.md).
 
+* **Knowledge**: what your AI answers from. **Try it** (ask a question a customer would ask and see the answer and which source it came from), **Add knowledge** (upload a PDF, Word or text file, add your website, or paste text), **Questions it could not answer** (what customers asked that nothing covered, with an **Add answer** button) and every source, tap to read or remove it. See [knowledge.md](knowledge.md).
+
 ## Settings
 * **Ask before sending**: customer texts, phone calls, emails. Switch on and the agent shows each one on Home to approve first.
 * **AI controls**: **What your AI can do** (switch each action on or off, and choose "also tell my app"), **Go live**, **Answer texts** and **Answer calls** (shown as coming soon); **Built-in safeguards** (always on, plus your own limits and the monthly budget for new voiced lines).
 * **Location** (only with several locations): tap 1, 2, 3... to switch between them.
-* **Saved automations**, **Missing phrase requests**, **Locations & license** (commercial licence for several branches), **Speakvora account** (billing, renewals, updates).
+* **Saved automations**, **Missing phrase requests**, **Locations & license** (commercial licence for several branches), **Speakvora agent** (pair with a code; billing, renewals, updates).
 * **Your business details**, **Privacy & data** (transcripts of calls and texts, off by default, and how many days customer details stay), **Call handling controls** (the draft rules for your industry).
 * **Pause all sending**: stops every send until you resume. Nothing is lost.
 

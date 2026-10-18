@@ -27,7 +27,7 @@ def make_handler(agent):
             self.send_response(code); self.send_header("content-type", ctype); self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
 
         def _body(self):
-            n = min(int(self.headers.get("content-length") or 0), 200_000)
+            n = min(int(self.headers.get("content-length") or 0), 4_500_000 if self.path.split("?")[0] == "/dash/api/knowledge/upload" else 200_000)
             return self.rfile.read(n)
 
         def _public(self):
@@ -131,9 +131,16 @@ def make_handler(agent):
                     req = {"payload": json.loads(raw or b"{}") if raw.strip().startswith((b"{", b"[")) else {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace")).items()},
                            "headers": {k.lower(): v for k, v in self.headers.items()}, "query": {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}}
                     ev = sources.map_request(src, req)
+                    if src.get("name") and not src.get("name", "").startswith("custom-"):
+                        agent.state.data.setdefault("tool_seen", {})[src["name"]] = int(time.time()); agent.state.save()
                     if ev and src.get("as") == "sms":                              # any provider's inbound text: answered through your sms_provider
                         return self._send(200, {"replied": bool(agent.sms_via_provider(ev.get("from") or (ev.get("customer") or {}).get("phone"), ev.get("body", "")))})
                     return self._send(200, agent.handle_event(ev) if ev else {"ignored": True})
+                if p.startswith("/twilio/call/wait/") and re.fullmatch(r"[0-9a-f]{10}", p.rsplit("/", 1)[1]):
+                    params = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items()}
+                    if not agent.twilio.check_signature(self._public(), params, self.headers.get("X-Twilio-Signature", "")):
+                        return self._send(403, {"error": "bad_signature"})
+                    return self._send(200, agent.call_wait(p.rsplit("/", 1)[1], params), "text/xml")
                 if p in ("/twilio/sms", "/twilio/call", "/twilio/call/menu", "/twilio/call/menu2", "/twilio/call/menu3", "/twilio/status"):
                     params = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items()}
                     if not agent.twilio.check_signature(self._public(), params, self.headers.get("X-Twilio-Signature", "")):

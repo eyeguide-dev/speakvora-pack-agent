@@ -5,7 +5,7 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import activity as AC, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
+from . import activity as AC, knowledge as KN, converse as CVN, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
@@ -92,7 +92,7 @@ def summary(agent):
     st = agent.state; gaps = _gaps(agent); jobs = st.jobs()
     att = [j for j in jobs if j["status"] in ATTENTION][-30:][::-1]
     svc = [n for n in ("twilio", "slack", "teams", "email", "calendar") if SU.connected(agent, n)]
-    return {"setup": {"business": SU.connected(agent, "business"), "business_complete": bool(SU._real(agent.cfg.get("business")) and all(SU._real((agent.cfg.get("facts") or {}).get(k)) for k in ("hours", "address"))), "connected": len(svc), "services": svc, "ready": SU.readiness(agent)["ok"], "live": not agent.dry, "order_pages": SU.order_pages(agent)}, "update": sharing.update_info(agent), "now": int(agent.now()), "pack": {"title": agent.pack.meta.get("title"), "id": agent.pack.meta.get("pack"), "language": agent.pack.language, "lines": len(agent.pack.items), "profile": agent.profile, "version": agent.pack.meta.get("version")},
+    return {"setup": {"business": SU.connected(agent, "business"), "business_complete": bool(SU._real(agent.cfg.get("business")) and all(SU._real((agent.cfg.get("facts") or {}).get(k)) for k in ("hours", "address"))), "connected": len(svc), "services": svc, "account": SU.connected(agent, "account"), "ready": SU.readiness(agent)["ok"], "live": not agent.dry, "order_pages": SU.order_pages(agent)}, "update": sharing.update_info(agent), "now": int(agent.now()), "pack": {"title": agent.pack.meta.get("title"), "id": agent.pack.meta.get("pack"), "language": agent.pack.language, "lines": len(agent.pack.items), "profile": agent.profile, "version": agent.pack.meta.get("version")},
             "mode": "dry_run" if agent.dry else "live", "paused": agent.safe.killed(), "counts": st.job_counts(), "workflows": len(agent.workflows),
             "attention": [_job(j) for j in att], "recent": [_job(j) for j in jobs[-40:][::-1]],
             "coverage": {"needed": len(SL.needed_by(json.load(open(agent.cfg["workflows"], encoding="utf-8")))) if agent.cfg.get("workflows") else 0, "missing": gaps},
@@ -179,6 +179,26 @@ def handle(agent, method, path, headers, raw):
             out = SU.status(agent)
         elif p == "/dash/api/setup/save" and method == "POST":
             b = json.loads(raw or b"{}"); out = {"card": SU.save(agent, str(b.get("card", "")), b.get("values") or {})}
+        elif p == "/dash/api/setup/tool" and method == "GET":
+            out = SU.tool_view(agent, (parse_qs(u.query).get("name") or [""])[0])
+        elif p == "/dash/api/setup/tool/secret" and method == "POST":
+            out = SU.tool_secret(agent, str(json.loads(raw or b"{}").get("name", "")))
+        elif p == "/dash/api/setup/tool/save" and method == "POST":
+            b = json.loads(raw or b"{}"); out = SU.tool_save(agent, str(b.get("name", "")), b.get("secret", ""))
+        elif p == "/dash/api/setup/tool/test" and method == "POST":
+            out = SU.tool_test(agent, str(json.loads(raw or b"{}").get("name", "")))
+        elif p == "/dash/api/setup/tool/remove" and method == "POST":
+            out = SU.tool_remove(agent, str(json.loads(raw or b"{}").get("name", "")))
+        elif p == "/dash/api/voice/check" and method == "POST":
+            out = SU.voice_check(agent)
+        elif p == "/dash/api/setup/twilio/numbers" and method == "GET":
+            out = SU.twilio_numbers(agent)
+        elif p == "/dash/api/setup/twilio/point" and method == "POST":
+            out = SU.twilio_point(agent, json.loads(raw or b"{}").get("number"))
+        elif p == "/dash/api/setup/pair" and method == "POST":
+            out = SU.pair_agent(agent, json.loads(raw or b"{}").get("code"))
+        elif p == "/dash/api/setup/disconnect" and method == "POST":
+            out = SU.disconnect(agent, str(json.loads(raw or b"{}").get("card", "")))
         elif p == "/dash/api/setup/test" and method == "POST":
             b = json.loads(raw or b"{}"); out = SU.test(agent, str(b.get("card", "")), b.get("opts") or {})
         elif p == "/dash/api/setup/workflow" and method == "POST":
@@ -254,6 +274,28 @@ def handle(agent, method, path, headers, raw):
             out = BR.edit(agent, json.loads(raw or b"{}").get("profile"))
         elif p == "/dash/api/brain/forget" and method == "POST":
             out = BR.forget(agent)
+        elif p == "/dash/api/knowledge" and method == "GET":
+            out = KN.view(agent)
+        elif p == "/dash/api/knowledge/source" and method == "GET":
+            out = KN.preview(agent, (parse_qs(u.query).get("id") or [""])[0])
+        elif p == "/dash/api/knowledge/text" and method == "POST":
+            b = json.loads(raw or b"{}"); out = {"added": KN.add_text(agent, b.get("title"), b.get("text"), "note"), "view": KN.view(agent)}
+        elif p == "/dash/api/knowledge/qa" and method == "POST":
+            b = json.loads(raw or b"{}"); added = KN.add_qa(agent, b.get("question"), b.get("answer"))
+            import threading; threading.Thread(target=lambda: agent._ai_voice(added["a"]), daemon=True).start()          # voiced now, so a call plays it instantly
+            out = {"added": added, "view": KN.view(agent)}
+        elif p == "/dash/api/knowledge/upload" and method == "POST":
+            b = json.loads(raw or b"{}"); out = {"added": KN.add_file(agent, b.get("name"), b.get("data")), "view": KN.view(agent)}
+        elif p == "/dash/api/knowledge/site" and method == "POST":
+            out = {"added": KN.add_site(agent, json.loads(raw or b"{}").get("url")), "view": KN.view(agent)}
+        elif p == "/dash/api/knowledge/remove" and method == "POST":
+            KN.remove(agent, str(json.loads(raw or b"{}").get("id", ""))); out = KN.view(agent)
+        elif p == "/dash/api/knowledge/gap" and method == "POST":
+            KN.dismiss_gap(agent, str(json.loads(raw or b"{}").get("k", ""))); out = KN.view(agent)
+        elif p == "/dash/api/knowledge/try" and method == "POST":
+            out = CVN.try_it(agent, json.loads(raw or b"{}").get("question"))
+        elif p == "/dash/api/insights" and method == "GET":
+            out = AC.insights(agent, int((parse_qs(u.query).get("days") or ["7"])[0] or 7))
         elif p == "/dash/api/activity" and method == "GET":
             qs = parse_qs(u.query); out = AC.activity(agent, jobs_for_display(agent), (qs.get("kind") or [""])[0], int((qs.get("offset") or ["0"])[0] or 0))
         elif p == "/dash/api/phrases" and method == "GET":

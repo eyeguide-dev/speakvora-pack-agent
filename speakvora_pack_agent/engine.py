@@ -853,7 +853,9 @@ class Agent:
             self.state.opt_in(who); return "You are subscribed again. Reply STOP to unsubscribe."
         if low == "help":
             return self.cfg.get("help_text") or i18n.glue("help", self.lang)
-        for w in self.workflows:
+        from . import converse
+        ai_first = converse.enabled(self, "sms") and len(low.split()) >= 5                 # a detailed message goes to your AI; one or two words ("hours", "parking") still get the instant keyword answer
+        for w in ([] if ai_first else self.workflows):
             kw = self._triggers((w.get("on") or {}).get("sms"))
             if kw and any(i18n.matches(k, low, self.lang) for k in kw):
                 self._m()["wf"] = w["name"]
@@ -863,7 +865,62 @@ class Agent:
                 if not out["reply"]:
                     return ""
                 reply = self._sms_text(out["reply"], who); self.state.once(f"footer:{who}"); return reply
-        return ""
+        return self._ai_sms(who, body)
+
+    def _do_ai_actions(self, who, todo, channel):
+        """The actions your AI asked for (and you allowed): each goes through the same checks, quiet hours, limits and 'ask before sending' as any other action. Returns how many were handed on."""
+        if not todo:
+            return 0
+        from zoneinfo import ZoneInfo
+        n = 0
+        for a in todo:
+            ctx = self.ctx(customer={"phone": who, "sms_consent": True})
+            if a["type"] == "notify":
+                acts = [{"action": "slack", "channel": "#front", "text": "From the AI assistant (" + channel + " " + who[-4:].rjust(4, "*") + "): " + a["text"]}] if self.slack.configured else []
+                if getattr(self.teams, "configured", False):
+                    acts.append({"action": "teams", "text": "From the AI assistant: " + a["text"]})
+                if not acts:
+                    self.record("converse", "notify", "skipped", reason="no Slack or Teams connected"); continue
+            elif a["type"] == "sms":
+                acts = [{"action": "sms", "to": who, "text": a["text"], "raw": True}]
+            else:
+                try:
+                    tz = ZoneInfo(self.cfg.get("timezone") or "UTC"); d = dt.datetime.strptime(a["start"], "%Y-%m-%dT%H:%M").replace(tzinfo=tz)
+                except (ValueError, KeyError):
+                    continue
+                acts = [{"action": "calendar_create", "title": a["title"], "start": int(d.timestamp()), "minutes": a.get("minutes", 60), "description": a.get("text", "")}]
+            try:
+                self.run_actions("converse", acts, ctx); n += 1
+            except Exception as e:  # noqa: BLE001 - an action problem never breaks the conversation
+                self.state.log(workflow="converse", action=a["type"], status="error", dry_run=self.dry, error=str(e)[:120])
+        return n
+
+    def _ai_sms(self, who, body):
+        """No keyword workflow matched: when live conversation is on, your own AI answers this text (see converse.py). Practice mode records what it would have said and sends nothing."""
+        from . import converse
+        if not body or not converse.enabled(self, "sms"):
+            return ""
+        key = "sms:" + who; first = not converse._session(self, key, "sms")["turns"]
+        r = converse.turn(self, key, "sms", body); m = self._m(); m["wf"] = "sms_ai"
+        if r["action"] == "handoff":
+            m["outcome"] = "handoff"; m["handoff"] = True
+            person = next((w for w in self.workflows if w["name"] == "sms_person"), None)
+            reply = ""
+            if person:
+                ctx = self.ctx(sms={"from": who, "body": body}, customer={"phone": who, "sms_consent": True}); out = {"reply": "", "play": []}
+                self.run_actions(person["name"], person.get("do", []), ctx, out); reply = out["reply"]
+            reply = (converse.disclosure(self) if first else "") + (r["say"] if (r["say"] and not r.get("why")) else (reply or converse.HANDOFF_TEXT))        # the AI's own "I don't have that information, let me get someone" when it chose a person; the safe fixed wording when a check or limit did
+        elif r["say"]:
+            m["outcome"] = "answered"; reply = (converse.disclosure(self) if first else "") + r["say"]; self._do_ai_actions(who, r.get("do"), "text")
+            if r["action"] == "end":
+                m["outcome"] = "goodbye"
+        else:
+            return ""
+        if self.dry:
+            self.state.log(workflow="sms_ai", action="would_reply", status="dry_run", dry_run=True, to=who, text=reply[:160], why=r.get("why", ""))
+            return ""
+        self.state.log(workflow="sms_ai", action="reply", status="sent", dry_run=False, to=who, handoff=r["action"] == "handoff", why=r.get("why", ""), ai_ms=r.get("ai_ms"), prompt_chars=r.get("prompt_chars"))
+        reply = self._sms_text(reply, who); self.state.once(f"footer:{who}"); return reply
 
     def sms_via_provider(self, frm, body):
         """A text that arrived through a source mapping (any provider's webhook, not Twilio): answer it with the configured sms provider."""
@@ -899,7 +956,14 @@ class Agent:
         return str(v) if v else ("2" if self.profile in ("clinic", "pharmacy", "dispensary") else "auto")
 
     def _speech_on(self):
+        if self.pack.language == "en" and self._ai_calls():
+            return True
         return bool((self.cfg.get("twilio") or {}).get("speech_input")) and self.pack.language == "en"
+
+    def _ai_calls(self):
+        """Live AI conversation on calls: switched on in Settings, an AI connected, and an English bundle (other languages come later)."""
+        from . import converse
+        return self.pack.language == "en" and converse.enabled(self, "call")
 
     def _speech_hints(self, menu):
         if not self._speech_on():
@@ -944,6 +1008,8 @@ class Agent:
             return twiml_message("Sorry, nobody is available to take your call.").replace("<Message>", "<Say>").replace("</Message>", "</Say>")
         menu = wf["on"]["call"]["menu"]; base = self.cfg.get("public_base_url", "")
         ctx = self.ctx(call={"from": S.norm_phone(params.get("From", ""))}, customer={"phone": S.norm_phone(params.get("From", "")), "sms_consent": True})
+        if step == "start" and self._ai_calls():
+            return self._ai_greeting(menu, base)
         if step == "start":
             urls, hint, say = [], "", T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack)
             try:
@@ -978,8 +1044,12 @@ class Agent:
         if step == "menu" and not (digits or "").strip() and re.fullmatch(r"(yes|yeah|yep|yup|sure|please|ok|okay|yes please|i do|i have)", said or "x") and self._speech_on():      # "yes" to "anything else?": give the options again
             return twiml_menu([], f"{base}/twilio/call/menu", "", inner=self._vp("menu_ask_speech", self.SPEECH_ASK), speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
         digits = (digits or "").strip() or self._speech_choice(menu, said)
+        if digits not in ("", "0") and self._ai_calls() and len(said.split()) >= 6:        # a detailed request goes to your AI; a short one ("hours", "book a table") still gets the instant recorded answer
+            digits = ""
         if bye and not digits and step in ("menu", "menu2"):
             self._m()["outcome"] = "goodbye"; return "<Response>" + self._vp("call_goodbye", "Thanks for calling. Goodbye.") + "<Hangup/></Response>"
+        if said and (not digits or digits not in (menu.get("options") or {})) and self._ai_calls():           # nothing on the menu matched: your own AI answers, turn by turn
+            return self._talk(params, said)
         if not digits or digits not in (menu.get("options") or {}):
             if step in ("menu2", "menu3") and "0" in (menu.get("options") or {}):         # a second miss: do not leave the caller stuck, connect them to a person
                 digits = "0"
@@ -988,6 +1058,8 @@ class Agent:
         opt = (menu.get("options") or {}).get(digits)
         self._m()["digits"] = digits
         xfer = [a for a in opt if isinstance(a, dict) and a.get("action") == "transfer"]
+        if not xfer and digits == "0" and self._staff_phone(ctx):                  # a bundle built before staff transfer existed: option 0 still connects a person when a staff phone is set
+            xfer = [{"action": "transfer"}]
         opt = [a for a in opt if not (isinstance(a, dict) and a.get("action") == "transfer")]
         out = {"reply": "", "play": []}
         self.run_actions(wf["name"], opt, ctx, out)
@@ -1015,6 +1087,142 @@ class Agent:
             mode = (f' input="dtmf speech" speechTimeout="{self._speech_timeout()}" speechModel="phone_call"' + (' enhanced="true"' if self._speech_enhanced() else '') + f' bargeIn="true" hints={quoteattr(hints)}') if hints else ' input="dtmf"'
             return xml + f'<Gather{mode} numDigits="1" action={quoteattr(base + "/twilio/call/menu")} method="POST" timeout="' + ("10" if self._speech_on() else "6") + '">' + (self._vp("call_anything_else", "Is there anything else I can help with? You can speak, or use your keypad.") if self._speech_on() else "<Say>Is there anything else I can help with? Press 1 for hours, 2 to book, 3 for a status, or 0 for a person.</Say>") + '</Gather>' + self._vp("call_goodbye", "Thanks for calling. Goodbye.") + '<Hangup/></Response>'
         return xml + "<Hangup/></Response>"
+
+    # ---- live conversation on calls -------------------------------------------------------------------------------------------------------------
+    def _staff_phone(self, ctx):
+        """The staff phone number a person is connected to (facts.oncall_phone), or '' when it is not set."""
+        to = S.norm_phone(T.render("{{fact:oncall_phone}}", ctx, self.pack))
+        return to if to and "YOUR-" not in to and len(to) >= 8 else ""
+
+    def _gather_open(self, inner, base, timeout=8):
+        """An open microphone: the caller may speak at any time (even over the assistant) or press a key."""
+        from xml.sax.saxutils import quoteattr
+        return (f'<Gather input="dtmf speech" speechTimeout="{self._speech_timeout()}" speechModel="phone_call"' + (' enhanced="true"' if self._speech_enhanced() else '') + f' bargeIn="true" numDigits="1" action={quoteattr(base + "/twilio/call/menu")} method="POST" timeout="{timeout}">{inner}</Gather>')
+
+    def _ai_voice(self, text, wait_ok=True, keep=False):
+        """TwiML for one AI-written sentence in the bundle's own voice when it can be voiced in time, otherwise the phone provider's voice. Costs the owner's Speakvora characters (capped each month)."""
+        from xml.sax.saxutils import escape
+        from . import learned, guardrails as G
+        if not text:
+            return ""
+        try:
+            url = self.audio.cached_dynamic(text, keep)
+            if not url and wait_ok and learned.sharing._key(self):
+                cap = int({**G.DEFAULTS, **(self.cfg.get("guardrails") or {})}.get("talk_chars_per_month", 20000)); mk = learned.month_key(self)
+                spent = self.state.data.setdefault("talk_spent", {})
+                if int(spent.get(mk, 0)) + len(text) <= cap:
+                    data, ext = learned._voice(self, text); url = self.audio.put_dynamic(data, ext, text, keep); spent[mk] = int(spent.get(mk, 0)) + len(text); self.state.save()
+            if url:
+                return f"<Play>{escape(url)}</Play>"
+        except Exception as e:  # noqa: BLE001 - never leave a caller in silence because voicing failed
+            self.state.log(workflow="converse", status="voice_fallback", dry_run=False, error=str(e)[:120])
+        return f"<Say>{escape(text)}</Say>"
+
+    def _ai_greeting(self, menu, base):
+        from . import converse
+        self._warm_fillers()
+        text = f"Hi, thanks for calling {self.cfg.get('business') or 'us'}. {converse.disclosure(self).strip()} How can I help you today?"
+        url = self.audio.cached_dynamic(text)
+        if not url:
+            threading.Thread(target=lambda: self._ai_voice(text), daemon=True).start()          # voiced once in the background, so the next call hears the recording
+        inner = self._ai_voice(text, wait_ok=False)
+        return f"<Response>{self._gather_open(inner, base, 8)}{self._vp('call_goodbye', 'Thanks for calling. Goodbye.')}<Hangup/></Response>"
+
+    def _warm_fillers(self):
+        """Voices the short 'let me check that for you' lines once (kept on disk), so one can play the moment a caller stops talking while the AI works."""
+        from . import converse
+        if getattr(self, "_fillers_warm", False):
+            return
+        self._fillers_warm = True
+        def go():
+            for t in converse.FILLERS:
+                self._ai_voice(t, keep=True)
+        threading.Thread(target=go, daemon=True).start()
+
+    def _filler(self, key=""):
+        """TwiML for a short, natural 'let me check that' line. A different one each time in a call (never the same twice in a row, and none repeats until the others have been used)."""
+        from . import converse
+        from xml.sax.saxutils import escape
+        used = self.__dict__.setdefault("_fill_used", {}).setdefault(key, [])
+        left = [t for t in converse.FILLERS if t not in used] or [t for t in converse.FILLERS if t != (used[-1] if used else "")]
+        t = left[(int(time.time() * 1000) + len(used) * 7) % len(left)]; used.append(t)
+        if len(used) >= len(converse.FILLERS):
+            del used[:-1]
+        if len(self._fill_used) > 200:
+            self._fill_used.pop(next(iter(self._fill_used)))
+        url = self.audio.cached_dynamic(t, keep=True)
+        return f"<Play>{escape(url)}</Play>" if url else f"<Say>{escape(t)}</Say>"
+
+    def _talk(self, params, said):
+        """One spoken turn of a live conversation. The AI works in the background. If it is not ready within about half a second a short 'let me check that for you' plays (a different one each time), and the call waits on /twilio/call/wait/<id>, which chains another if the AI is still working: the line never goes quiet."""
+        from . import converse
+        key = "call:" + (params.get("CallSid") or S.norm_phone(params.get("From", "")))
+        self._warm_fillers()
+        pend = converse.Pending().run(lambda: self._talk_compute(key, said))
+        base = self.cfg.get("public_base_url", "")
+        if pend.wait(0.5):
+            return self._talk_xml(pend.result, params)
+        pid = converse.new_id(key); pending = self.__dict__.setdefault("_pending", {}); now = time.time()
+        for k in [k for k, v in pending.items() if now - v[1] > 120]:
+            pending.pop(k)
+        pending[pid] = [pend, now, params, 0, key]
+        return f'<Response>{self._filler(key)}<Redirect method="POST">{base}/twilio/call/wait/{pid}</Redirect></Response>'
+
+    def call_wait(self, pid, params=None):
+        """The second half of a slow AI turn: the answer if it is ready, otherwise another short filler (up to three), then a person."""
+        self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}
+        pending = self.__dict__.setdefault("_pending", {}); got = pending.get(pid)
+        if not got:
+            return self._handle_call(params or {}, "menu", "0")
+        pend, _t, p0, tries, ckey = got
+        if pend.wait(1.0 if tries == 0 else 2.0) and pend.result:
+            pending.pop(pid, None); xml = self._talk_xml(pend.result, p0)
+        elif tries < 2 and not pend.ev.is_set():
+            got[3] += 1; base = self.cfg.get("public_base_url", "")
+            return f'<Response>{self._filler(ckey)}<Redirect method="POST">{base}/twilio/call/wait/{pid}</Redirect></Response>'
+        else:
+            pending.pop(pid, None); xml = self._talk_xml({"say": "", "line": "", "action": "handoff", "why": "AI too slow"}, p0)
+        try:
+            from . import conversations as CV
+            m = self._m(); who = S.norm_phone(p0.get("From", ""))
+            CV.record(self, "call:" + (p0.get("CallSid") or who), "call", who, "", CV._spoken(self, xml), outcome=m.get("outcome"), handoff=bool(m.get("handoff")))
+        except Exception:  # noqa: BLE001
+            pass
+        return xml
+
+    def _talk_compute(self, key, said):
+        from . import converse
+        t0 = time.time(); r = converse.turn(self, key, "call", said); t1 = time.time()
+        if r["say"] and not r["line"] and r["action"] != "handoff":
+            r["xml"] = self._ai_voice(r["say"])
+            self.state.log(workflow="call_ai", action="turn", status="done", dry_run=False, ai_ms=r.get("ai_ms"), turn_ms=int((t1 - t0) * 1000), voice_ms=int((time.time() - t1) * 1000), instant=bool(r.get("instant")), handoff=False)
+        elif r["line"]:
+            from xml.sax.saxutils import escape
+            try:
+                r["xml"] = f"<Play>{escape(self.audio.url(r['line']))}</Play>"
+            except (PackError, AudioError):
+                r["xml"] = self._ai_voice(r["say"])
+        return r
+
+    def _talk_xml(self, r, params):
+        base = self.cfg.get("public_base_url", ""); m = self._m(); m["wf"] = "call_ai"
+        if r["action"] == "handoff":                                                       # a person: the menu's own zero option (staff transfer or call-back line)
+            m["outcome"] = "handoff"; m["handoff"] = True
+            lead = r.get("xml") or (self._ai_voice(r["say"]) if r["say"] else "")
+            inner = self._handle_call(params, "menu", "0")
+            if "<Dial" in inner:
+                return inner.replace("<Response>", "<Response>" + lead, 1)
+            to = self._staff_phone(self.ctx(call={"from": S.norm_phone(params.get("From", ""))}))
+            if to:                                                                        # the menu had no transfer: connect the staff phone directly
+                from xml.sax.saxutils import escape
+                self.record("converse", "transfer", "sent", to=to)
+                return f'<Response>{lead}{self._vp("handoff_person", "One moment please, I am connecting you to a team member.")}<Dial timeout="25" answerOnBridge="true"><Number>{escape(to)}</Number></Dial>{self._vp("call_transfer_busy", "Sorry, nobody is available right now. We will call you back as soon as we can.")}<Hangup/></Response>'
+            return inner.replace("<Response>", "<Response>" + lead, 1)
+        xml = r.get("xml") or self._ai_voice(r["say"])
+        m["outcome"] = "answered"; self._do_ai_actions(S.norm_phone(params.get("From", "")), r.get("do"), "call")
+        if r["action"] == "end":
+            m["outcome"] = "goodbye"; return f"<Response>{xml}{self._vp('call_goodbye', 'Thanks for calling. Goodbye.')}<Hangup/></Response>"
+        return f"<Response>{self._gather_open(xml, base, 8)}{self._vp('call_goodbye', 'Thanks for calling. Goodbye.')}<Hangup/></Response>"
 
     def handle_slack_command(self, form):
         cmd, text = form.get("command", ""), (form.get("text") or "").strip()

@@ -1,5 +1,7 @@
 # What the agent does today
 
+**New here? Start with [getting-started.md](getting-started.md) (A to Z). Connect every app: [connect-apps.md](connect-apps.md). Save money and cache phrases: [saving-money.md](saving-money.md). What was tested: [connection-tests.md](connection-tests.md).**
+
 A short map of everything in the agent, with where to read more. Everything runs on your own computer with your own accounts; the only things that ever reach Speakvora are the ones you switch on (listed in [security.md](security.md)).
 
 | What | In plain words | Read more |
@@ -9,6 +11,9 @@ A short map of everything in the agent, with where to read more. Everything runs
 | Safety | Dry run first, consent, STOP, quiet hours, limits, kill switch, a person always one request away | [safety.md](safety.md), [limits-and-control.md](limits-and-control.md) |
 | Offline and recovery | Actions wait for the internet and go out in order; every send is written down first | [offline-and-queue.md](offline-and-queue.md), [jobs-and-recovery.md](jobs-and-recovery.md) |
 | Phone calls | A menu callers can press or speak to (hours, book, status, person); two misses connect a person; emergencies and secrets handled | [industry-rules.md](industry-rules.md) |
+| Live conversation | Your own AI answers texts and calls in real time inside hard limits, with allowed actions, "let me check that" lines and instant answers | [live-conversation.md](live-conversation.md) |
+| Knowledge | Documents, website and exact answers your AI answers from; Try it; questions it could not answer | [knowledge.md](knowledge.md) |
+| Tool connections | GitHub, GitLab, PagerDuty, Stripe, Shopify, Calendly and point of sale: guide, secret, Save and test | [tool-connections.md](tool-connections.md) |
 | Smart AI | Your own AI learns your business (you review it), suggests actions and phrases, inside fixed limits | [smart-ai.md](smart-ai.md), [reasoning.md](reasoning.md) |
 | Your own phrases | Add lines in the Library box; repeated AI lines become library lines; a monthly budget caps spend | [smart-ai.md](smart-ai.md) |
 | Calls and texts view | Every conversation with its topics, outcome and summary; optional transcripts, cleaned and short-lived | [dashboard.md](dashboard.md) |

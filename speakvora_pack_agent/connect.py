@@ -33,7 +33,7 @@ CARDS = {
         ("auth_token", "Auth token", "secret", "twilio.auth_token", "TWILIO_AUTH_TOKEN", "Twilio console > Account info > Auth token (click to show)."),
         ("from_number", "Your Twilio phone number", "text", "twilio.from_number", None, "With the country code, for example +15551234567."),
     ]},
-    "slack": {"title": "Slack", "blurb": "Tells your team in Slack and lets staff use slash commands. A message needs the bot token; slash commands also need the signing secret and a public address.", "fields": [
+    "slack": {"title": "Slack", "blurb": "Tells your team in Slack when something needs them. Paste one webhook URL and you are done.", "fields": [
         ("bot_token", "Bot token", "secret", "slack.bot_token", "SLACK_BOT_TOKEN", "Slack app > OAuth & Permissions > Bot User OAuth Token (starts with xoxb-). Or use a webhook below."),
         ("channel", "Channel", "text", "slack.channel", None, "For example #general. Invite the bot to the channel first."),
         ("webhook_url", "Webhook URL (instead of a bot token; text only)", "secret", "slack.webhook_url", "SLACK_WEBHOOK_URL", "Slack app > Incoming Webhooks."),
@@ -52,17 +52,18 @@ CARDS = {
         ("password", "Password or app password", "secret", "email.password", "EMAIL_PASSWORD", "Gmail: Google Account > Security > App passwords."),
         ("from", "Send from", "text", "email.from", None, "For example: Bella <hello@bella.com>."),
     ]},
-    "account": {"title": "Your Speakvora account", "blurb": "Connects this agent to your Speakvora account so it can create your hosted order pages (the links customers open), voice new phrases and ask for missing lines. Only order numbers and steps are sent for order pages, never customer details.", "fields": [
+    "account": {"title": "Your Speakvora agent", "blurb": "Connects this agent to your Speakvora account so it can create your hosted order pages (the links customers open), voice new phrases and ask for missing lines. Only order numbers and steps are sent for order pages, never customer details.", "fields": [
         ("api_key", "Speakvora API key", "secret", "speakvora.api_key", "SPEAKVORA_KEY", "On speakvora.com open your account, Voice API tab, and create a key. Paste it here."),
     ]},
     "ai": {"title": "AI reasoning (your own key)", "blurb": "Lets the agent think about requests the rules cannot handle. It only proposes; you approve in Activity. You pay your AI provider, we charge nothing, and only what a workflow chooses is sent.", "fields": [
-        ("provider", "Which AI", "select", "reasoner.provider", None, "OpenAI-compatible covers OpenAI, Groq, Together, OpenRouter, Azure and others. Local keeps everything on this machine (for example Ollama)."),
-        ("base_url", "Server address (leave empty for OpenAI or Anthropic)", "url", "reasoner.base_url", None, "Local example: http://localhost:11434/v1"),
-        ("api_key", "Your API key", "secret", "reasoner.api_key", "AI_API_KEY", "From your AI provider's website. Not needed for a local model."),
-        ("model", "Model name", "text", "reasoner.model", None, "The model you want to use, exactly as your provider names it."),
+        ("provider", "Which AI", "select", "reasoner.provider", None, "Pick the company whose key you have."),
+        ("api_key", "Your API key", "secret", "reasoner.api_key", "AI_API_KEY", "Claude: console.anthropic.com, API keys. OpenAI: platform.openai.com, API keys. You pay them directly; we charge nothing."),
+        ("workspace_id", "Workspace ID (optional)", "text", "reasoner.workspace_id", None, "Only if Claude says your key is not tied to a workspace: the ID from console.anthropic.com, Settings, Workspaces."),
+        ("model", "Model", "text", "reasoner.model", None, "Pick a fast one for live answers: Claude Haiku (claude-haiku-5-5) or GPT-4o mini (gpt-4o-mini). Type the model name exactly as the company writes it."),
+        ("base_url", "Server address", "url", "reasoner.base_url", None, "Only for a local model or another company that works like OpenAI (Groq, Together, OpenRouter, Azure). Example: http://localhost:11434/v1. Leave empty for Claude and OpenAI."),
     ]},
 }
-SELECTS = {"provider": [("openai", "OpenAI-compatible (OpenAI, Groq, Together, OpenRouter...)"), ("anthropic", "Anthropic"), ("local", "Local model on this machine")], "mode": [("strict", "Careful"), ("standard", "Normal"), ("open", "Open (no limits)")]}
+SELECTS = {"provider": [("anthropic", "Claude (Anthropic)"), ("openai", "ChatGPT (OpenAI)"), ("local", "Another or local AI (needs a server address)")], "mode": [("strict", "Careful"), ("standard", "Normal"), ("open", "Open (no limits)")]}
 # which card a workflow action needs
 NEEDS = {"sms": "twilio", "call": "twilio", "slack": "slack", "teams": "teams", "notify": "slack", "email": "email", "calendar_create": "calendar", "reason": "ai"}
 TRIGGER_WORDS = {"event": "when your app sends this event", "calendar": "from your calendar", "sms": "when someone texts", "call": "when someone calls", "email": "when someone emails", "slack_command": "from a Slack command", "schedule": "every day"}
@@ -176,6 +177,22 @@ def status(agent):
             "has_public": _real(base), "slack_manifest": slack_manifest(agent) if connected(agent, "business") or True else None, "sources": sources(agent)}
 
 
+def disconnect(agent, card):
+    """Removes what was saved for one app, including its key from this computer's secrets file. The business details are never removed this way."""
+    if card not in CARDS or card == "business":
+        raise SetupError("That section cannot be removed.")
+    raw = _raw(agent); sd = agent.state.dir
+    for _k, _label, kind, path, env, _h in CARDS[card]["fields"]:
+        _set(raw, path, None)
+        if kind == "secret" and env:
+            SS.set_value(sd, env, "")
+    if card == "ai":
+        _set(raw, "reasoner.local", None); _set(raw, "reasoner", None)
+    _write_raw(agent, raw); _reload(agent)
+    agent.state.data.get("tested", {}).pop(card, None); agent.state.save()
+    return {"removed": card}
+
+
 def save(agent, card, values):
     if card not in CARDS:
         raise SetupError("Unknown section.")
@@ -240,7 +257,7 @@ def save(agent, card, values):
 
 def _explain(e):
     if isinstance(e, web.NetworkDown):
-        return "No internet connection from this machine right now."
+        return "Could not reach that address. Check it for typos, and that this computer is online."
     if isinstance(e, web.HttpError):
         if e.status in (401, 403):
             return "That was not accepted: check the key or token and try again."
@@ -248,12 +265,81 @@ def _explain(e):
             return "That address was not found: check it for typos."
         if e.status == 0:
             return "The server did not answer in time."
-        return f"The service answered with an error ({e.status})."
+        try:                                                                    # the provider's own plain-words reason, when it gives one (never the key)
+            body = e.body if isinstance(e.body, dict) else json.loads(e.body)
+            msg = str((body.get("error") or {}).get("message") or "")
+        except Exception:  # noqa: BLE001
+            msg = ""
+        if "workspace" in msg.lower():
+            return "This Claude key is not tied to a workspace. In console.anthropic.com create the key inside your Default workspace (or paste that workspace's ID under Advanced), then try again."
+        return f"The service answered with an error ({e.status})." + (" " + msg[:160] if msg else "")
+    if isinstance(e, smtplib.SMTPServerDisconnected):
+        return "The mail server hung up while signing in. That usually means the password is wrong or your provider needs an app password (Gmail, Yahoo and iCloud do)."
     if isinstance(e, smtplib.SMTPAuthenticationError):
         return "The mail server refused the username or password. For Gmail you need an app password."
     if isinstance(e, (smtplib.SMTPException, OSError, ssl.SSLError)):
         return "Could not reach the mail server: check the server name and port."
     return str(e)[:200] or "Something went wrong."
+
+
+def voice_check(agent):
+    """Voices one short line with the paired Speakvora key and returns it to play, plus this month's live-voice use. This is how the owner confirms speech generation is on."""
+    from . import learned, sharing
+    if not sharing._key(agent):
+        raise SetupError("Connect your Speakvora agent first (Connect tab, Speakvora agent): it holds the key that voices new lines.")
+    text = "This is a test of your voice. If you can hear this, speech generation is on."
+    try:
+        data, ext = learned._voice(agent, text)
+        url = agent.audio.put_dynamic(data, ext, text) if agent.audio.base else ""
+        if url:
+            url = "/audio/" + url.rsplit("/", 1)[1]
+        else:                                                                      # no public address yet: serve it from this computer's own cache
+            import hashlib
+            name = "talk_" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:14]; path = os.path.join(agent.audio.cache, name + ext)
+            with open(path, "wb") as f:
+                f.write(data)
+            url = "/audio/" + name + ".mp3" if ext == ".mp3" else ""
+    except Exception as e:  # noqa: BLE001
+        raise SetupError(_explain(e) if isinstance(e, (web.HttpError, web.NetworkDown)) else str(e)[:200])
+    from . import guardrails as G
+    mk = learned.month_key(agent); used = int((agent.state.data.get("talk_spent") or {}).get(mk, 0)); cap = int({**G.DEFAULTS, **(agent.cfg.get("guardrails") or {})}.get("talk_chars_per_month", 20000))
+    return {"ok": True, "url": url, "text": text, "live_chars_used": used, "live_chars_cap": cap, "library_chars": learned.budget(agent)}
+
+
+def twilio_numbers(agent):
+    """The phone numbers on the saved Twilio account, so the owner picks one instead of typing it. Needs the SID and token saved first."""
+    a = agent.twilio
+    if not (a.sid and a.token):
+        raise SetupError("Save your Account SID and Auth token first.")
+    try:
+        _st, r = web.request("GET", f"{a.base}/2010-04-01/Accounts/{a.sid}/IncomingPhoneNumbers.json?PageSize=50", a._auth())
+    except Exception as e:  # noqa: BLE001
+        raise SetupError(_explain(e))
+    nums = [{"number": x.get("phone_number", ""), "name": x.get("friendly_name", ""), "voice_url": x.get("voice_url", ""), "sms_url": x.get("sms_url", "")} for x in ((r or {}).get("incoming_phone_numbers") or [])]
+    if not nums:
+        raise SetupError("That Twilio account has no phone numbers yet. Buy one in Twilio first.")
+    return {"numbers": nums}
+
+
+def twilio_point(agent, number):
+    """Points a Twilio number's call and text webhooks at this agent's public address, so the owner never opens the Twilio console."""
+    a = agent.twilio; base = str(agent.cfg.get("public_base_url", "")).rstrip("/")
+    if not (_real(base) and base.startswith("https://")):
+        raise SetupError("Your agent has no public web address yet (Settings, Your business details). Twilio can only reach an address on the internet.")
+    number = str(number or "").replace(" ", "")
+    if not re.fullmatch(r"\+\d{8,15}", number):
+        raise SetupError("Choose one of your Twilio numbers.")
+    try:
+        _st, r = web.request("GET", f"{a.base}/2010-04-01/Accounts/{a.sid}/IncomingPhoneNumbers.json?PhoneNumber={quote(number)}", a._auth())
+        found = (r or {}).get("incoming_phone_numbers") or []
+        if not found:
+            raise SetupError(number + " is not a number on that Twilio account.")
+        web.request("POST", f"{a.base}/2010-04-01/Accounts/{a.sid}/IncomingPhoneNumbers/{found[0]['sid']}.json", a._auth(), form={"VoiceUrl": base + "/twilio/call", "VoiceMethod": "POST", "SmsUrl": base + "/twilio/sms", "SmsMethod": "POST"})
+    except SetupError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise SetupError(_explain(e))
+    return {"pointed": number, "calls": base + "/twilio/call", "texts": base + "/twilio/sms"}
 
 
 def test(agent, card, opts=None):
@@ -418,6 +504,27 @@ def order_pages(agent):
     return {"enabled": bool((agent.cfg.get("tracking") or {}).get("enabled")), "available": any("track" in _kinds(w) for w in _workflow_file(agent).get("workflows", [])), "needed": tracking_needed(agent), "complete": done, "missing": missing, "has_key": has_key, "hosted": hosted, "preview_url": (agent.state.data.get("order_pages") or {}).get("preview_url", "")}
 
 
+def pair_agent(agent, code):
+    """Swaps the short code from the account page (Connect my agent) for this agent's own Speakvora key and saves it. The key can speak (voice new lines, live answers) and make order pages."""
+    from . import sharing
+    code = re.sub(r"[^A-Za-z0-9-]", "", str(code or "")).upper()
+    if not re.fullmatch(r"SV-[A-Z0-9]{4}-[A-Z0-9]{4}", code):
+        raise SetupError("The code looks like SV-ABCD-EFGH. Make one on speakvora.com/account with Connect my agent.")
+    try:
+        st, r = web.request("POST", sharing.host() + "/api/v1/track/pair", body={"code": code}, timeout=15)
+    except web.HttpError as e:
+        body = e.body if isinstance(getattr(e, "body", None), dict) else {}
+        raise SetupError(body.get("detail") or "That code was not accepted. Make a new one in your account.")
+    except Exception:  # noqa: BLE001
+        raise SetupError("No internet connection right now. Try again when you are online.")
+    r = r if isinstance(r, dict) else {}
+    if not r.get("api_key"):
+        raise SetupError("Speakvora did not return a key. Make a new code and try again.")
+    save(agent, "account", {"api_key": r["api_key"]})
+    b = r.get("business") or {}
+    return {"paired": True, "kind": r.get("kind", "track"), "business": b.get("name") or ""}
+
+
 def pair_account(agent, code):
     """Swaps the short code from the account page for a key that can only create order pages, and fills in the business details the account already holds. Switches order pages on."""
     from . import sharing
@@ -494,17 +601,131 @@ def sources(agent):
     d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "sources"); have = {s.get("name") for s in agent.cfg.get("sources", [])}; out = []
     for f in sorted(os.listdir(d)):
         if f.endswith(".json"):
-            s = json.load(open(os.path.join(d, f), encoding="utf-8")); out.append({"name": s["name"], "added": s["name"] in have, "path": s.get("path", "")})
+            s = json.load(open(os.path.join(d, f), encoding="utf-8")); out.append({"name": s["name"], "file": f[:-5], "added": s["name"] in have, "path": s.get("path", "")})
     return out
 
 
 def add_source(agent, name):
-    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "sources", name + ".json")
-    if not re.fullmatch(r"[a-z0-9\-]+", name) or not os.path.exists(d):
-        raise SetupError("Unknown tool.")
-    src = json.load(open(d, encoding="utf-8")); raw = _raw(agent)
+    src = _source_def(name); raw = _raw(agent)
     raw["sources"] = [x for x in raw.get("sources", []) if x.get("name") != src["name"]] + [src]; _write_raw(agent, raw); _reload(agent)
     return {"added": src["name"], "path": src.get("path"), "auth": (src.get("auth") or {}).get("secret") or (src.get("auth") or {}).get("token") or ""}
+
+
+# ---- the tools that send events here: guided setup, secret, test, remove -------------------------------------------------------------------------------------------------------------------------
+def _source_def(name):
+    """A tool's definition by its file name or by the name inside it (the point-of-sale file is generic-pos, its name is pos)."""
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "sources")
+    if not re.fullmatch(r"[a-z0-9\-]+", str(name)):
+        raise SetupError("Unknown tool.")
+    for f in sorted(os.listdir(d)):
+        if f.endswith(".json"):
+            j = json.load(open(os.path.join(d, f), encoding="utf-8"))
+            if f[:-5] == name or j.get("name") == name:
+                return j
+    raise SetupError("Unknown tool.")
+
+
+def _secret_env(src):
+    a = src.get("auth") or {}; v = str(a.get("secret") or a.get("token") or "")
+    return v[4:] if v.startswith("env:") else ""
+
+
+def tool_view(agent, name):
+    from .toolguides import GUIDES
+    src = _source_def(name); g = GUIDES.get(name) or GUIDES.get(src["name"]) or {}
+    have = {s.get("name"): s for s in agent.cfg.get("sources", [])}; env = _secret_env(src)
+    base = str(agent.cfg.get("public_base_url", "")).rstrip("/"); public = _real(base) and base.startswith("https://")
+    seen = (agent.state.data.get("tool_seen") or {}).get(src["name"])
+    mode = g.get("mode", "generate"); secret_set = bool(env and SS.read(agent.state.dir).get(env))
+    ev = (src.get("map") or {}).get("event") or {}; says = g.get("says") or {}
+    return {"name": name, "title": g.get("title", name.title()), "added": src["name"] in have, "mode": mode, "secret_label": g.get("secret_label", "Secret"), "secret_set": secret_set,
+            "url": (base + src.get("path", "")) if public else "", "public": public, "where": g.get("where", ""), "steps": g.get("steps", []), "extra": g.get("extra", ""),
+            "events": [{"they": k, "we": v, "says": says.get(v, v)} for k, v in (ev.get("values") or {}).items()], "last_seen": seen}
+
+
+def tool_secret(agent, name):
+    """The secret this agent made for a tool (to paste into that tool). Only for tools where the agent makes it."""
+    from .toolguides import GUIDES
+    src = _source_def(name); g = GUIDES.get(name) or {}
+    if g.get("mode", "generate") != "generate":
+        raise SetupError("This tool shows you its own secret. Paste it into the box instead.")
+    return {"secret": SS.read(agent.state.dir).get(_secret_env(src), "")}
+
+
+def tool_save(agent, name, secret=""):
+    """Connects a tool: makes (or keeps) the secret, adds the source and returns the view. A tool that shows its own secret needs it pasted here."""
+    from .toolguides import GUIDES
+    src = _source_def(name); g = GUIDES.get(name) or {}; env = _secret_env(src); sd = agent.state.dir
+    if not env:
+        raise SetupError("That tool needs no secret.")
+    secret = str(secret or "").strip(); have = SS.read(sd).get(env, "")
+    if g.get("mode", "generate") == "paste":
+        if not secret and not have:
+            raise SetupError("Paste the secret " + g.get("title", name) + " showed you, then press Save and test.")
+        if secret:
+            if len(secret) < 8 or re.search(r"\s", secret):
+                raise SetupError("That does not look like a signing secret. Copy it again from " + g.get("title", name) + ".")
+            SS.set_value(sd, env, secret)
+    elif not have:
+        SS.set_value(sd, env, _rnd.token_urlsafe(24))
+    add_source(agent, name)
+    out = tool_view(agent, name)
+    if g.get("mode", "generate") == "generate":
+        out["secret"] = SS.read(sd).get(env, "")
+    return out
+
+
+def tool_test(agent, name):
+    """Checks the connection: the public address, the secret, and that a sample message from the tool is understood (and which of your workflows it would start)."""
+    from . import sources as SRC
+    v = tool_view(agent, name)
+    if not v["added"]:
+        return {"ok": False, "message": "Save it first."}
+    problems = []
+    if not v["public"]:
+        problems.append("Your agent has no public address yet, so " + v["title"] + " cannot reach it. Set it under Settings, Business details, or start a tunnel.")
+    if not v["secret_set"]:
+        problems.append("The secret is missing.")
+    src = next(s for s in agent.cfg.get("sources", []) if s.get("name") == _source_def(name)["name"])
+    first = (src.get("map", {}).get("event") or {}).get("values") or {}
+    k, we = next(iter(first.items()))
+    ev = src["map"]["event"]; req = {"payload": {}, "headers": {}, "query": {}}
+    if ev.get("template"):
+        t = ev["template"]
+        if name == "github":
+            req["headers"]["x-github-event"] = "workflow_run"; req["payload"] = {"action": "completed", "workflow_run": {"conclusion": "failure"}}; we = "pipeline.failed"
+        else:
+            req["headers"]["x-gitlab-event"] = "Pipeline Hook"; req["payload"] = {"object_attributes": {"status": "failed"}}; we = "pipeline.failed"
+    else:
+        path = str(ev.get("from", "")).split(".")
+        tgt = req
+        for i, part in enumerate(path):
+            if i == len(path) - 1:
+                tgt[part] = k
+            else:
+                tgt = tgt.setdefault(part, {})
+    got = SRC.map_request(src, req)
+    if not got or not got.get("event"):
+        problems.append("A sample message from " + v["title"] + " was not understood. This is a bug, please report it.")
+    elif got["event"] != we:
+        problems.append("A sample message was read as " + got["event"] + ", not " + we + ".")
+    wfs = sorted({w["name"] for w in (_workflow_file(agent).get("workflows") or []) if (w.get("on") or {}).get("event") == (got or {}).get("event")})
+    if problems:
+        return {"ok": False, "message": " ".join(problems)}
+    msg = "Connected. A sample " + v["title"] + " message is understood as “" + got["event"] + "”." + (" It starts: " + ", ".join(wfs) + "." if wfs else " None of your workflows use that event yet.")
+    msg += (" Last real message received " + time.strftime("%b %d, %H:%M", time.localtime(v["last_seen"])) + ".") if v["last_seen"] else " Waiting for the first real message from " + v["title"] + "."
+    agent.state.data.setdefault("tested", {})["tool:" + name] = int(time.time()); agent.state.save()
+    return {"ok": True, "message": msg, "event": got["event"], "workflows": wfs}
+
+
+def tool_remove(agent, name):
+    src = _source_def(name); raw = _raw(agent)
+    raw["sources"] = [x for x in raw.get("sources", []) if x.get("name") != src["name"]]; _write_raw(agent, raw)
+    env = _secret_env(src)
+    if env:
+        SS.set_value(agent.state.dir, env, "")
+    _reload(agent)
+    return {"removed": name}
 
 
 def slack_manifest(agent):
@@ -645,11 +866,13 @@ def set_workflow_targets(agent, name, ids):
 def catalog(agent):
     """Everything the + Add connection button offers."""
     have = {c["name"] for c in status_cards(agent)}
-    short = {"slack": "Tell your team and use slash commands", "teams": "Post to a Teams channel", "twilio": "Send texts and make calls", "calendar": "Reminders from your bookings", "email": "Send email from your mailbox", "ai": "Let it think, with your own key"}
-    tiles = [{"id": n, "kind": "service", "name": t, "blurb": short[n], "added": connected(agent, n)} for n, t in (("slack", "Slack"), ("teams", "Microsoft Teams"), ("twilio", "Texts and calls (Twilio)"), ("calendar", "Google or Outlook calendar"), ("email", "Email"), ("ai", "AI reasoning (your own key)"))]
+    short = {"slack": "Tell your team and use slash commands", "teams": "Post to a Teams channel", "twilio": "Send texts and make calls", "calendar": "Reminders from your bookings", "email": "Send email from your mailbox", "ai": "Let it think, with your own key", "account": "Pair with a code to voice new lines"}
+    tiles = [{"id": n, "kind": "service", "name": t, "blurb": short[n], "added": connected(agent, n)} for n, t in (("slack", "Slack"), ("teams", "Microsoft Teams"), ("twilio", "Texts and calls (Twilio)"), ("calendar", "Google or Outlook calendar"), ("email", "Email"), ("ai", "AI reasoning (your own key)"), ("account", "Speakvora agent"))]
     tools = {"shopify": "Shopify", "github": "GitHub", "gitlab": "GitLab", "pagerduty": "PagerDuty", "stripe": "Stripe", "calendly": "Calendly", "generic-pos": "Point of sale", "pos": "Point of sale"}
     for s in sources(agent):
-        tiles.append({"id": s["name"], "kind": "tool", "name": tools.get(s["name"], s["name"].title()), "blurb": "Start workflows when something happens", "added": s["added"]})
+        seen = (agent.state.data.get("tool_seen") or {}).get(s["name"])
+        tiles.append({"id": s["name"], "kind": "tool", "name": tools.get(s["name"], s["name"].title()), "added": s["added"],
+                      "blurb": (("Last message " + time.strftime("%b %d, %H:%M", time.localtime(seen))) if seen else "Waiting for the first message") if s["added"] else "Start workflows when something happens"})
     tiles.append({"id": "custom_out", "kind": "custom_out", "name": "Send to my own app", "blurb": "Post to your app's web address", "added": False})
     tiles.append({"id": "custom_in", "kind": "custom_in", "name": "Let my app send events here", "blurb": "An address your app, Zapier or Make can post to", "added": False})
     return tiles

@@ -42,17 +42,28 @@ def build_user(task, inputs, contacts, allow, channels, hosts, max_chars, redact
     return redact(body, redact_kinds)[:max_chars]
 
 
+def _post(url, headers, body, timeout):
+    """One model call. Newer models refuse a `temperature` setting; when the provider says so, the same call is repeated without it."""
+    try:
+        return web.request("POST", url, headers, body=body, timeout=timeout)
+    except web.HttpError as e:
+        for bad in ("temperature", "thinking"):
+            if bad in str(e).lower() and bad in body:
+                return _post(url, headers, {k: v for k, v in body.items() if k != bad}, timeout)
+        raise
+
+
 def _chat(cfg, system, user, max_tokens=None):
     prov = str(cfg.get("provider") or "openai").lower(); timeout = int(cfg.get("timeout", 45)); key = cfg.get("api_key", ""); mt = int(max_tokens or cfg.get("max_tokens", 900))
     if prov == "anthropic":
         base = str(cfg.get("base_url") or "https://api.anthropic.com").rstrip("/")
-        _st, r = web.request("POST", base + "/v1/messages", {"x-api-key": key, "anthropic-version": "2023-06-01"},
-                             body={"model": cfg["model"], "max_tokens": mt, "temperature": 0, "system": system, "messages": [{"role": "user", "content": user}]}, timeout=timeout)
-        return "".join(b.get("text", "") for b in (r or {}).get("content", []) if b.get("type") == "text"), (r or {}).get("usage") or {}
+        _st, r = _post(base + "/v1/messages", {"x-api-key": key, "anthropic-version": "2023-06-01", **({"anthropic-workspace-id": str(cfg["workspace_id"])} if cfg.get("workspace_id") else {})},
+                       {"model": cfg["model"], "max_tokens": mt, "temperature": 0, "thinking": {"type": "disabled"}, "system": system, "messages": [{"role": "user", "content": user}]}, timeout)
+        return "".join(b.get("text", "") for b in (r or {}).get("content", []) if b.get("type") == "text"), {**((r or {}).get("usage") or {}), "stop": (r or {}).get("stop_reason"), "blocks": [b.get("type") for b in (r or {}).get("content", [])]}
     base = str(cfg.get("base_url") or "https://api.openai.com/v1").rstrip("/")
     h = {"authorization": "Bearer " + key} if key else {}
-    _st, r = web.request("POST", base + "/chat/completions", h, body={"model": cfg["model"], "temperature": 0, "max_tokens": mt,
-                                                                       "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}, timeout=timeout)
+    _st, r = _post(base + "/chat/completions", h, {"model": cfg["model"], "temperature": 0, "max_tokens": mt,
+                                                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}, timeout)
     ch = ((r or {}).get("choices") or [{}])[0]
     return (ch.get("message") or {}).get("content") or "", (r or {}).get("usage") or {}
 

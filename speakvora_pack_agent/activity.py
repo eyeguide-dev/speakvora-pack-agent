@@ -77,3 +77,38 @@ def phrases(agent, q="", offset=0, limit=30, cat=""):
     rows.sort(key=lambda r: (not r["mine"], not r["workflow"]))
     groups = [{"key": "all", "label": "All", "n": counts.get("all", 0)}] + [{"key": k, "label": l, "n": counts.get(k, 0)} for k, l, _ in GROUPS] + [{"key": MINE[0], "label": MINE[1], "n": counts.get("mine", 0)}]
     return {"total": len(rows), "saved": len(agent.pack.items), "items": rows[offset:offset + limit], "groups": groups}
+
+
+def insights(agent, days=7):
+    """How the agent did over the last days: conversations by channel and outcome, how many the AI answered or handed to a person, how fast the AI answered, what it could not answer, and the top topics."""
+    import json, os
+    now = int(agent.now()); since = now - int(days) * 86400
+    c = CV._conn(agent)
+    chan = dict(c.execute("select channel, count(*) from conv where updated>=? group by channel", (since,)).fetchall())
+    outs = dict(c.execute("select outcome, count(*) from conv where updated>=? group by outcome", (since,)).fetchall())
+    total = sum(chan.values()); person = c.execute("select count(*) from conv where updated>=? and (handoff=1 or outcome in ('staff','handoff'))", (since,)).fetchone()[0]
+    topics = {}
+    for (it,) in c.execute("select intents from conv where updated>=?", (since,)).fetchall():
+        for t in json.loads(it or "[]"):
+            topics[t] = topics.get(t, 0) + 1
+    ai = {"answered": 0, "handed_off": 0, "ms": []}
+    try:
+        with open(agent.state.log_path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if d.get("t", 0) < since or d.get("workflow") != "sms_ai" or d.get("action") != "reply":
+                    continue
+                ai["handed_off" if d.get("handoff") else "answered"] += 1
+                if d.get("ai_ms"):
+                    ai["ms"].append(int(d["ai_ms"]))
+    except OSError:
+        pass
+    ms = sorted(ai["ms"]); med = ms[len(ms) // 2] if ms else None
+    from . import knowledge
+    kv = knowledge.view(agent)
+    return {"days": days, "conversations": total, "calls": chan.get("call", 0), "texts": chan.get("sms", 0), "needed_person": person, "person_pct": round(100 * person / total) if total else 0,
+            "ai_text_answers": ai["answered"], "ai_text_handoffs": ai["handed_off"], "ai_median_ms": med, "topics": sorted(topics.items(), key=lambda x: -x[1])[:6],
+            "gaps": [{"q": g["q"], "n": g["n"]} for g in kv["gaps"][:5]], "knowledge_sources": len(kv["sources"]), "outcomes": outs}

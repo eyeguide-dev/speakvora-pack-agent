@@ -53,12 +53,17 @@ def _find_or_create(agent, key, channel, who, now):
 def _spoken(agent, xml):
     """What a caller hears in a TwiML answer, as text: Say text as written, Play audio as the recording's own words."""
     out = []
-    for m in re.finditer(r"<Say>(.*?)</Say>|<Play>(.*?)</Play>", xml or "", re.S):
+    xml = xml or ""
+    if "</Gather>" in xml:                                                    # what follows the question only plays when nobody answers it (a goodbye): not part of what was said
+        xml = xml[:xml.rindex("</Gather>")]
+    for m in re.finditer(r"<Say>(.*?)</Say>|<Play>(.*?)</Play>", xml, re.S):
         if m.group(1) is not None:
             out.append(re.sub(r"&amp;", "&", re.sub(r"&lt;", "<", re.sub(r"&gt;", ">", m.group(1)))))
         else:
             mm = re.search(r"/audio/([^/.]+)\.", m.group(2))
             try:
+                if mm and mm.group(1).startswith(("talk_", "keep_")):
+                    out.append(agent.audio.dynamic_text(mm.group(1)) or "(a recorded line)"); continue
                 out.append(agent.pack.text(mm.group(1).replace("_", ":")) if mm else "(a recorded line)")
             except Exception:  # noqa: BLE001
                 out.append("(a recorded line)")
@@ -101,6 +106,11 @@ def _summary(c, cid, channel):
 
 
 def list_(agent, q="", kind="", offset=0, limit=40):
+    with _lock:                                                  # the connection is shared between request threads: reads wait for writes
+        return _list(agent, q, kind, offset, limit)
+
+
+def _list(agent, q="", kind="", offset=0, limit=40):
     c = _conn(agent); where, args = ["1=1"], []
     if kind in ("call", "sms"):
         where.append("channel=?"); args.append(kind)
@@ -117,6 +127,11 @@ def list_(agent, q="", kind="", offset=0, limit=40):
 
 
 def get(agent, cid):
+    with _lock:
+        return _get(agent, cid)
+
+
+def _get(agent, cid):
     c = _conn(agent); r = c.execute("select id, channel, who, started, updated, outcome, intents, summary, ai_summary from conv where id=?", (int(cid),)).fetchone()
     if not r:
         return None
