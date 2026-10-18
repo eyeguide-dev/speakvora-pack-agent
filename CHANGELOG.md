@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.22.1
+Easy start: double-click "Start Speakvora Agent" (Mac .command, Windows .bat) in the bundle, or run `sv-agent start`. It sets the agent up the first time, starts in practice mode and opens the dashboard in your browser; if Python is missing it opens the download page.
+
 ## 0.22.0
 Workflow builder: make your own "when this happens, do this" in Settings, AI controls, Workflows (a customer texts a word, something happens in your app, a booking is coming up, every day at a time; reply, text the customer, tell your team, email), with starter ideas, library lines, preview and plain-words errors. Your workflows live in agent-state/custom_workflows.json and your texted words always win. See docs/workflow-builder.md.
 

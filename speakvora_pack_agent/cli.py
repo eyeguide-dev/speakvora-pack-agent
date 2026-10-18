@@ -16,6 +16,7 @@ def main(argv=None):
     p = sub.add_parser("phrases", help="search the pack"); p.add_argument("words", nargs="*"); p.add_argument("--pack", default="./pack"); p.add_argument("--category", default="")
     i = sub.add_parser("init", help="write agent.json and workflows.json for this pack's industry"); i.add_argument("--pack", default="./pack"); i.add_argument("--force", action="store_true")
     i.add_argument("--mode", choices=["strict", "standard", "open"], default="standard", help="open = no per-person or hourly limits and no quiet hours (opt-outs, required notices and the kill switch stay on)")
+    i.add_argument("--quiet", action="store_true", help=argparse.SUPPRESS)
     dm = sub.add_parser("demo", help="a 30-second tour with no keys: fires a sample event in dry run, shows the text it would send and plays the recorded line"); dm.add_argument("-c", "--config", default="agent.json"); dm.add_argument("--silent", action="store_true", help="do not play audio")
     dc = sub.add_parser("doctor", help="check your setup and tell you what to fix next"); dc.add_argument("-c", "--config", default="agent.json")
     ev = sub.add_parser("events", help="list the events this pack reacts to, with ready-to-paste examples for curl, Python, Node, PHP, Ruby and Go"); ev.add_argument("-c", "--config", default="agent.json"); ev.add_argument("--lang", default="curl", choices=["curl", "python", "node", "php", "ruby", "go"])
@@ -27,6 +28,7 @@ def main(argv=None):
     jb = sub.add_parser("jobs", help="every send the agent made or waits to make: list, cancel, retry, mark sent"); jb.add_argument("action", choices=["list", "cancel", "retry", "mark-sent"]); jb.add_argument("id", nargs="?"); jb.add_argument("-c", "--config", default="agent.json")
     jb.add_argument("--status", default="", help="list only this status (pending, sending, queued, sent, delivered, undelivered, needs_review, failed, blocked, expired, cancelled)"); jb.add_argument("--confirm-not-sent", action="store_true", help="for retry of a needs_review job: you checked with the provider and it did NOT arrive")
     pr = sub.add_parser("proposals", help="what a reasoning step suggested: list, approve or reject (nothing runs until you approve)"); pr.add_argument("action", choices=["list", "approve", "reject"]); pr.add_argument("id", nargs="?"); pr.add_argument("--only", default="", help="comma-separated proposal numbers, for example 0,2"); pr.add_argument("-c", "--config", default="agent.json")
+    sa = sub.add_parser("start", help="the easy way: set everything up the first time, start the agent in practice mode and open the dashboard in your browser"); sa.add_argument("-c", "--config", default="agent.json"); sa.add_argument("--no-browser", action="store_true", help="do not open the browser")
     e = sub.add_parser("event", help="send a signed test event to a running agent"); e.add_argument("-c", "--config", default="agent.json"); e.add_argument("file"); e.add_argument("--url", default="")
     a = ap.parse_args(argv)
     if a.cmd == "phrases":
@@ -52,8 +54,29 @@ def main(argv=None):
             if os.path.exists(name) and not a.force:
                 print(f"{name} already exists (use --force to replace)"); continue
             json.dump(doc, open(name, "w", encoding="utf-8"), ensure_ascii=False, indent=1); print("wrote", name)
+        if a.quiet:
+            return 0
         print(f"industry profile: {prof}. Next: fill in the YOUR-... values in agent.json, then run:  python -m speakvora_pack_agent check")
         return 0
+    if a.cmd == "start":
+        import os, sys, urllib.request
+        if sys.version_info < (3, 9):
+            print("Speakvora Agent needs Python 3.9 or newer. Get it free at https://www.python.org/downloads/ and run this again."); return 1
+        if not os.path.exists(a.config):
+            print("First time here: setting up your agent for this bundle...")
+            if main(["init", "--pack", ".", "--quiet"]) != 0:
+                return 1
+        try:
+            lis = json.load(open(a.config, encoding="utf-8")).get("listen", {}); url = f"http://{lis.get('host', '127.0.0.1')}:{lis.get('port', 8787)}/dashboard"
+            urllib.request.urlopen(url, timeout=2)                          # something already answers here: it is probably this agent, so just open it
+            tok = open(os.path.join("agent-state", "dashboard-token"), encoding="utf-8").read().strip() if os.path.exists(os.path.join("agent-state", "dashboard-token")) else ""
+            print("Your agent is already running. Opening the dashboard.")
+            if not a.no_browser:
+                import webbrowser; webbrowser.open(url + ("#token=" + tok if tok else ""))
+            return 0
+        except Exception:  # noqa: BLE001 - nothing running yet (or not ours): start it below
+            pass
+        a.cmd, a.live, a.open = "run", False, not a.no_browser
     if a.cmd == "demo":
         from . import demo
         return demo.run(a.config, speak=not a.silent)
@@ -81,13 +104,17 @@ def main(argv=None):
     if a.cmd == "run":
         if a.live:
             cfg["dry_run"] = False
-        if cfg.get("_missing_env"):
+        if cfg.get("_missing_env") and not getattr(a, "open", False):
             print("not connected yet (open the dashboard's Connect tab to add them): " + ", ".join(cfg["_missing_env"]))
         ag = Agent(cfg)
         srv = serve(ag)
         from . import dashboard
         print(f"dashboard: http://{cfg['listen']['host']}:{cfg['listen']['port']}/dashboard#token={dashboard.token(ag)}   (open this address on this machine; the part after # is your access token)")
         print(f"speakvora-pack-agent {__version__} listening on {cfg['listen']['host']}:{cfg['listen']['port']}  | {'LIVE: sending for real' if not ag.dry else 'DRY RUN: nothing is sent'}  | log: {ag.state.log_path}")
+        if getattr(a, "open", False):
+            import threading, webbrowser
+            threading.Timer(1.0, webbrowser.open, [f"http://{cfg['listen']['host']}:{cfg['listen']['port']}/dashboard#token={dashboard.token(ag)}"]).start()
+            print("Opening your dashboard in the browser. Leave this window open while the agent runs; close it to stop.")
         try:
             srv.serve_forever()
         except KeyboardInterrupt:

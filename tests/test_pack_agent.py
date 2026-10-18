@@ -189,6 +189,36 @@ class PackFiles(unittest.TestCase):
         os.remove(os.path.join(r.tmp, "pack", "w02.mp3")); self.assertIn("w02", Agent(config.load(os.path.join(r.tmp, "agent.json")), now=lambda: NOON).pack.missing_audio()); r.close()
 
 
+class EasyStart(unittest.TestCase):
+    def test_start_sets_itself_up_runs_in_practice_mode_and_needs_no_flags(self):
+        from speakvora_pack_agent import cli
+        import speakvora_pack_agent.cli as C
+        r = Rig(); home = os.path.join(r.tmp, "bundle"); shutil.copytree(os.path.join(r.tmp, "pack"), home); old = os.getcwd(); os.chdir(home)
+        class Srv:
+            def serve_forever(self): raise KeyboardInterrupt
+        real = C.serve; C.serve = lambda ag: Srv(); realopen = urllib.request.urlopen
+        def nothing_there(*a, **k): raise OSError("nothing is running")
+        urllib.request.urlopen = nothing_there
+        try:
+            self.assertFalse(os.path.exists("agent.json"))
+            self.assertEqual(cli.main(["start", "--no-browser"]), 0)
+            self.assertTrue(os.path.exists("agent.json") and os.path.exists("workflows.json"))
+            self.assertTrue(json.load(open("agent.json")).get("dry_run", True))
+            self.assertEqual(cli.main(["start", "--no-browser"]), 0)                                      # second time: nothing is overwritten
+        finally:
+            C.serve = real; urllib.request.urlopen = realopen; os.chdir(old); r.close()
+
+    def test_double_click_launchers_ship_in_every_bundle(self):
+        sys.path.insert(0, os.path.join(ROOT, "..", "scripts"))
+        import pack_kit, subprocess
+        f = pack_kit.extra_files("en-food-test", "en", "af_heart", "food")
+        mac, win = f["Start Speakvora Agent.command"], f["Start Speakvora Agent.bat"]
+        self.assertTrue(mac.startswith(b"#!/bin/sh")); self.assertIn(b"speakvora_pack_agent start", mac); self.assertIn(b"python.org/downloads", mac)
+        self.assertIn(b"\r\n", win); self.assertIn(b"speakvora_pack_agent start", win); self.assertIn(b"python.org/downloads", win)
+        p = os.path.join(tempfile.mkdtemp(), "x.sh"); open(p, "wb").write(mac); self.assertEqual(subprocess.run(["sh", "-n", p]).returncode, 0)
+        self.assertIn(b"Start Speakvora Agent", f["AGENT-README.md"])
+
+
 class Slots(unittest.TestCase):
     def test_existing_phrase_fills_a_slot_and_the_rest_are_reported(self):
         from speakvora_pack_agent import slots as SL

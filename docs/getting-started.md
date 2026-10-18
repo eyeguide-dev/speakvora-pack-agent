@@ -3,9 +3,12 @@
 Everything you need, in the order you need it. Everything runs on your own computer; the only things that reach Speakvora are the ones you switch on.
 
 ## 1. Run the agent
-1. Unzip your bundle. Open a Terminal in that folder and run `./sv-agent run` (Windows: `sv-agent.cmd run`).
-2. It prints a dashboard address ending in `#token=...`. Open it in your browser. The part after `#` is your private access token: keep the address private (it is also saved in `agent-state/dashboard-token`). The dashboard only works on this computer.
-3. The agent starts in **practice mode**: it records what it would do and sends nothing, until you press **Go live** (top right).
+1. Install Python 3.9 or newer if you do not have it (free, python.org/downloads; on Windows tick **Add Python to PATH**).
+2. Unzip your bundle and **double-click `Start Speakvora Agent.command`** (Mac) or **`Start Speakvora Agent.bat`** (Windows). It sets itself up the first time and **opens your dashboard in the browser**. Leave the window open while the agent runs; close it to stop. Start it again the same way any day.
+   * Mac says it cannot open the file? Right-click it, choose **Open**, then **Open**.
+   * Linux or Terminal: `sh sv-agent start` does the same.
+3. Keep the dashboard address private (it ends in `#token=...` and is saved in `agent-state/dashboard-token`). The dashboard only works on this computer.
+4. The agent starts in **practice mode**: it records what it would do and sends nothing, until you press **Go live** (top right).
 
 ## 2. The dashboard map
 ![Home: today at a glance, Finish setting up, activity and Insights](https://speakvora.com/assets/guide/home.png)
