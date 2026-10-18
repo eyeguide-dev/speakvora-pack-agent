@@ -5,7 +5,7 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import simulate as SIM, builder as BD, activity as AC, knowledge as KN, converse as CVN, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
+from . import audit as AU, simulate as SIM, builder as BD, activity as AC, knowledge as KN, converse as CVN, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
@@ -138,6 +138,9 @@ def jobs_for_display(agent):
     return [_job(j) for j in agent.state.jobs(None)][-300:][::-1]
 
 
+VIEW_OK = ("/dash/api/summary", "/dash/api/jobs", "/dash/api/activity", "/dash/api/insights", "/dash/api/library", "/dash/api/learned", "/dash/api/phrases")
+
+
 def handle(agent, method, path, headers, raw):
     """Returns (status, body bytes, content type, extra headers)."""
     u = urlparse(path); p = u.path
@@ -145,9 +148,23 @@ def handle(agent, method, path, headers, raw):
     if p == "/dashboard" and method == "GET":
         return 200, PAGE.encode(), "text/html; charset=utf-8", hdr
     given = {k.lower(): v for k, v in headers.items()}.get("x-dashboard-token", "")
-    if not hmac.compare_digest(given.encode(), token(agent).encode()):
+    role = "owner" if hmac.compare_digest(given.encode(), token(agent).encode()) else None
+    vt = AU.viewer_token(agent) if role is None else ""
+    if role is None and vt and hmac.compare_digest(given.encode(), vt.encode()):
+        role = "viewer"
+    if role is None:
         return 401, b'{"error":"bad_token"}', "application/json", hdr
+    if role == "viewer" and not (method == "GET" and (p in VIEW_OK or p == "/dash/api/me")):
+        return 403, json.dumps({"error": "view_only", "message": "You have view-only access. Ask the owner to make this change."}).encode(), "application/json", hdr
     try:
+        if p == "/dash/api/me" and method == "GET":
+            return 200, json.dumps({"role": role}).encode(), "application/json", hdr
+        if p == "/dash/api/audit" and method == "GET":
+            return 200, json.dumps(AU.view(agent)).encode(), "application/json", hdr
+        if p == "/dash/api/viewer" and method == "POST":
+            b = json.loads(raw or b"{}"); out = AU.set_viewer(agent, bool(b.get("on")), bool(b.get("rotate")))
+            AU.record(agent, role, method, p)
+            return 200, json.dumps(out).encode(), "application/json", hdr
         if p == "/dash/api/summary" and method == "GET":
             out = summary(agent)
         elif p == "/dash/api/jobs" and method == "GET":
@@ -384,6 +401,11 @@ def handle(agent, method, path, headers, raw):
         return 409, json.dumps({"error": "not_allowed", "message": str(e)}).encode(), "application/json", hdr
     except (ValueError, KeyError) as e:         # LocationError and SetupError are ValueErrors
         return 400, json.dumps({"error": "bad_request", "message": str(e)}).encode(), "application/json", hdr
+    if method != "GET":
+        try:
+            AU.record(agent, role, method, p)
+        except Exception:  # noqa: BLE001 - the log never stops a change
+            pass
     return 200, json.dumps(out).encode(), "application/json", hdr
 
 

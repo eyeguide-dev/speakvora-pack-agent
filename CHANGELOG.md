@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.25.0
+Activity log (Settings): every change made in the dashboard, by whom and when, without what you typed. View-only access: a separate code that can look at Home, activity and the library but cannot change anything. See docs/roles-and-activity-log.md.
+
 ## 0.24.0
 Write for me: in Library, Add your own phrases, describe when you would say a line and your own AI writes a few options; nothing is voiced or added until you press Add. See docs/smart-ai.md.
 

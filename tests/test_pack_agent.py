@@ -552,6 +552,18 @@ class Dashboard(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}"), dict(e.headers)
 
+    def test_changes_are_logged_without_what_you_typed_and_view_only_access_cannot_change_anything(self):
+        st, o, _h = self.call("POST", "/dash/api/workflows/save", {"spec": {"name": "Menu by text", "trigger": {"type": "sms_keywords", "keywords": "secretword123"}, "steps": [{"type": "reply", "text": "Hello from {{business}}"}]}}); self.assertEqual(st, 200)
+        st, a, _h = self.call("GET", "/dash/api/audit"); self.assertEqual(st, 200); self.assertEqual(a["entries"][0]["what"], "Saved a workflow"); self.assertEqual(a["entries"][0]["who"], "owner"); self.assertNotIn("secretword123", json.dumps(a)); self.assertFalse(a["viewer"]["on"])
+        self.call("POST", "/dash/api/simulate", {"text": "what are your hours"}); self.assertEqual(self.call("GET", "/dash/api/audit")[1]["entries"][0]["what"], "Saved a workflow")          # looking around is not a change
+        st, v, _h = self.call("POST", "/dash/api/viewer", {"on": True}); self.assertEqual(st, 200); vt = v["token"]; self.assertEqual(len(vt), 32)
+        vh = {"x-dashboard-token": vt}
+        self.assertEqual(self.call("GET", "/dash/api/summary", tok=False, headers=vh)[0], 200); self.assertEqual(self.call("GET", "/dash/api/me", tok=False, headers=vh)[1]["role"], "viewer")
+        for method, path in (("POST", "/dash/api/pause"), ("POST", "/dash/api/workflows/save"), ("GET", "/dash/api/audit"), ("GET", "/dash/api/setup"), ("POST", "/dash/api/viewer"), ("GET", "/dash/api/conversations")):
+            st, o, _h = self.call(method, path, {}, tok=False, headers=vh); self.assertEqual(st, 403, path); self.assertEqual(o["error"], "view_only")
+        st, v2, _h = self.call("POST", "/dash/api/viewer", {"on": True, "rotate": True}); self.assertNotEqual(v2["token"], vt); self.assertEqual(self.call("GET", "/dash/api/summary", tok=False, headers=vh)[0], 401)       # a new code ends the old one
+        self.call("POST", "/dash/api/viewer", {"on": False}); self.assertEqual(self.call("GET", "/dash/api/summary", tok=False, headers={"x-dashboard-token": v2["token"]})[0], 401)
+
     def test_page_is_public_but_every_api_call_needs_the_token(self):
         st, page, hdr = self.call("GET", "/dashboard", tok=False); self.assertEqual(st, 200); self.assertIn("speakvora", page); self.assertIn("Your voice bundle", page); self.assertIn("default-src 'none'", hdr["content-security-policy"]); self.assertNotIn("http://", page.replace("http://127", "").replace("http://www.w3.org/2000/svg", ""))
         self.assertEqual(self.call("GET", "/dash/api/summary", tok=False)[0], 401); self.assertEqual(self.call("GET", "/dash/api/summary", tok=False, headers={"x-dashboard-token": "nope"})[0], 401)
