@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.22.0
+Workflow builder: make your own "when this happens, do this" in Settings, AI controls, Workflows (a customer texts a word, something happens in your app, a booking is coming up, every day at a time; reply, text the customer, tell your team, email), with starter ideas, library lines, preview and plain-words errors. Your workflows live in agent-state/custom_workflows.json and your texted words always win. See docs/workflow-builder.md.
+
 ## 0.21.0
 Everything from the live tests. Your AI answers texts and calls in real time (long requests go to the AI, short ones keep the instant menu answer), says "I don't have that information. Let me get someone to help you." instead of guessing, and a request for a person always dials your staff phone (also in bundles built before the transfer step). More natural "let me check that" lines (including "hmm"), instant answers in your own words, documents (attach a file with the paperclip, PDF read with pdftotext when installed), menu prices in plain numbers are approved. Connect is simple: pair with a code from speakvora.com/account (Speakvora agent), Your AI is one form (Claude, ChatGPT or Other) with Remove, Slack is one webhook URL, Email is provider plus app password, Twilio finds your numbers and points one at your agent, tools (GitHub, GitLab, PagerDuty, Stripe, Shopify, Calendly, point of sale) have guides with Save and test, plain error messages. Test my voice, Insights, AI actions (tell the team, text a confirmation) offered only when they can run, live answers cached for 30 days. New guides: getting-started, connect-apps, saving-money, connection-tests.
 

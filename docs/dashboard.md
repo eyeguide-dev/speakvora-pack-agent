@@ -25,7 +25,7 @@ Your phrases, organized: how many are **saved** and how many are **to review**.
 
 ## Settings
 * **Ask before sending**: customer texts, phone calls, emails. Switch on and the agent shows each one on Home to approve first.
-* **AI controls**: **What your AI can do** (switch each action on or off, and choose "also tell my app"), **Go live**, **Answer texts** and **Answer calls** (shown as coming soon); **Built-in safeguards** (always on, plus your own limits and the monthly budget for new voiced lines).
+* **AI controls**: **Workflows** (make your own "when this happens, do this", or switch the ready-made ones on and off; see [workflow-builder.md](workflow-builder.md)), **Go live**, **Test my voice**, **Answer texts** and **Answer calls** (shown as coming soon); **Built-in safeguards** (always on, plus your own limits and the monthly budget for new voiced lines).
 * **Location** (only with several locations): tap 1, 2, 3... to switch between them.
 * **Saved automations**, **Missing phrase requests**, **Locations & license** (commercial licence for several branches), **Speakvora agent** (pair with a code; billing, renewals, updates).
 * **Your business details**, **Privacy & data** (transcripts of calls and texts, off by default, and how many days customer details stay), **Call handling controls** (the draft rules for your industry).

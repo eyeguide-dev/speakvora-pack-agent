@@ -46,32 +46,35 @@ Settings, **AI controls**, **Test my voice** confirms new lines are being voiced
 * **Connect, Assistant**: **What your assistant knows about your business** (the profile it learned: review, approve or forget).
 * **Library**: add your own phrases (each is voiced once, then plays free) and review drafts. See [smart-ai.md](smart-ai.md).
 
-## 6. Let your AI answer texts and calls
+## 6. Make your own workflows
+Settings, AI controls, **Workflows**, **New workflow**: pick when (a customer texts a word, something happens in your app, a booking is coming up, a time of day) and what to do (reply, text the customer, tell your team, email). Preview it, save it, done. See [workflow-builder.md](workflow-builder.md).
+
+## 7. Let your AI answer texts and calls
 Settings, **AI controls**: switch on **Answer texts** and/or **Answer calls**. Allow actions (tell the team, text a confirmation, add a booking) under **Built-in safeguards**. Start in practice mode. Everything it will and will not do is in [live-conversation.md](live-conversation.md) and [safety.md](safety.md).
 
-## 7. Go public (so Twilio and the tools can reach you)
+## 8. Go public (so Twilio and the tools can reach you)
 Twilio and the tools you connect send messages to an address on the internet. You need a public address for this computer:
 * **Quick test**: `cloudflared tunnel --url http://127.0.0.1:8787` prints an `https://....trycloudflare.com` address (it changes every time).
 * **Permanent**: a server or your own domain. Put the address under Settings, Your business details, Public address, and press **Check my public address**.
 Then in Twilio set your number's **Voice** webhook to `<address>/twilio/call` and **Messaging** webhook to `<address>/twilio/sms` (POST). The dashboard's Twilio form shows both.
 
-## 8. Test it end to end
+## 9. Test it end to end
 1. **Texts**: text your number "do you have outdoor seating". The first reply says it is the automated assistant. Check Home, Latest activity.
 2. **Calls**: call your number, ask something that is not on the menu. A short "let me check that" line plays, then the answer. Say "I want to speak to a person": it connects your staff phone (Twilio form, staff phone).
 3. **Tools**: open a tool (for example GitHub) and press **Save and test**; then send a test event from that tool.
 4. **Insights** (Home) shows counts, speed and the questions it could not answer; add answers in Library, Knowledge.
 5. When happy, press **Go live**.
 
-## 9. Orders and tracking links
+## 10. Orders and tracking links
 Connect, Orders: every customer tracking link, searchable, with Copy link, History and Export. Set the page's look under **Tracking page appearance**. See [orders-and-private-records.md](orders-and-private-records.md).
 
-## 10. Several locations
+## 11. Several locations
 One licence per location, one shared dashboard with a location switcher. See [multi-location.md](multi-location.md).
 
-## 11. Safety, privacy and limits
+## 12. Safety, privacy and limits
 Practice mode first; consent, STOP, quiet hours and limits on every send; emergencies, secrets and "a person please" never reach the AI; customer details removed after the days you choose; the pause button stops everything. See [safety.md](safety.md), [security.md](security.md), [limits-and-control.md](limits-and-control.md), [jobs-and-recovery.md](jobs-and-recovery.md).
 
-## 12. When something does not work
+## 13. When something does not work
 | Symptom | What to check |
 |---|---|
 | A form says "not accepted" | The key or token is wrong or expired: copy it again, press Save and test |

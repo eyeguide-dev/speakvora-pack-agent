@@ -11,6 +11,7 @@ A short map of everything in the agent, with where to read more. Everything runs
 | Safety | Dry run first, consent, STOP, quiet hours, limits, kill switch, a person always one request away | [safety.md](safety.md), [limits-and-control.md](limits-and-control.md) |
 | Offline and recovery | Actions wait for the internet and go out in order; every send is written down first | [offline-and-queue.md](offline-and-queue.md), [jobs-and-recovery.md](jobs-and-recovery.md) |
 | Phone calls | A menu callers can press or speak to (hours, book, status, person); two misses connect a person; emergencies and secrets handled | [industry-rules.md](industry-rules.md) |
+| Workflow builder | Make your own "when this happens, do this" in the dashboard: texts, app events, bookings, daily; reply, text, tell your team, email | [workflow-builder.md](workflow-builder.md) |
 | Live conversation | Your own AI answers texts and calls in real time inside hard limits, with allowed actions, "let me check that" lines and instant answers | [live-conversation.md](live-conversation.md) |
 | Knowledge | Documents, website and exact answers your AI answers from; Try it; questions it could not answer | [knowledge.md](knowledge.md) |
 | Tool connections | GitHub, GitLab, PagerDuty, Stripe, Shopify, Calendly and point of sale: guide, secret, Save and test | [tool-connections.md](tool-connections.md) |

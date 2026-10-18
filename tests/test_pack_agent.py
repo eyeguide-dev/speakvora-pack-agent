@@ -2252,7 +2252,7 @@ class AssistantBox(unittest.TestCase):
 class DashboardDesign(unittest.TestCase):
     def test_the_page_has_the_four_places_and_the_screens_the_owner_asked_for(self):
         from speakvora_pack_agent import ui
-        for s in ("Your day, at a glance", "Ask Speakvora", "Latest activity", "Find an app", "AI controls", "What your AI can do", "Order tracking", "Tracking page appearance", "Your phrases, organized.", "New phrase drafts", "Add to library", "Missing phrases", "Ask before sending", "Built-in safeguards", "Saved automations", "Locations & license", "Pause all sending"):
+        for s in ("Your day, at a glance", "Ask Speakvora", "Latest activity", "Find an app", "AI controls", "Workflows", "Order tracking", "Tracking page appearance", "Your phrases, organized.", "New phrase drafts", "Add to library", "Missing phrases", "Ask before sending", "Built-in safeguards", "Saved automations", "Locations & license", "Pause all sending"):
             self.assertIn(s, ui.PAGE, s)
         for tab in ("['home','Home'", "['connect','Connect'", "['library','Library'", "['settings','Settings'"):
             self.assertIn(tab, ui.PAGE)
@@ -2729,3 +2729,71 @@ class PlainErrors(unittest.TestCase):
         self.assertIn("app password", SU._explain(smtplib.SMTPAuthenticationError(535, b"bad")))
         self.assertIn("typos", SU._explain(web.NetworkDown("nodename nor servname provided")))
         self.assertIn("check the key", SU._explain(web.HttpError(401, {})))
+
+
+class WorkflowBuilder(unittest.TestCase):
+    def test_a_workflow_made_in_the_dashboard_runs_like_a_ready_made_one(self):
+        from speakvora_pack_agent import builder as BD
+        r = Rig()
+        try:
+            w = BD.save(r.agent, {"name": "Menu by text", "trigger": {"type": "sms_keywords", "keywords": "Menu, specials"}, "steps": [{"type": "reply", "text": "Hi from {{business}}! Our hours: {{fact:hours}}."}, {"type": "notify", "text": "Menu asked: {{sms.body}}"}]})
+            self.assertEqual(w["when"], "Someone texts “menu” or “specials”")
+            out = r.agent.handle_sms({"From": "+16465550142", "Body": "can I see the menu please"}); self.assertIn("Hi from Bella! Our hours: Tue-Sun 5-10 PM.", out)       # variables are filled in, and the STOP footer is added
+            self.assertEqual(len(r.mock.calls("chat.postMessage")), 1)
+            e = BD.save(r.agent, {"name": "Thanks after visit", "trigger": {"type": "event", "event": "visit.done"}, "steps": [{"type": "sms", "text": "Thanks {{customer.name}}, see you soon!"}]})
+            r.event("visit.done", customer={"name": "Ann Lee", "phone": "646-555-0101", "sms_consent": True})
+            self.assertTrue(any("Thanks Ann Lee, see you soon!" in str(q) for q in r.mock.calls("Messages.json")))                                                      # texts go through the usual checks
+            r.event("visit.done", customer={"name": "Bo", "phone": "646-555-0102", "sms_consent": False}); self.assertEqual(len([q for q in r.mock.calls("Messages.json") if "Thanks Bo" in str(q)]), 0)   # no consent, no text
+            BD.toggle(r.agent, w["id"], False); self.assertNotIn("Hi from", r.agent.handle_sms({"From": "+16465550143", "Body": "menu"}))
+            BD.delete(r.agent, e["id"]); self.assertEqual([x["name"] for x in BD.view(r.agent)["workflows"]], ["Menu by text"])
+            r.agent._load_workflows(); self.assertEqual(len(BD.load(r.agent)["workflows"]), 1)                                                                             # saved on disk, survives a reload
+        finally:
+            r.close()
+
+    def test_plain_words_when_something_is_wrong(self):
+        from speakvora_pack_agent import builder as BD
+        r = Rig()
+        try:
+            bad = [({"name": "x"}, "name"), ({"name": "Menu", "trigger": {"type": "sms_keywords", "keywords": ""}, "steps": []}, "word"), ({"name": "Menu", "trigger": {"type": "sms_keywords", "keywords": "stop"}, "steps": [{"type": "reply", "text": "hello there"}]}, "STOP"),
+                   ({"name": "Menu", "trigger": {"type": "sms_keywords", "keywords": "menu"}, "steps": [{"type": "reply", "text": "Your code is here {{bogus}}"}]}, "cannot be used"),
+                   ({"name": "Menu", "trigger": {"type": "event", "event": "order.ready"}, "steps": [{"type": "reply", "text": "hello there"}]}, "only works when a customer texts"),
+                   ({"name": "Menu", "trigger": {"type": "daily", "at": "25:00"}, "steps": [{"type": "notify", "text": "hello team"}]}, "time of day"),
+                   ({"name": "Menu", "trigger": {"type": "event", "event": "order.ready"}, "steps": [{"type": "sms", "text": "My card 4242 4242 4242 4242"}]}, "card number")]
+            for spec, word in bad:
+                with self.assertRaises(BD.BuildError) as c: BD.validate(spec)
+                self.assertIn(word.lower(), str(c.exception).lower(), spec)
+            p = BD.preview(r.agent, {"name": "Booking reminder", "trigger": {"type": "before_booking", "minutes": 1440}, "steps": [{"type": "sms", "text": "Hi {{customer.name}}, see you {{start_local}} at {{business}}."}]})
+            self.assertEqual(p["when"], "1 day before a booking"); self.assertIn("Hi Ann, see you Friday 7:00 PM at Bella.", p["steps"][0]["text"])
+        finally:
+            r.close()
+
+    def test_dashboard_routes_and_the_page(self):
+        from speakvora_pack_agent import dashboard, ui
+        r = Rig(); tok = dashboard.token(r.agent); H = {"x-dashboard-token": tok}
+        try:
+            def call(m, p, b=None):
+                st, body, ct, h = dashboard.handle(r.agent, m, p, H, json.dumps(b).encode() if b is not None else b""); return st, json.loads(body)
+            spec = {"name": "Late text", "trigger": {"type": "event", "event": "order.delayed"}, "steps": [{"type": "sms", "text": "Sorry, your order is a little late."}]}
+            st, o = call("POST", "/dash/api/workflows/save", {"spec": spec}); self.assertEqual(st, 200); wid = o["id"]
+            st, o = call("POST", "/dash/api/workflows/save", {"spec": {**spec, "name": "a"}}); self.assertEqual(st, 400); self.assertIn("name", json.dumps(o).lower())
+            st, v = call("GET", "/dash/api/workflows"); self.assertEqual(v["workflows"][0]["when"], "An order is delayed"); self.assertTrue(v["events"]); self.assertEqual(v["connected"]["sms"], True)
+            st, o = call("POST", "/dash/api/workflows/toggle", {"id": wid, "on": False}); self.assertFalse(o["workflows"][0]["enabled"])
+            st, o = call("POST", "/dash/api/workflows/preview", {"spec": spec}); self.assertEqual(o["steps"][0]["to"], "the customer")
+            st, o = call("POST", "/dash/api/workflows/delete", {"id": wid}); self.assertEqual(o["workflows"], [])
+            for s in ("function manageSheet", "function workflowBuilder", "New workflow", "Make your own", "Preview"):
+                self.assertIn(s, ui.PAGE, s)
+        finally:
+            r.close()
+
+
+class CustomKeywordsAlwaysWin(LiveConversation):
+    def test_your_own_keyword_workflow_answers_even_a_long_message_before_the_ai(self):
+        from speakvora_pack_agent import builder as BD
+        r = self.rig(); calls = self.script([{"say": "AI answer", "action": "continue"}])
+        try:
+            BD.save(r.agent, {"name": "Specials", "trigger": {"type": "sms_keywords", "keywords": "specials"}, "steps": [{"type": "reply", "text": "Today's specials are on the chalkboard."}]})
+            out = r.agent.handle_sms({"From": "+16465550142", "Body": "can I see the specials today please"}); self.assertIn("chalkboard", out); self.assertEqual(calls, [])
+            self.assertEqual(len(calls), 0)
+            out2 = r.agent.handle_sms({"From": "+16465550143", "Body": "do you have outdoor seating on the patio"}); self.assertEqual(len(calls), 1)               # no custom word: the AI answers a long message
+        finally:
+            r.close()

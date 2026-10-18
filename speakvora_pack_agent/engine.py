@@ -67,7 +67,12 @@ class Agent:
 
     def _load_workflows(self):
         wf = json.load(open(self.cfg["workflows"], encoding="utf-8")) if self.cfg.get("workflows") else {}
-        self.workflows = [w for w in wf.get("workflows", []) if w.get("enabled", True)]
+        from . import builder
+        try:
+            mine = builder.compiled(self)                                               # workflows made in the dashboard (agent-state/custom_workflows.json): their words come first
+        except Exception as e:  # noqa: BLE001 - a damaged custom file never stops the ready-made workflows
+            mine = []; self.state.log(workflow="builder", status="error", dry_run=False, error=str(e)[:120]) if hasattr(self, "state") else None
+        self.workflows = mine + [w for w in wf.get("workflows", []) if w.get("enabled", True)]
         return wf
 
     def reload(self, new_cfg):
@@ -855,7 +860,7 @@ class Agent:
             return self.cfg.get("help_text") or i18n.glue("help", self.lang)
         from . import converse
         ai_first = converse.enabled(self, "sms") and len(low.split()) >= 5                 # a detailed message goes to your AI; one or two words ("hours", "parking") still get the instant keyword answer
-        for w in ([] if ai_first else self.workflows):
+        for w in ([x for x in self.workflows if x.get("custom")] if ai_first else self.workflows):          # your own workflows always win; the ready-made keyword answers step aside for a detailed message
             kw = self._triggers((w.get("on") or {}).get("sms"))
             if kw and any(i18n.matches(k, low, self.lang) for k in kw):
                 self._m()["wf"] = w["name"]
