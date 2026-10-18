@@ -219,6 +219,23 @@ class EasyStart(unittest.TestCase):
         self.assertIn(b"Start Speakvora Agent", f["AGENT-README.md"])
 
 
+class TestMyAgent(unittest.TestCase):
+    def test_text_and_event_show_what_would_happen_and_send_nothing_even_when_live(self):
+        from speakvora_pack_agent import simulate as SIM
+        r = Rig(); a = r.agent; a.dry = False; before = len(r.mock.requests)
+        o = SIM.text(a, "what are your hours"); self.assertIn("5-10", o["reply"]); self.assertFalse(o["sent"]); self.assertTrue(o["matched"]); self.assertFalse(a.dry)           # the agent is live again afterwards
+        e = SIM.event(a, "order.ready"); self.assertTrue(e["did"]); self.assertTrue(all(x["status"] == "dry_run" for x in e["did"] if x["action"] in ("sms", "slack"))); self.assertIn("1049", json.dumps(e))
+        self.assertEqual(len(r.mock.requests), before); r.close()
+
+    def test_stop_does_not_touch_real_opt_outs_and_unknown_text_says_why(self):
+        from speakvora_pack_agent import simulate as SIM
+        r = Rig(); a = r.agent
+        o = SIM.text(a, "STOP"); self.assertIn("opt-out", o["matched"].lower()); self.assertFalse(a.state.is_opted_out(SIM.WHO)) if hasattr(a.state, "is_opted_out") else None
+        n = SIM.text(a, "zzqx nothing matches this"); self.assertEqual(n["reply"], ""); self.assertIn("No workflow matched", n["note"])
+        with self.assertRaises(ValueError): SIM.text(a, "  ")
+        v = SIM.view(a); self.assertTrue(v["events"]); self.assertTrue(v["ideas"]); r.close()
+
+
 class Slots(unittest.TestCase):
     def test_existing_phrase_fills_a_slot_and_the_rest_are_reported(self):
         from speakvora_pack_agent import slots as SL

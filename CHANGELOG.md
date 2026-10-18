@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.23.0
+Test my agent: Settings, AI controls, Test my agent. Pretend to be a customer (or trigger an app event) and see the reply, why, and everything else the agent would do, with nothing sent, even when live. See docs/test-my-agent.md.
+
 ## 0.22.1
 Easy start: double-click "Start Speakvora Agent" (Mac .command, Windows .bat) in the bundle, or run `sv-agent start`. It sets the agent up the first time, starts in practice mode and opens the dashboard in your browser; if Python is missing it opens the download page.
 

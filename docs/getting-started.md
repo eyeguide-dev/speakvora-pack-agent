@@ -62,6 +62,8 @@ Twilio and the tools you connect send messages to an address on the internet. Yo
 Then in Twilio set your number's **Voice** webhook to `<address>/twilio/call` and **Messaging** webhook to `<address>/twilio/sms` (POST). The dashboard's Twilio form shows both.
 
 ## 9. Test it end to end
+First try **Settings, AI controls, Test my agent**: type what a customer would text or pick an app event and see exactly what would happen, with nothing sent ([test-my-agent.md](test-my-agent.md)).
+
 1. **Texts**: text your number "do you have outdoor seating". The first reply says it is the automated assistant. Check Home, Latest activity.
 2. **Calls**: call your number, ask something that is not on the menu. A short "let me check that" line plays, then the answer. Say "I want to speak to a person": it connects your staff phone (Twilio form, staff phone).
 3. **Tools**: open a tool (for example GitHub) and press **Save and test**; then send a test event from that tool.
