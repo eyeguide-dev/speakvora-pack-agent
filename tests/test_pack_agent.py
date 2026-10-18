@@ -1673,6 +1673,25 @@ class PhraseBox(unittest.TestCase):
             L._voice, reasoner._chat = orig; r.close()
 
 
+class WriteForMe(unittest.TestCase):
+    def test_describe_a_situation_get_options_and_nothing_is_voiced_until_added(self):
+        from speakvora_pack_agent import learned as L, reasoner
+        r = Rig(extra={"reasoner": {"provider": "openai", "model": "m", "api_key": "k"}}); orig = (L._voice, reasoner._chat); seen = {}; voiced = []
+        L._voice = lambda a, t: voiced.append(t) or (b"x", ".mp3")
+        def chat(cfg, s, u, mt=None):
+            seen["u"] = u; return ('{"lines": ["We are sorry, your order is running a little late.", "Thank you for your patience while we finish your order.", "Call 555 1234 now", "x"]}', {})
+        reasoner._chat = chat
+        try:
+            opts = L.write(r.agent, "tell a customer their order is delayed")
+            self.assertEqual([o["text"][:12] for o in opts], ["We are sorry", "Thank you fo"]); self.assertIn("order is delayed", seen["u"]); self.assertEqual(voiced, [])         # unusable lines (a phone number, too short) are dropped and nothing is voiced yet
+            L.add(r.agent, opts[0]["id"]); self.assertEqual(len(voiced), 1); self.assertEqual(len(L.view(r.agent)["items"]), 1)
+            with self.assertRaises(ValueError): L.write(r.agent, "hi")
+            r.agent.cfg["reasoner"] = {}
+            with self.assertRaises(ValueError): L.write(r.agent, "tell a customer their order is delayed")                                              # needs the owner's own AI
+        finally:
+            L._voice, reasoner._chat = orig; r.close()
+
+
 class ServiceCallFlow(unittest.TestCase):
     def test_spoken_requests_pick_the_menu_option_and_a_person_always_wins(self):
         r = Rig(extra={"twilio": {"speech_input": True}, "facts": {"oncall_phone": "+16465550123"}})

@@ -33,7 +33,7 @@ Tap an app, fill the form, press **Save and test**. If something is wrong it say
 | **My apps** | Send to your own app, or let it send events here | [connect-anything.md](connect-anything.md) |
 
 ### Connect your Speakvora agent (no key to copy)
-1. On **speakvora.com/account** press **Connect my agent**. A code like `SV-ABCD-EFGH` appears (it works once and lasts 15 minutes).
+1. On **speakvora.com/account** press **Connect my agent** (running several locations? type the location's name first so its agent is easy to find later). A code like `SV-ABCD-EFGH` appears (it works once and lasts 15 minutes).
 2. Open your **local dashboard** (the address the agent printed, starting `http://127.0.0.1:8787/dashboard`), go to the **Connect** tab, tap **Speakvora agent**, type the code and press **Pair**.
 The agent gets its own key (named "Agent (paired)" in your account's key list; revoke it there any time). Prefer a key? Open "Or paste a key" in the same form.
 

@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.24.0
+Write for me: in Library, Add your own phrases, describe when you would say a line and your own AI writes a few options; nothing is voiced or added until you press Add. See docs/smart-ai.md.
+
 ## 0.23.1
 Daily summary: a new {{summary}} detail for daily workflows (and a "Send me a daily summary" idea in the workflow builder) sends you one plain message each morning: yesterday's conversations, what needed a person, questions your AI could not answer, and what is waiting for you.
 

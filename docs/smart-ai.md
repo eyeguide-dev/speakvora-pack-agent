@@ -26,6 +26,9 @@ Always on, not changeable from any dashboard:
 
 You choose, inside fixed ceilings: whether the AI answers texts, whether it answers calls, most turns per conversation (max 40), longest call (max 20 minutes), most replies per hour (max 200), which actions it may do by itself (tell your team, send a confirmation text, add a calendar booking), topics it must hand to a person, and the words that mean "I want a person". Saved in `agent.json` under `guardrails`.
 
+## Write for me (0.24.0)
+Not sure how to word a line? In **Add your own phrases**, under **Or let your AI write it**, say when you would use it (for example: *tell a customer their order is delayed*) and press **Write options**. Your own AI writes a few different ways to say it, in your business's voice. Nothing is voiced or added until you press **Add** on one you like; then it is voiced once and joins your library. The AI writes only general lines (no names, numbers, prices, times or contact details, no advice, and no promises such as refunds or discounts), and it needs your AI connected (Connect, Apps).
+
 ## Add your own phrases (0.7.1)
 In the dashboard, open **Library**: the first box is **Add your own phrases**. Type or paste one phrase on each line (up to 30 at a time) and press **Add to my library**. Each line is voiced once in your bundle's voice and becomes a line any workflow can play, instant, free and offline. **Suggest more with my AI** asks your connected AI for up to 10 new lines in the same voice; they wait as suggestions until you press Add or No thanks. Lines with emails, links or card-like numbers are skipped with the reason shown. Same monthly character budget as below. API: `POST /dash/api/learned/{lines,suggest,dismiss}`.
 

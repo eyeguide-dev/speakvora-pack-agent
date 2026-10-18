@@ -359,6 +359,8 @@ def handle(agent, method, path, headers, raw):
             out = LN.add_lines(agent, json.loads(raw or b"{}").get("text")) | {"view": LN.view(agent)}
         elif p == "/dash/api/learned/suggest" and method == "POST":
             out = LN.suggest(agent, json.loads(raw or b"{}").get("text"))
+        elif p == "/dash/api/learned/write" and method == "POST":
+            out = {"options": LN.write(agent, json.loads(raw or b"{}").get("situation"))}
         elif p == "/dash/api/learned/dismiss" and method == "POST":
             out = LN.dismiss(agent, str(json.loads(raw or b"{}").get("id") or ""))
         elif p == "/dash/api/learned/remove" and method == "POST":
