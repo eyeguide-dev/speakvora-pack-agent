@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.23.1
+Daily summary: a new {{summary}} detail for daily workflows (and a "Send me a daily summary" idea in the workflow builder) sends you one plain message each morning: yesterday's conversations, what needed a person, questions your AI could not answer, and what is waiting for you.
+
 ## 0.23.0
 Test my agent: Settings, AI controls, Test my agent. Pretend to be a customer (or trigger an app event) and see the reply, why, and everything else the agent would do, with nothing sent, even when live. See docs/test-my-agent.md.
 

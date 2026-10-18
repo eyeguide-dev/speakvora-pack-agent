@@ -15,11 +15,11 @@ TRIGGERS = {"sms_keywords": "SMS Person", "event": "App Event", "before_booking"
 STEPS = {"reply": "Reply to their text", "sms": "Text the customer", "notify": "Tell my team (Slack or Teams)", "email": "Email someone"}
 BEFORE = {15: "15 minutes", 60: "1 hour", 120: "2 hours", 240: "4 hours", 1440: "1 day", 2880: "2 days"}
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-VARS = {"all": ["business", "fact:hours", "fact:address", "fact:phone"], "sms_keywords": ["sms.body", "sms.from"], "event": ["customer.name", "order.number"], "before_booking": ["customer.name", "start_local"], "daily": ["today_text"]}
+VARS = {"all": ["business", "fact:hours", "fact:address", "fact:phone"], "sms_keywords": ["sms.body", "sms.from"], "event": ["customer.name", "order.number"], "before_booking": ["customer.name", "start_local"], "daily": ["today_text", "summary"]}
 VAR_HELP = {"business": "your business name", "fact:hours": "your opening hours", "fact:address": "your address", "fact:phone": "your phone number", "sms.body": "what they texted", "sms.from": "their number",
-            "customer.name": "the customer's name", "order.number": "the order number", "start_local": "the booking time", "today_text": "today's bookings"}
+            "customer.name": "the customer's name", "order.number": "the order number", "start_local": "the booking time", "today_text": "today's bookings", "summary": "yesterday's summary"}
 SAMPLE = {"business": "Bell & Basil", "fact:hours": "Tue to Sun, 5 to 10 PM", "fact:address": "12 Main Street", "fact:phone": "+1 929 581 6269", "sms.body": "menu please", "sms.from": "+1 646 555 0101",
-          "customer.name": "Ann", "order.number": "1049", "start_local": "Friday 7:00 PM", "today_text": "7:00 PM Ann (4); 8:30 PM Raj (2)"}
+          "customer.name": "Ann", "order.number": "1049", "start_local": "Friday 7:00 PM", "today_text": "7:00 PM Ann (4); 8:30 PM Raj (2)", "summary": "Yesterday: 12 conversations (8 texts, 4 calls). Your AI answered 8 texts. 2 needed a person. Nothing is waiting for you."}
 SECRET = re.compile(r"\b(?:\d[ -]?){13,19}\b|\b\d{3}-\d{2}-\d{4}\b|\b(?:password|passcode|pin|api[_ -]?key|token)\s*[:=]", re.I)
 
 

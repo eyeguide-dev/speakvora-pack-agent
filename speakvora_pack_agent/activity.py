@@ -79,6 +79,30 @@ def phrases(agent, q="", offset=0, limit=30, cat=""):
     return {"total": len(rows), "saved": len(agent.pack.items), "items": rows[offset:offset + limit], "groups": groups}
 
 
+def summary_text(agent, days=1):
+    """A short plain-words summary for the owner: what the agent handled over the last day(s), what needed a person, and what is waiting. Used by the {{summary}} variable of daily workflows."""
+    r = insights(agent, days); label = "Yesterday" if days == 1 else f"The last {days} days"
+    if not r["conversations"]:
+        head = f"{label}: no customer conversations."
+    else:
+        bits = [f"{r['texts']} text{'s' if r['texts'] != 1 else ''}"] if r["texts"] else []
+        bits += [f"{r['calls']} call{'s' if r['calls'] != 1 else ''}"] if r["calls"] else []
+        head = f"{label}: {r['conversations']} conversation{'s' if r['conversations'] != 1 else ''} ({', '.join(bits)})."
+        if r["ai_text_answers"]:
+            head += f" Your AI answered {r['ai_text_answers']} text{'s' if r['ai_text_answers'] != 1 else ''}."
+        head += f" {r['needed_person']} needed a person." if r["needed_person"] else " None needed a person."
+    parts = [head]
+    if r["gaps"]:
+        parts.append("Questions it could not answer: " + "; ".join(g["q"] for g in r["gaps"][:3]) + ".")
+    try:
+        from .dashboard import jobs_for_display
+        waiting = sum(1 for j in jobs_for_display(agent) if j.get("needs_you"))
+    except Exception:  # noqa: BLE001
+        waiting = 0
+    parts.append(f"{waiting} thing{'s' if waiting != 1 else ''} waiting for you on the dashboard." if waiting else "Nothing is waiting for you.")
+    return " ".join(parts)
+
+
 def insights(agent, days=7):
     """How the agent did over the last days: conversations by channel and outcome, how many the AI answered or handed to a person, how fast the AI answered, what it could not answer, and the top topics."""
     import json, os

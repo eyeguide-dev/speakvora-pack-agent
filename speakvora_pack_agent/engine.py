@@ -733,6 +733,13 @@ class Agent:
             self.state.event_done(key)
         return {"event": name, "matched": len(results), "workflows": results}
 
+    def _summary(self):
+        try:
+            from . import activity
+            return activity.summary_text(self)
+        except Exception:  # noqa: BLE001 - a summary problem never stops a daily message
+            return "No summary available today."
+
     def _events(self, start, end):
         """Events from every connected calendar (Google and/or Microsoft 365), oldest first. A broken calendar is logged and skipped."""
         out = []
@@ -808,7 +815,7 @@ class Agent:
             if local.strftime("%H:%M") >= sc.get("at", "09:00") and DAYS[local.weekday()] in sc.get("days", DAYS) and self.state.once(f"sched:{w['name']}:{local.date()}"):
                 events = self._events(now, now + 86400)
                 ctx = self.ctx(today=[{"title": e["title"], "time": i18n.fmt_dt(e["start"], self.cfg["timezone"], self.lang)} for e in events],
-                               today_text="\n".join(f"{i18n.fmt_dt(e['start'], self.cfg['timezone'], self.lang)} {e['title']}" for e in events) or "-")
+                               today_text="\n".join(f"{i18n.fmt_dt(e['start'], self.cfg['timezone'], self.lang)} {e['title']}" for e in events) or "-", summary=self._summary())
                 out.append({"workflow": w["name"], "results": self.run_actions(w["name"], w.get("do", []), ctx)})
         return out
 

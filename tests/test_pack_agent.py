@@ -236,6 +236,19 @@ class TestMyAgent(unittest.TestCase):
         v = SIM.view(a); self.assertTrue(v["events"]); self.assertTrue(v["ideas"]); r.close()
 
 
+class DailySummary(unittest.TestCase):
+    def test_summary_variable_is_plain_words_and_reaches_a_daily_message(self):
+        from speakvora_pack_agent import activity as AC, builder as BD
+        r = Rig(); a = r.agent
+        t = AC.summary_text(a); self.assertIn("Yesterday", t); self.assertNotIn("{", t); self.assertIn("waiting", t.lower())
+        spec = {"name": "Daily summary", "trigger": {"type": "daily", "at": "08:00", "days": list(BD.DAYS)}, "steps": [{"type": "notify", "text": "{{summary}}"}]}
+        self.assertEqual(BD.validate(spec)["steps"][0]["text"], "{{summary}}")
+        pv = BD.preview(a, spec); self.assertIn("conversations", json.dumps(pv))
+        bad = {**spec, "trigger": {"type": "event", "event": "order.ready"}}
+        with self.assertRaises(BD.BuildError): BD.validate(bad)                                         # only daily workflows get the summary
+        r.close()
+
+
 class Slots(unittest.TestCase):
     def test_existing_phrase_fills_a_slot_and_the_rest_are_reported(self):
         from speakvora_pack_agent import slots as SL

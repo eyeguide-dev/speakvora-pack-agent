@@ -263,7 +263,8 @@ const STARTERS=[
  {t:'Send my menu when someone texts “menu”',spec:{name:'Menu by text',trigger:{type:'sms_keywords',keywords:'menu, specials'},steps:[{type:'reply',text:'Hi from {{business}}! Our menu is on our website. We are open {{fact:hours}}.'}]}},
  {t:'Thank customers after a visit',spec:{name:'Thanks after a visit',trigger:{type:'event',event:'visit.completed'},steps:[{type:'sms',text:'Thanks for visiting {{business}}, {{customer.name}}! We hope to see you again soon.'}]}},
  {t:'Remind customers the day before a booking',spec:{name:'Booking reminder',trigger:{type:'before_booking',minutes:1440,title_contains:''},steps:[{type:'sms',text:'Hi {{customer.name}}, a reminder from {{business}}: we have you booked for {{start_local}}. Reply if you need to change it.'}]}},
- {t:'Send my team a morning summary',spec:{name:'Morning summary',trigger:{type:'daily',at:'09:00',days:['mon','tue','wed','thu','fri','sat','sun']},steps:[{type:'notify',text:'Good morning! Today: {{today_text}}'}]}}];
+ {t:'Send me a daily summary',spec:{name:'Daily summary',trigger:{type:'daily',at:'08:00',days:['mon','tue','wed','thu','fri','sat','sun']},steps:[{type:'notify',text:'{{summary}}'}]}},
+ {t:'Send my team today\'s bookings',spec:{name:'Morning summary',trigger:{type:'daily',at:'09:00',days:['mon','tue','wed','thu','fri','sat','sun']},steps:[{type:'notify',text:'Good morning! Today: {{today_text}}'}]}}];
 async function testSheet(){const root=h('div');sheet('Test my agent',root);let v;try{v=await api('/dash/api/simulate')}catch(e){root.textContent=e.message;return}
 root.appendChild(h('div',{class:'lead'},'Pretend to be a customer. See exactly what your agent would do. Nothing is sent to anyone.'));
 const log=h('div'),inp=h('input',{class:'in',placeholder:'Type what a customer would text…'}),first={v:true};

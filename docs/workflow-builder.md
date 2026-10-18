@@ -8,7 +8,7 @@ A workflow is "when this happens, do this". You make them in the dashboard, with
 
 * **Yours**: the workflows you made, each with a switch and a one-line summary ("Someone texts “menu” or “specials” → reply to their text"). Tap one to edit it.
 * **Ready-made for your industry**: the ones that came with your bundle. Switch them on or off, and choose "Also tell" an app of yours.
-* **New workflow**: start from scratch, or tap one of the ideas: "Send my menu when someone texts menu", "Thank customers after a visit", "Remind customers the day before a booking", "Send my team a morning summary".
+* **New workflow**: start from scratch, or tap one of the ideas: "Send my menu when someone texts menu", "Thank customers after a visit", "Remind customers the day before a booking", "Send me a daily summary", "Send my team today's bookings".
 
 ## Making one
 ![The workflow builder: When, Then, Name it](https://speakvora.com/assets/guide/sheet-workflow-builder.png)
@@ -28,7 +28,7 @@ A workflow is "when this happens, do this". You make them in the dashboard, with
 | Text the customer | Sends a text to the customer (needs Twilio; follows consent, STOP, quiet hours and your limits) |
 | Tell my team | Posts to Slack or Teams |
 | Email someone | Sends an email (needs Email connected) |
-Write the message, or press **Use a line from my library** to insert one of your saved phrases. The **Insert** chips add the details that change: your business name, hours, address, phone, the customer's name, the booking time, what they texted, today's bookings.
+Write the message, or press **Use a line from my library** to insert one of your saved phrases. The **Insert** chips add the details that change: your business name, hours, address, phone, the customer's name, the booking time, what they texted, today's bookings, yesterday's summary (daily workflows).
 
 **3 · Name it**, then **Preview** (shows each message with sample details; nothing is sent) and **Save and turn on**.
 
@@ -42,4 +42,5 @@ Write the message, or press **Use a line from my library** to insert one of your
 * **Menu by text**: When a customer texts `menu` → Reply: "Hi from {{business}}! Our menu is at …. We are open {{fact:hours}}."
 * **Thank after a visit**: When your app sends `visit.completed` → Text the customer: "Thanks for visiting {{business}}, {{customer.name}}!"
 * **Day-before reminder**: Booking: a booking is coming up, 1 day before → Text: "Hi {{customer.name}}, a reminder from {{business}}: we have you booked for {{start_local}}."
+* **Daily summary**: Daily at 08:00 → Tell my team: `{{summary}}`. You get one short message each morning: "Yesterday: 12 conversations (8 texts, 4 calls). Your AI answered 8 texts. 2 needed a person. Nothing is waiting for you." It also lists questions your AI could not answer. Use **Email someone** instead to get it in your inbox.
 * **Morning summary**: Every day at 09:00 → Tell my team: "Good morning! Today: {{today_text}}".
