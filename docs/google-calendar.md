@@ -2,9 +2,21 @@
 
 Tested live (agent 0.27.0) against a real Google Calendar: create, reschedule, cancel, delete, double-booking protection, reminders from a live read, and a check that the agent refuses to change an event it did not create.
 
+
+![Google Calendar card in the agent dashboard (example screen)](img/dashboard-calendar-card.jpg)
+
 ## Two ways to connect
 * **Read only (easiest).** Calendar settings, your calendar, "Secret address in iCal format". Paste it in the dashboard, Connect, Google Calendar (it must be a web address; the test checks that it really returns a calendar). The agent reads bookings and sends reminders. It cannot change the calendar.
 * **Read and change (OAuth).** For the agent to add, move, cancel or delete entries.
+
+### Read only: where to find the private link
+In Google Calendar open Settings, click your calendar, scroll to **Integrate calendar**. (Example screen from a throwaway test account; the calendar ID and addresses are blurred.)
+
+![Integrate calendar section, addresses blurred](img/google-calendar-1-integrate.jpg)
+
+Use **Secret address in iCal format** (press the eye to show it, the copy icon to copy it) and paste it into the dashboard card. Do not use the public address. Pressing **Reset** invalidates a secret address that leaked.
+
+![Secret address and Reset button, blurred](img/google-calendar-2-secret-address.jpg)
 
 ## Set up the read-and-change mode (about 10 minutes, free)
 1. In your own Google Cloud project turn on the **Google Calendar API**.

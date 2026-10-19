@@ -1,5 +1,12 @@
 # Add the agent to your business in 10 minutes
 
+![Test my agent](https://speakvora.com/assets/guide/sheet-test-my-agent.jpg)
+
+![The Go live checklist](https://speakvora.com/assets/guide/sheet-golive.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 Works in all 12 pack languages (en es fr pt it de fi hi ja zh ar ko). The agent speaks and writes in the language of your pack.
 
 1. **Unzip your pack** and install: `pip install speakvora-pack-agent` (or use `deploy/Dockerfile`). Python 3.9+; install `ffmpeg` if you want phone calls to play the pack's audio.

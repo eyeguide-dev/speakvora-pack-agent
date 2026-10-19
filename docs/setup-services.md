@@ -10,12 +10,20 @@ Keep keys out of `agent.json`: write `"env:NAME"` and set the variable in the en
 STOP and START replies are handled for you, as carriers require. Twilio bills you directly for texts and calls; Speakvora adds no fee.
 
 ## Slack
+
+Screenshots for Shopify, GitHub, Slack and Calendar (fake example values): [connect-shopify-and-github.md](connect-shopify-and-github.md).
+
+![Slack card in the dashboard](img/dashboard-slack-card.jpg)
+
 1. Create a Slack app (api.slack.com/apps) in your workspace. Bot token scopes: `chat:write`, `files:write`. Install it and copy the Bot token (`xoxb-...`) into `SLACK_BOT_TOKEN`; invite the bot to the channels you use.
 2. Optional staff command: add a slash command `/say` pointing to `https://YOUR-AGENT-ADDRESS/slack/command`; copy the app's Signing Secret into `SLACK_SIGNING_SECRET`. Example: `/say order_ready +16465550123` texts that customer the pack's "your order is ready" line.
 3. Channels: workflows post to roles such as #front, #kitchen and #host. Set one real channel with `"slack": {"channel": "#general"}` and every role goes there. To split them, add `"channels": {"#kitchen": "#orders"}`; roles you do not list use the default channel.
 4. Only text goes to Slack by default; audio uploads happen when a workflow asks for it.
 
 ## Google Calendar
+
+![Google Calendar card in the dashboard](img/dashboard-calendar-card.jpg)
+
 Option A (simplest, read-only): in Google Calendar settings for the calendar, copy the "Secret address in iCal format" and set `CALENDAR_ICS_URL`; use `"mode": "ics"`. Repeating events are not expanded in this mode.
 Option B (read, create, move, cancel and delete events): create an OAuth client in your own Google Cloud project, get a refresh token for your account with the `calendar.events` scope, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `"mode": "oauth"`, optionally `"calendar_id"` (default `primary`), and `"allow_create": true` only if you want the agent to change your calendar. The agent only ever moves, cancels or deletes entries **it created itself** (it tags them); it never touches anything you or anyone else added. Step by step, with the workflow actions: [google-calendar.md](google-calendar.md).
 Google refreshes secret iCal feeds slowly (a new event can take hours to appear), so use the OAuth option for reminders that must fire on time.

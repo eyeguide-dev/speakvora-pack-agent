@@ -1,5 +1,12 @@
 # Live conversation
 
+![AI controls](https://speakvora.com/assets/guide/sheet-aicontrols.png)
+
+![Assistant tab](https://speakvora.com/assets/guide/assistant.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 Your own AI answers customers in real time, on texts and on calls, inside limits that live in this program and cannot be switched off from a dashboard.
 
 ## Turn it on

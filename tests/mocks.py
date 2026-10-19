@@ -52,9 +52,11 @@ class Mock:
         if p == "/api/v1/packs" and r["method"] == "GET":
             return 200, {"packs": [{"id": "t", "version": getattr(self, "latest_version", "2026.10.01"), "phrases": 500}]}
         if p.endswith("/IncomingPhoneNumbers.json"):
-            return 200, {"incoming_phone_numbers": [] if getattr(self, "no_numbers", False) else [{"sid": "PN1"}]}
+            return 200, {"incoming_phone_numbers": [] if getattr(self, "no_numbers", False) else [{"sid": "PN1", **getattr(self, "twilio_num", {})}]}
         if re.search(r"/IncomingPhoneNumbers/[^/]+\.json$", p) and r["method"] == "POST":
-            return 200, {"sid": "PN1", "voice_url": (r.get("form") or {}).get("VoiceUrl", "")}
+            f = r.get("form") or {}; st = self.__dict__.setdefault("twilio_num", {})
+            st.update({k: v for k, v in (("voice_url", f.get("VoiceUrl")), ("voice_fallback_url", f.get("VoiceFallbackUrl"))) if v is not None})
+            return 200, {"sid": "PN1", "voice_url": f.get("VoiceUrl", "")}
         if re.search(r"/Accounts/[^/]+\.json$", p) and r["method"] == "GET":
             return 200, {"friendly_name": "Bella Co", "status": "active"}
         if p.endswith("/auth.test"):

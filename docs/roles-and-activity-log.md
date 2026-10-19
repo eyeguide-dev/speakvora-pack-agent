@@ -1,5 +1,12 @@
 # Activity log and view-only access
 
+![Settings, Activity log: who changed what, and when](img/dashboard-activity-log.jpg)
+
+![Settings, View-only access](img/dashboard-view-only.jpg)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 Two small controls for businesses where more than one person looks at the dashboard. Both are in **Settings**.
 
 ## Activity log: who changed what

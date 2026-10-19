@@ -75,6 +75,8 @@ def run(cfg):
         ok(True, "all environment variables referenced in agent.json are set")
     for n, svc in (("Twilio (texts and calls)", ag.twilio), ("Slack", ag.slack), ("Microsoft Teams", ag.teams), ("Google Calendar", ag.gcal), ("Microsoft 365 calendar", ag.outlook), ("email (SMTP)", ag.mail), ("inbound email (IMAP)", ag.inbox)):
         print(f"  {'conn' if svc.configured else '--  '} {n}: {'configured' if svc.configured else 'not configured (optional)'}")
+    if ag.twilio.configured and not (cfg.get("twilio") or {}).get("fallback_url"):
+        print("  note calls: if this computer is off or offline, Twilio cannot reach the agent and callers hear nothing useful. Set a backup (dashboard: Connect, Texts and calls, If this computer is off) so calls go to your team: docs/call-fallback.md")
     base = cfg.get("public_base_url", "")
     placeholder = "YOUR-" in base or not base
     ok(not placeholder, "public_base_url is set", "this is the public https address that Twilio, Slack and your webhooks use to reach the agent (a tunnel such as cloudflared or ngrok works while testing)")

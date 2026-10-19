@@ -210,6 +210,10 @@ def handle(agent, method, path, headers, raw):
             out = SU.voice_check(agent)
         elif p == "/dash/api/setup/twilio/numbers" and method == "GET":
             out = SU.twilio_numbers(agent)
+        elif p == "/dash/api/setup/twilio/fallback" and method == "GET":
+            out = SU.twilio_fallback(agent)
+        elif p == "/dash/api/setup/twilio/fallback" and method == "POST":
+            out = SU.twilio_fallback_set(agent, json.loads(raw or b"{}").get("url"))
         elif p == "/dash/api/setup/twilio/point" and method == "POST":
             out = SU.twilio_point(agent, json.loads(raw or b"{}").get("number"))
         elif p == "/dash/api/setup/pair" and method == "POST":

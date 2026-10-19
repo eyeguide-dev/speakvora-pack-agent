@@ -1,5 +1,12 @@
 # A smarter AI: it learns your business, and stays inside your limits
 
+![AI controls](https://speakvora.com/assets/guide/sheet-aicontrols.png)
+
+![The Your AI form](https://speakvora.com/assets/guide/sheet-ai.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 When you connect your own AI (Connect, AI reasoning) and the test passes, the agent starts learning your business by itself. Nothing is sent anywhere except to **your** AI provider, and nothing goes to Speakvora.
 
 ## What it reads

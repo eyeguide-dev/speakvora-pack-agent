@@ -1,5 +1,12 @@
 # Connection tests: what was checked, and how you can check yours
 
+![Connected apps list](img/dashboard-connect-list.jpg)
+
+![Test my agent](https://speakvora.com/assets/guide/sheet-test-my-agent.jpg)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 Every app in **Connect, Apps** has the same flow: fill the few boxes, press **Save and test**. The result says **Connected** or says plainly why not, and a connected app moves to the **Connected** list with **Remove** to undo it.
 
 ## What was verified end to end (2026-10-18, live test agent)

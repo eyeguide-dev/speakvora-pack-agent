@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.28.0
+Incoming calls no longer disappear when the computer running the agent is off or offline. In the dashboard (Connect, Texts and calls, If this computer is off) the agent shows a ready-to-paste Twilio TwiML Bin text made from your customer service phone, you paste the bin's address, and the agent sets it as the Twilio number's fallback so calls ring your team instead. Off by default; the dashboard shows Protected only while the number really points at the saved address, `doctor` prints a note when no backup is set, and pointing the number at the agent later keeps the backup. New doc: docs/call-fallback.md. Tested live with a real Twilio number: with the agent stopped, an incoming call was forwarded to the business phone in about 6 seconds. Not changed: an incoming call cannot be queued, so a computer that is off still cannot answer it itself.
+
 ## 0.27.1
 GitHub and GitLab events now reach your workflows. A live test with a real GitHub webhook found that every GitHub event except a failed or passed build (new issue, pull request ready, release published, security alert) was silently ignored, because the event name carried a stray dot. Fixed, and new issues, pull requests and releases now also carry their title and link. Shopify was also tested live: a real signed Shopify webhook arrives, is verified and starts the order-ready workflow.
 

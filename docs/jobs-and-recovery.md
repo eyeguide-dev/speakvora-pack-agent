@@ -1,5 +1,10 @@
 # Jobs: every send is written down first
 
+![Insights](https://speakvora.com/assets/guide/sheet-insights.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 Everything the agent sends out into the world (a text, a call, a Slack or Teams post, an email, a calendar entry, a webhook, a write to your own API) becomes a **job** in `agent-state/state.json` BEFORE it is sent. That is what makes a crash, a power cut or a lost connection safe: nothing is lost, and nothing is sent twice.
 
 ## The statuses

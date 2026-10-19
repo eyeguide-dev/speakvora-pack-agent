@@ -1,5 +1,10 @@
 # Several business locations in one dashboard (commercial licence)
 
+![Settings, Locations and license: enter the commercial licence code](img/dashboard-license.jpg)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 If you run more than one branch, a commercial licence for two or more business locations adds a **Locations** button at the top of the dashboard. Click it to switch between your locations, see which ones need you, or open an overview of all of them.
 
 ## How it works

@@ -1,5 +1,10 @@
 # When the internet goes away: the offline queue
 
+![Home shows what happened and what is waiting](https://speakvora.com/assets/guide/home.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 The voice lines in your pack are files on your own machine, so they keep playing with no connection. Texts, calls, Slack and Teams posts, email, calendar entries and webhooks need the internet. The agent does not lose them.
 
 ## What happens

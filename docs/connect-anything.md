@@ -1,5 +1,12 @@
 # Connect anything
 
+![Point of sale card](img/dashboard-pos-card.jpg)
+
+![Shopify card](img/dashboard-shopify-card.jpg)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 The agent has one connector shape. Whatever system you use, you connect it by writing a short mapping in `agent.json`. No code, and your app keeps working if the agent is off.
 
 ## 1. Anything that can send a webhook -> events (`sources`)

@@ -1,5 +1,12 @@
 # Knowledge
 
+![Library, Knowledge](https://speakvora.com/assets/guide/library-knowledge.png)
+
+![Add an answer](https://speakvora.com/assets/guide/sheet-addanswer.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 The documents, pages and notes your AI answers customers from. Library, **Knowledge**.
 
 ## Add

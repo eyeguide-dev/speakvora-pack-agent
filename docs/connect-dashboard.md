@@ -1,5 +1,12 @@
 # Set everything up from the dashboard (no developer needed)
 
+![The Connect tab](https://speakvora.com/assets/guide/connect-apps.png)
+
+![The Go live checklist](https://speakvora.com/assets/guide/sheet-golive.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 Run the agent and open the address it prints (`.../dashboard#token=...`). The **Connect** tab is the first thing you see when nothing is connected yet; later, press **+ Add** to connect more at any time (including your own apps, by web address or webhook; see [dashboard.md](dashboard.md)). It walks you through every service, one card at a time, in plain words:
 
 | Card | What it connects | What you need |

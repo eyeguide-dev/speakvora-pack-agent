@@ -1,5 +1,10 @@
 # Order tracking links, pharmacy texts, and private records from your own system
 
+![Orders tab](https://speakvora.com/assets/guide/orders.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 ## Which industries get a tracking link
 Any business where the customer waits on something and the page can show a step without showing private details:
 

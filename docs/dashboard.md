@@ -1,5 +1,14 @@
 # The dashboard
 
+![Home](https://speakvora.com/assets/guide/home.png)
+
+![Settings](https://speakvora.com/assets/guide/settings.png)
+
+![Library](https://speakvora.com/assets/guide/library-saved.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 A small page that runs inside your agent, on your own computer. Start the agent and open the address it prints (`.../dashboard#token=...`). The part after `#` is your access token: it never goes to a server and never appears in a log. It is kept in `agent-state/dashboard-token`, or set your own with `SV_DASHBOARD_TOKEN`.
 
 It is built so a business owner can set everything up alone: four places on a bar at the bottom, plain words, one big button for the thing you came to do, and every detail one tap away. At the top: your business name (tap it for your business details, and your locations if you have several) and a green **Agent live** or amber **Practice mode** pill (tap it to go live).

@@ -1,5 +1,12 @@
 # You control the limits
 
+![Settings, Privacy and data: transcripts off by default, days to keep customer details](img/dashboard-privacy-data.jpg)
+
+![Built-in safeguards](https://speakvora.com/assets/guide/sheet-safeguards.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 `agent.json` has a `mode` that sets how tightly the agent limits itself. Any single value can still be overridden.
 
 | Mode | Per person per day | Per hour (all) | Quiet hours (texts and calls) |

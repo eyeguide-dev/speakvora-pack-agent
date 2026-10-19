@@ -1,5 +1,22 @@
 # Connecting GitHub, GitLab, PagerDuty, Stripe, Shopify, Calendly and your point of sale
 
+![Shopify card (example address)](img/dashboard-shopify-card.jpg)
+
+![GitHub card (example address and secret)](img/dashboard-github-card.jpg)
+
+![GitLab card](img/dashboard-gitlab-card.jpg)
+
+![PagerDuty card](img/dashboard-pagerduty-card.jpg)
+
+![Stripe card](img/dashboard-stripe-card.jpg)
+
+![Calendly card](img/dashboard-calendly-card.jpg)
+
+![Point of sale card](img/dashboard-pos-card.jpg)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 These tools **send messages to your agent** when something happens (a build fails, an order is fulfilled, a payment fails). In the dashboard open Connect, Apps, tap the tool and follow the guide. Each guide shows:
 
 * **Your address**: where the tool sends its messages (needs your agent's public address, see Settings, Business details).

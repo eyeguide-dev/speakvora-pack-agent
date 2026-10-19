@@ -1,5 +1,12 @@
 # Use the phone and text numbers you already have
 
+![The Twilio form](https://speakvora.com/assets/guide/sheet-twilio.png)
+
+![The Calendar card](img/dashboard-calendar-card.jpg)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 Everything here happens in YOUR accounts. The agent never sees a number that you do not point at it, and Speakvora hosts nothing.
 
 ## Texts
@@ -11,6 +18,8 @@ Everything here happens in YOUR accounts. The agent never sees a number that you
 | Only a **mobile number** | Use a new business number for the agent and tell customers; do not automate a personal mobile number | Carriers block automated texting from personal numbers. |
 
 ## Calls
+
+> Computer off or offline? See [call-fallback.md](call-fallback.md) so incoming calls ring your team instead.
 | You have | How to connect |
 |---|---|
 | **Twilio** number | Set "A call comes in" to `https://YOUR-AGENT/twilio/call`. Outbound calls use the same number. |

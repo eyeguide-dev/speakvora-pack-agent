@@ -32,6 +32,7 @@ CARDS = {
         ("account_sid", "Account SID", "secret", "twilio.account_sid", "TWILIO_ACCOUNT_SID", "Twilio console > Account info. It starts with AC."),
         ("auth_token", "Auth token", "secret", "twilio.auth_token", "TWILIO_AUTH_TOKEN", "Twilio console > Account info > Auth token (click to show)."),
         ("from_number", "Your Twilio phone number", "text", "twilio.from_number", None, "With the country code, for example +15551234567."),
+        ("fallback_url", "Backup for calls if this computer is off (optional)", "text", "twilio.fallback_url", None, "A web address Twilio asks when it cannot reach this computer, so calls still go to your team. See \"If this computer is off\" in the Twilio section."),
     ]},
     "slack": {"title": "Slack", "blurb": "Tells your team in Slack when something needs them. Paste one webhook URL and you are done.", "fields": [
         ("bot_token", "Bot token", "secret", "slack.bot_token", "SLACK_BOT_TOKEN", "Slack app > OAuth & Permissions > Bot User OAuth Token (starts with xoxb-). Or use a webhook below."),
@@ -230,6 +231,8 @@ def save(agent, card, values):
                     raise SetupError(f"{label}: each entry needs a number with the country code, for example Billing +15551230001.")
         if key in ("from_number", "oncall_phone", "phone") and val and not re.fullmatch(r"\+\d{8,15}", val.replace(" ", "")):
             raise SetupError(f"{label}: include the country code and digits only, for example +15551234567.")
+        if key == "fallback_url" and val and not re.match(r"^https://[^\s]+$", val):
+            raise SetupError(f"{label} must start with https:// (Twilio needs a secure address).")
         if key in ("review_url", "public_base_url", "base_url", "website") and val and not re.match(r"^https?://[^\s]+$", val):
             raise SetupError(f"{label} must start with http:// or https://.")
         if key == "timezone" and val and val not in TIMEZONES:
@@ -335,10 +338,71 @@ def twilio_numbers(agent):
         _st, r = web.request("GET", f"{a.base}/2010-04-01/Accounts/{a.sid}/IncomingPhoneNumbers.json?PageSize=50", a._auth())
     except Exception as e:  # noqa: BLE001
         raise SetupError(_explain(e))
-    nums = [{"number": x.get("phone_number", ""), "name": x.get("friendly_name", ""), "voice_url": x.get("voice_url", ""), "sms_url": x.get("sms_url", "")} for x in ((r or {}).get("incoming_phone_numbers") or [])]
+    nums = [{"number": x.get("phone_number", ""), "name": x.get("friendly_name", ""), "voice_url": x.get("voice_url", ""), "sms_url": x.get("sms_url", ""), "voice_fallback_url": x.get("voice_fallback_url", "")} for x in ((r or {}).get("incoming_phone_numbers") or [])]
     if not nums:
         raise SetupError("That Twilio account has no phone numbers yet. Buy one in Twilio first.")
     return {"numbers": nums}
+
+
+def _fallback_url(agent):
+    u = str((agent.cfg.get("twilio") or {}).get("fallback_url") or "").strip()
+    return u if re.match(r"^https://[^\s]+$", u) else ""
+
+
+def _point_form(agent, base):
+    form = {"VoiceUrl": base + "/twilio/call", "VoiceMethod": "POST", "SmsUrl": base + "/twilio/sms", "SmsMethod": "POST"}
+    fb = _fallback_url(agent)
+    if fb:                                                  # Twilio asks this address when it cannot reach the agent (computer off, offline, crashed)
+        form.update({"VoiceFallbackUrl": fb, "VoiceFallbackMethod": "POST"})
+    return form
+
+
+def fallback_twiml(phone):
+    """The text to paste into a Twilio TwiML Bin: say a short line, then ring the business's own phone, then apologise if nobody picks up."""
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n'
+            '  <Say>Sorry, we cannot take your call on this line right now. Connecting you to our team.</Say>\n'
+            f'  <Dial timeout="25">{phone}</Dial>\n'
+            '  <Say>Sorry, nobody is available right now. Please try again later.</Say>\n</Response>')
+
+
+def twilio_fallback(agent):
+    """What happens to calls when this computer is off or offline, and how to make Twilio send them to a person instead."""
+    facts = agent.cfg.get("facts") or {}; tw = agent.cfg.get("twilio") or {}
+    phone = str(facts.get("phone") or "").replace(" ", ""); own = str(tw.get("from_number") or "").replace(" ", "")
+    phone_ok = bool(re.fullmatch(r"\+\d{8,15}", phone)) and phone != own
+    out = {"phone": phone if phone_ok else "", "phone_problem": "" if phone_ok else ("Add your customer service phone (with country code) in Settings, Your business details. It must be a different number from your Twilio number." if not phone or phone == own else "Your customer service phone needs the country code, for example +15551234567."),
+           "twiml": fallback_twiml(phone) if phone_ok else "", "saved": _fallback_url(agent), "applied": ""}
+    a = agent.twilio
+    if a.sid and a.token and own:
+        try:
+            _st, r = web.request("GET", f"{a.base}/2010-04-01/Accounts/{a.sid}/IncomingPhoneNumbers.json?PhoneNumber={quote(own)}", a._auth())
+            found = (r or {}).get("incoming_phone_numbers") or []
+            out["applied"] = (found[0].get("voice_fallback_url") or "") if found else ""
+        except Exception:  # noqa: BLE001
+            pass
+    out["protected"] = bool(out["saved"] and out["applied"] == out["saved"])
+    out["steps"] = ["In Twilio open Develop, TwiML Bins, Create new TwiML Bin.", "Name it, paste the text above, press Create, then copy the URL it shows.", "Paste that URL here and press Save backup. The agent sets it on your number for you."]
+    return out
+
+
+def twilio_fallback_set(agent, url):
+    """Saves the backup address and sets it on the Twilio number, so Twilio asks it whenever the agent cannot be reached. An empty address removes it."""
+    url = str(url or "").strip()
+    save(agent, "twilio", {"fallback_url": url})
+    a = agent.twilio; own = str((agent.cfg.get("twilio") or {}).get("from_number") or "").replace(" ", "")
+    if not (a.sid and a.token and own):
+        return {"saved": url, "applied": False, "message": "Saved. Connect Twilio and choose your number, then press Save backup again to set it on the number."}
+    try:
+        _st, r = web.request("GET", f"{a.base}/2010-04-01/Accounts/{a.sid}/IncomingPhoneNumbers.json?PhoneNumber={quote(own)}", a._auth())
+        found = (r or {}).get("incoming_phone_numbers") or []
+        if not found:
+            raise SetupError(own + " is not a number on that Twilio account.")
+        web.request("POST", f"{a.base}/2010-04-01/Accounts/{a.sid}/IncomingPhoneNumbers/{found[0]['sid']}.json", a._auth(), form={"VoiceFallbackUrl": url, "VoiceFallbackMethod": "POST"})
+    except SetupError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise SetupError(_explain(e))
+    return {"saved": url, "applied": True, "message": ("Backup set. If Twilio cannot reach this computer, it will ask that address and the call goes to your team." if url else "Backup removed.")}
 
 
 def twilio_point(agent, number):
@@ -354,7 +418,7 @@ def twilio_point(agent, number):
         found = (r or {}).get("incoming_phone_numbers") or []
         if not found:
             raise SetupError(number + " is not a number on that Twilio account.")
-        web.request("POST", f"{a.base}/2010-04-01/Accounts/{a.sid}/IncomingPhoneNumbers/{found[0]['sid']}.json", a._auth(), form={"VoiceUrl": base + "/twilio/call", "VoiceMethod": "POST", "SmsUrl": base + "/twilio/sms", "SmsMethod": "POST"})
+        web.request("POST", f"{a.base}/2010-04-01/Accounts/{a.sid}/IncomingPhoneNumbers/{found[0]['sid']}.json", a._auth(), form=_point_form(agent, base))
     except SetupError:
         raise
     except Exception as e:  # noqa: BLE001

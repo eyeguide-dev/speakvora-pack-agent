@@ -1,5 +1,12 @@
 # Workflows reference
 
+![Workflows list](https://speakvora.com/assets/guide/sheet-workflows.png)
+
+![The workflow builder](https://speakvora.com/assets/guide/sheet-workflow-builder.png)
+
+*Screens come from a throwaway test setup; addresses and secrets shown are fake examples.*
+
+
 `workflows.json` is a list of workflows: **on** (what starts it), optional **when**, and **do** (actions in order). Every send passes the safety checks first.
 
 ## Triggers (`on`)

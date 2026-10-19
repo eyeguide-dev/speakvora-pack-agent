@@ -2789,6 +2789,27 @@ class SimpleConnections(unittest.TestCase):
         finally:
             r.close()
 
+    def test_call_fallback_for_when_the_computer_is_off(self):
+        from speakvora_pack_agent import connect as SU
+        r = Rig(extra={"public_base_url": "https://agent.example", "facts": {"phone": "+15552220000"}})
+        try:
+            f = SU.twilio_fallback(r.agent)
+            self.assertIn("<Dial", f["twiml"]); self.assertIn("+15552220000", f["twiml"]); self.assertFalse(f["protected"])
+            with self.assertRaises(SU.SetupError): SU.twilio_fallback_set(r.agent, "http://not-secure.example/x")
+            o = SU.twilio_fallback_set(r.agent, "https://handler.twilio.com/twiml/EHabc"); self.assertTrue(o["applied"])
+            f = SU.twilio_fallback(r.agent); self.assertTrue(f["protected"]); self.assertEqual(f["applied"], "https://handler.twilio.com/twiml/EHabc")
+            SU.twilio_point(r.agent, "+15550001111")                                           # pointing the number later keeps the backup in place
+            self.assertTrue(SU.twilio_fallback(r.agent)["protected"])
+            o = SU.twilio_fallback_set(r.agent, ""); self.assertEqual(SU.twilio_fallback(r.agent)["saved"], "")
+        finally:
+            r.close()
+        r = Rig(extra={"public_base_url": "https://agent.example"})
+        try:
+            f = SU.twilio_fallback(r.agent)
+            self.assertEqual(f["twiml"], ""); self.assertIn("customer service phone", f["phone_problem"])         # no business phone, no forwarding text
+        finally:
+            r.close()
+
     def test_the_forms_are_the_simple_ones(self):
         from speakvora_pack_agent import ui
         for s in ("function emailForm", "function twilioForm", "Find my numbers", "Incoming webhook URL", "Advanced: slash commands", "Point '+number+' at my agent", "Gmail needs an app password"):
