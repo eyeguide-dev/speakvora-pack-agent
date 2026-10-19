@@ -42,8 +42,13 @@ CARDS = {
     "teams": {"title": "Microsoft Teams", "blurb": "Posts to a Teams channel. Text only.", "fields": [
         ("webhook_url", "Workflow / webhook URL", "secret", "teams.webhook_url", "TEAMS_WEBHOOK_URL", "In Teams: channel > Workflows > \"Post to a channel when a webhook request is received\", then copy its URL."),
     ]},
-    "calendar": {"title": "Google or Outlook calendar", "blurb": "Reads your bookings to send reminders. Use your calendar's private link, no developer work needed.", "fields": [
+    "calendar": {"title": "Google or Outlook calendar", "blurb": "Reads your bookings to send reminders (a private link is enough). To also add, move and cancel bookings in Google Calendar, fill in the Google sign-in details below.", "fields": [
         ("ics_url", "Private calendar link (iCal / ICS)", "secret", "google_calendar.ics_url", "CALENDAR_ICS_URL", "Google Calendar: Settings > your calendar > Integrate calendar > Secret address in iCal format. Outlook: Settings > Calendar > Shared calendars > Publish a calendar > ICS link."),
+        ("client_id", "Google client ID (to change bookings)", "text", "google_calendar.client_id", None, "Optional. From your own Google Cloud project: APIs and services > Credentials > OAuth client ID (Web application). Step by step: docs/google-calendar.md."),
+        ("client_secret", "Google client secret", "secret", "google_calendar.client_secret", "GOOGLE_CLIENT_SECRET", "Shown once when you create the client."),
+        ("refresh_token", "Google refresh token", "secret", "google_calendar.refresh_token", "GOOGLE_REFRESH_TOKEN", "Get it in the Google OAuth Playground with the scope https://www.googleapis.com/auth/calendar.events (see docs/google-calendar.md)."),
+        ("calendar_id", "Which calendar", "text", "google_calendar.calendar_id", None, "Leave empty for your main calendar, or paste a calendar's ID (calendar settings > Integrate calendar) to keep bookings apart."),
+        ("allow_create", "What the agent may do", "select", "google_calendar.allow_create", None, "Read only is the safe default. The other choice lets it add bookings and move, cancel or delete only the ones it added itself; it never touches your own events."),
     ]},
     "email": {"title": "Email", "blurb": "Sends emails from your own mailbox. Gmail needs an app password, not your normal one.", "fields": [
         ("host", "Mail server", "text", "email.host", None, "Gmail: smtp.gmail.com. Outlook: smtp.office365.com."),
@@ -63,7 +68,7 @@ CARDS = {
         ("base_url", "Server address", "url", "reasoner.base_url", None, "Only for a local model or another company that works like OpenAI (Groq, Together, OpenRouter, Azure). Example: http://localhost:11434/v1. Leave empty for Claude and OpenAI."),
     ]},
 }
-SELECTS = {"provider": [("anthropic", "Claude (Anthropic)"), ("openai", "ChatGPT (OpenAI)"), ("local", "Another or local AI (needs a server address)")], "mode": [("strict", "Careful"), ("standard", "Normal"), ("open", "Open (no limits)")]}
+SELECTS = {"provider": [("anthropic", "Claude (Anthropic)"), ("openai", "ChatGPT (OpenAI)"), ("local", "Another or local AI (needs a server address)")], "allow_create": [("", "Read only"), ("true", "Add, move, cancel and delete its own bookings")], "mode": [("strict", "Careful"), ("standard", "Normal"), ("open", "Open (no limits)")]}
 # which card a workflow action needs
 NEEDS = {"sms": "twilio", "call": "twilio", "slack": "slack", "teams": "teams", "notify": "slack", "email": "email", "calendar_create": "calendar", "calendar_reschedule": "calendar", "calendar_cancel": "calendar", "calendar_delete": "calendar", "reason": "ai"}
 TRIGGER_WORDS = {"event": "when your app sends this event", "calendar": "from your calendar", "sms": "when someone texts", "call": "when someone calls", "email": "when someone emails", "slack_command": "from a Slack command", "schedule": "every day"}
@@ -137,6 +142,8 @@ def _field_view(agent, raw, card, f):
     else:
         txt = "" if resolved is None else str(resolved)
         v["value"] = "" if (not txt or "YOUR-" in txt) else txt
+    if key == "allow_create":
+        v["value"] = "true" if resolved else ""
     if kind == "select":
         v["options"] = SELECTS[key] if key in SELECTS else [(z, z) for z in TIMEZONES]
         if key == "provider" and not v["value"]:
@@ -211,6 +218,8 @@ def save(agent, card, values):
                 if not re.match(r"^https?://[^\s]+$", val):
                     raise SetupError(f"{label} must be a web address that starts with https:// (copy the secret iCal address from your calendar's settings).")
             SS.set_value(sd, env, val); _set(raw, path, "env:" + env); continue
+        if key == "allow_create":
+            _set(raw, path, True if val == "true" else None); continue
         if kind == "number":
             if val and not val.isdigit():
                 raise SetupError(f"{label} must be a number.")
@@ -243,8 +252,15 @@ def save(agent, card, values):
         if card == "ai" and key == "provider":
             _set(raw, "reasoner.local", None)
         _set(raw, path, val if val != "" else None)
-    if card == "calendar" and any(str(v).strip() for k, v in (values or {}).items() if k == "ics_url"):
-        _set(raw, "google_calendar.mode", "ics")
+    if card == "calendar":
+        gc = raw.get("google_calendar") or {}; given = {k for k, v in (values or {}).items() if str(v or "").strip()}
+        oauth_ready = bool(gc.get("client_id") and gc.get("client_secret") and gc.get("refresh_token"))
+        if "ics_url" in given and not given & {"client_id", "client_secret", "refresh_token"}:         # the last thing the owner pasted decides
+            _set(raw, "google_calendar.mode", "ics")
+        elif oauth_ready:
+            _set(raw, "google_calendar.mode", "oauth")
+        elif gc.get("ics_url"):
+            _set(raw, "google_calendar.mode", "ics")
     if card == "ai" and _get(raw, "reasoner.local") and not _get(raw, "reasoner.api_key"):
         pass
     _write_raw(agent, raw); _reload(agent)
@@ -395,7 +411,8 @@ def test(agent, card, opts=None):
                     if "BEGIN:VCALENDAR" not in (txt if isinstance(txt, str) else ""):
                         return {"ok": False, "message": "That address did not return a calendar. Use the secret iCal address (it ends in .ics) from your calendar's settings."}
             now = time.time(); ev = agent._events(now - 86400, now + 7 * 86400)
-            return _passed(agent, card, f"Calendar read: {len(ev)} event(s) in the next 7 days." + ("" if ev else " (An empty calendar is fine; check it is the right one.)"))
+            can = " The agent may add, move, cancel and delete the bookings it creates." if (agent.gcal.mode == "oauth" and agent.gcal.allow_create) else ""
+            return _passed(agent, card, f"Calendar read: {len(ev)} event(s) in the next 7 days." + ("" if ev else " (An empty calendar is fine; check it is the right one.)") + can)
         if card == "email":
             m = agent.mail; port = int(m.cfg.get("port", 465))
             s = smtplib.SMTP_SSL(m.cfg["host"], port, timeout=20) if port == 465 else smtplib.SMTP(m.cfg["host"], port, timeout=20)

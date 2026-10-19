@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.27.0
+Google Calendar is complete for everyday business use: connect it from the dashboard (Connect, Google Calendar: client ID, client secret, refresh token, which calendar, what the agent may do), double-booking protection before adding or moving a booking (`ignore_busy` or `double_booking: allow` to override), and a clear test result. Tested live against Google Calendar: create, move, cancel, delete, double booking refused, a reminder fired from a live read, and the agent refused to touch an event it did not create. See docs/google-calendar.md.
+
 ## 0.26.0
 Google Calendar now changes bookings, not just adds them: new workflow actions `calendar_reschedule`, `calendar_cancel` and `calendar_delete` (with `ref` on `calendar_create`), used by the appointment recipes for changed and cancelled bookings. The agent only changes entries it created itself. The calendar link box now rejects text that is not a web address and the test checks that the link returns a real calendar. Tested live against Google Calendar. See docs/google-calendar.md.
 

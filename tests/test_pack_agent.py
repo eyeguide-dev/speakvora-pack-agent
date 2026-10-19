@@ -801,6 +801,26 @@ class ConnectTab(unittest.TestCase):
         self.assertEqual(save(self.r.mock.url + "/ics")[0], 200); st, r = self.call("POST", "/dash/api/setup/test", {"card": "calendar", "opts": {}})
         self.assertFalse(r["ok"]); self.assertIn("did not return a calendar", r["message"])
 
+    def test_calendar_card_takes_google_sign_in_details_and_switches_to_change_mode(self):
+        save = lambda v: self.call("POST", "/dash/api/setup/save", {"card": "calendar", "values": v})        # noqa: E731
+        st, r = save({"client_id": "id.apps.googleusercontent.com", "client_secret": "GOCSPX-abcdefghijklmnopqrstuvwx", "refresh_token": "1//abcdefghijklmnopqrstuvwxyz0123456789", "calendar_id": "team@group.calendar.google.com", "allow_create": "true"}); self.assertEqual(st, 200)
+        gc = self.r.agent.cfg["google_calendar"]; self.assertEqual(gc["mode"], "oauth"); self.assertTrue(gc["allow_create"]); self.assertEqual(gc["calendar_id"], "team@group.calendar.google.com"); self.assertTrue(self.r.agent.gcal.configured)
+        card = self.card("calendar"); fv = {f["key"]: f for f in card["fields"]}; self.assertEqual(fv["allow_create"]["value"], "true"); self.assertTrue(fv["client_secret"]["set"]); self.assertNotIn("GOCSPX", json.dumps(card))
+        save({"allow_create": ""}); self.assertFalse(self.r.agent.cfg["google_calendar"].get("allow_create"))
+
+    def test_calendar_refuses_double_booking_unless_told_to(self):
+        r = Rig(); g = r.agent.gcal; t0 = int(NOON + 86400)
+        g.create("Appointment: Ann", t0, t0 + 1800, ref="A1")
+        with self.assertRaises(PermissionError) as cm: g.create("Appointment: Cy", t0 + 900, t0 + 2700, ref="A2")
+        self.assertIn("already taken", str(cm.exception)); self.assertEqual(len(r.mock.cal), 1)
+        g.create("Appointment: Cy", t0 + 1800, t0 + 3600, ref="A2")                                                    # back to back is fine
+        with self.assertRaises(PermissionError): g.reschedule("A1", t0 + 1900, t0 + 3000)                                # moving onto the other booking is refused
+        g.reschedule("A1", t0 + 300, t0 + 1500)                                                                         # moving within its own old slot is fine
+        g.create("Appointment: Di", t0 + 300, t0 + 1500, ref="A3", ignore_busy=True); self.assertEqual(len(r.mock.cal), 3)
+        r.mock.cal["ev1"]["transparency"] = r.mock.cal["ev3"]["transparency"] = "transparent"; g.create("Appointment: Ed", t0 + 300, t0 + 600, ref="A4"); self.assertEqual(len(r.mock.cal), 4)   # an entry marked free never blocks
+        r.close()
+        r = Rig(extra={"google_calendar": {"double_booking": "allow"}}); r.agent.gcal.create("x", t0, t0 + 1800); r.agent.gcal.create("y", t0, t0 + 1800); self.assertEqual(len(r.mock.cal), 2); r.close()
+
     def test_going_live_needs_a_checklist_and_is_remembered(self):
         st, s = self.call("GET", "/dash/api/setup"); self.assertFalse(s["live"]); self.assertFalse(s["readiness"]["ok"])
         st, r = self.call("POST", "/dash/api/setup/live", {"on": True}); self.assertEqual(st, 400); self.assertIn("passed its test", r["message"]); self.assertTrue(self.r.agent.dry)

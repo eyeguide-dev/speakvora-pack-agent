@@ -1,6 +1,6 @@
 # Google Calendar: create, move, cancel and delete bookings
 
-Tested live (agent 0.26.0) against a real Google Calendar: create, reschedule, cancel and delete, plus a check that the agent refuses to change an event it did not create.
+Tested live (agent 0.27.0) against a real Google Calendar: create, reschedule, cancel, delete, double-booking protection, reminders from a live read, and a check that the agent refuses to change an event it did not create.
 
 ## Two ways to connect
 * **Read only (easiest).** Calendar settings, your calendar, "Secret address in iCal format". Paste it in the dashboard, Connect, Google Calendar (it must be a web address; the test checks that it really returns a calendar). The agent reads bookings and sends reminders. It cannot change the calendar.
@@ -11,7 +11,7 @@ Tested live (agent 0.26.0) against a real Google Calendar: create, reschedule, c
 2. OAuth consent screen: type External, add your own Google account as a test user.
 3. Create an **OAuth client ID** of type Web application with the redirect URI `https://developers.google.com/oauthplayground`.
 4. In the OAuth Playground (gear icon: tick "Use your own OAuth credentials", paste the client ID and secret), authorize the scope `https://www.googleapis.com/auth/calendar.events` with your account, press "Exchange authorization code for tokens" and copy the **refresh token**.
-5. In `agent.json`:
+5. Easiest: dashboard, **Connect**, **Google Calendar**: paste the client ID, client secret and refresh token, pick **Add, move, cancel and delete its own bookings**, optionally a calendar ID, and press Save and test. Or in `agent.json`:
 ```json
 "google_calendar": {"mode": "oauth", "client_id": "env:GOOGLE_CLIENT_ID", "client_secret": "env:GOOGLE_CLIENT_SECRET", "refresh_token": "env:GOOGLE_REFRESH_TOKEN", "calendar_id": "primary", "allow_create": true}
 ```
@@ -31,6 +31,13 @@ You can use the same actions in your own workflows:
 ```json
 {"action": "calendar_reschedule", "ref": "{{appointment.id}}", "start": "{{start_epoch}}", "minutes": "{{minutes}}"}
 ```
+
+## Double-booking protection
+Before it adds or moves a booking the agent looks at that calendar. If a timed entry that is marked busy already overlaps, it does not book and the workflow shows why ("That time is already taken..."), so you can alert your team. Back-to-back bookings are fine; all-day entries and entries marked free never block. Moving a booking within or next to its own old slot is fine. To allow double booking set `"double_booking": "allow"` in `google_calendar`, or add `"ignore_busy": true` to one action.
+
+## What it covers, and what it does not
+Covers: reading bookings for reminders and daily summaries, adding, moving, cancelling and deleting the agent's own bookings from your app's events, double-booking protection, one chosen calendar, the offline outbox.
+Does not (yet): invite guests or add video-call links, change repeating series, write to Outlook/Microsoft calendars (read only), or let the AI move or cancel a booking during a conversation (the AI can add one when you allow it).
 
 ## Safety
 * Entries are found by your booking reference and a tag the agent adds when it creates them. Anything without the tag is refused ("No calendar entry made by this agent was found").

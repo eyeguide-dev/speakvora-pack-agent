@@ -712,14 +712,14 @@ class Agent:
         if kind == "calendar_create":
             if self.dry:
                 self.record(wf, kind, "dry_run", title=a.get("title")); return {"status": "dry_run"}
-            start = int(a["start"]); self.gcal.create(a["title"], start, start + 60 * int(a.get("minutes", 60)), a.get("description", ""), a.get("location", ""), ref=a.get("ref", ""))
+            start = int(a["start"]); self.gcal.create(a["title"], start, start + 60 * int(a.get("minutes", 60)), a.get("description", ""), a.get("location", ""), ref=a.get("ref", ""), ignore_busy=bool(a.get("ignore_busy")))
             self.record(wf, kind, "created", title=a.get("title")); return {"status": "created"}
         if kind in ("calendar_reschedule", "calendar_cancel", "calendar_delete"):
             if self.dry:
                 self.record(wf, kind, "dry_run", ref=a.get("ref")); return {"status": "dry_run"}
             ref = str(a.get("ref", "")).strip()
             if kind == "calendar_reschedule":
-                start = int(a["start"]); self.gcal.reschedule(ref, start, start + 60 * int(a.get("minutes", 60))); done = "rescheduled"
+                start = int(a["start"]); self.gcal.reschedule(ref, start, start + 60 * int(a.get("minutes", 60)), ignore_busy=bool(a.get("ignore_busy"))); done = "rescheduled"
             elif kind == "calendar_cancel":
                 self.gcal.cancel(ref); done = "cancelled"
             else:

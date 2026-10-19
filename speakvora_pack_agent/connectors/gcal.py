@@ -87,9 +87,31 @@ class GoogleCalendar:
         base = f"{self.api}/calendar/v3/calendars/{quote(self.calendar_id, safe='')}/events"
         return base + ("/" + quote(event_id, safe="") if event_id else "")
 
-    def create(self, title, start_ts, end_ts, description="", location="", ref=""):
+    def conflicts(self, start_ts, end_ts, exclude_id=""):
+        """Timed, busy entries that overlap [start_ts, end_ts). All-day entries and ones marked free never block a booking."""
+        iso = lambda t: dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+        q = f"?singleEvents=true&orderBy=startTime&maxResults=50&timeMin={iso(start_ts)}&timeMax={iso(end_ts)}"
+        _st, r = http.request("GET", self._ev_url() + q, {"authorization": "Bearer " + self._access()})
+        p = lambda x: int(dt.datetime.fromisoformat(x.replace("Z", "+00:00")).timestamp())  # noqa: E731
+        out = []
+        for e in (r.get("items") or []):
+            st, en = (e.get("start") or {}).get("dateTime"), (e.get("end") or {}).get("dateTime")
+            if not st or not en or e.get("status") == "cancelled" or e.get("transparency") == "transparent" or e.get("id") == exclude_id:
+                continue
+            if p(st) < end_ts and p(en) > start_ts:
+                out.append(e)
+        return out
+
+    def _guard(self, start_ts, end_ts, exclude_id="", ignore=False):
+        if ignore or self.cfg.get("double_booking") == "allow":
+            return
+        hit = self.conflicts(start_ts, end_ts, exclude_id)
+        if hit:
+            raise PermissionError("That time is already taken on the calendar (" + str(hit[0].get("summary") or "another entry")[:40] + "). Pick another time, or set google_calendar.double_booking to \"allow\".")
+
+    def create(self, title, start_ts, end_ts, description="", location="", ref="", ignore_busy=False):
         """Adds an event and tags it as made by this agent (and with your booking reference, if you give one) so it can later be moved or cancelled by the agent and by nothing else."""
-        self._writable()
+        self._writable(); self._guard(start_ts, end_ts, ignore=ignore_busy)
         iso = lambda t: dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
         priv = {"speakvora": "1"}
         if ref:
@@ -109,8 +131,8 @@ class GoogleCalendar:
                 return e
         raise PermissionError(f"No calendar entry made by this agent was found for reference {ref}.")
 
-    def reschedule(self, ref, start_ts, end_ts):
-        self._writable(); e = self.find(ref)
+    def reschedule(self, ref, start_ts, end_ts, ignore_busy=False):
+        self._writable(); e = self.find(ref); self._guard(start_ts, end_ts, exclude_id=e["id"], ignore=ignore_busy)
         iso = lambda t: dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
         return http.request("PATCH", self._ev_url(e["id"]), {"authorization": "Bearer " + self._access()}, body={"start": {"dateTime": iso(start_ts)}, "end": {"dateTime": iso(end_ts)}})[1]
 
