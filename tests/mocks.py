@@ -7,6 +7,7 @@ from urllib.parse import parse_qs
 class Mock:
     def __init__(self):
         self.requests, self.events, self.fail = [], [], {}
+        self.cal = {}                                                    # events made through the fake Google Calendar: id -> event
         mock = self
 
         class H(BaseHTTPRequestHandler):
@@ -25,8 +26,8 @@ class Mock:
                 self.reply(*mock.route(req))
 
             def reply(self, code, obj):
-                b = json.dumps(obj).encode(); self.send_response(code); self.send_header("content-type", "application/json"); self.send_header("content-length", str(len(b))); self.end_headers(); self.wfile.write(b)
-            do_GET = do_POST = handle_any
+                b = obj.encode() if isinstance(obj, str) else json.dumps(obj).encode(); self.send_response(code); self.send_header("content-type", "text/calendar" if isinstance(obj, str) else "application/json"); self.send_header("content-length", str(len(b))); self.end_headers(); self.wfile.write(b)
+            do_GET = do_POST = do_PATCH = do_DELETE = handle_any
 
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
         self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
@@ -67,15 +68,30 @@ class Mock:
         if p == "/token":
             return 200, {"access_token": "ya29.test", "expires_in": 3600}
         if p.endswith("/events") and r["method"] == "GET":
-            return 200, {"items": self.events}
+            want = [x.split("=", 1) for x in __import__("urllib.parse").parse.parse_qs(r.get("query", "")).get("privateExtendedProperty", [])]
+            if want:
+                return 200, {"items": [e for e in self.cal.values() if all(((e.get("extendedProperties") or {}).get("private") or {}).get(k) == v for k, v in want)]}
+            return 200, {"items": self.events + list(self.cal.values())}
         if p.endswith("/events") and r["method"] == "POST":
-            return 200, {"id": "newev"}
+            ev = dict(r["json"] or {}); ev["id"] = "ev" + str(len(self.cal) + 1); ev["status"] = "confirmed"; self.cal[ev["id"]] = ev; return 200, ev
+        m = re.search(r"/events/([^/]+)$", p)
+        if m and r["method"] == "PATCH":
+            ev = self.cal.get(m.group(1))
+            if not ev:
+                return 404, {"error": "gone"}
+            ev.update(r["json"] or {}); return 200, ev
+        if m and r["method"] == "DELETE":
+            if self.cal.pop(m.group(1), None) is None:
+                return 404, {"error": "gone"}
+            return 204, ""
         if p.startswith("/teams-hook"):
             return 200, {"ok": 1}
         if p.endswith("/calendarView"):
             return 200, {"value": getattr(self, "graph_events", [])}
         if p.endswith("/tickets") and r["method"] == "POST":
             return 201, {"id": "T-100"}
+        if p.startswith("/ical"):
+            return 200, "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"
         if p.startswith("/ics"):
             return 200, {}
         return 404, {"error": "unknown"}

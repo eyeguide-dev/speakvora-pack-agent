@@ -43,7 +43,7 @@ def _requests(agent):
         return []
 
 
-KIND_LABEL = {"sms": "Text message", "call": "Phone call", "slack": "Slack message", "teams": "Teams message", "email": "Email", "calendar_create": "Calendar entry", "webhook": "Message to your app", "http": "Message to your app", "reason": "Suggestion from your AI"}
+KIND_LABEL = {"sms": "Text message", "call": "Phone call", "slack": "Slack message", "teams": "Teams message", "email": "Email", "calendar_create": "Calendar entry", "calendar_reschedule": "Calendar entry moved", "calendar_cancel": "Calendar entry cancelled", "calendar_delete": "Calendar entry removed", "webhook": "Message to your app", "http": "Message to your app", "reason": "Suggestion from your AI"}
 STATUS_LABEL = {"sent": "Sent", "delivered": "Delivered", "undelivered": "Not delivered", "queued": "Waiting for internet", "pending": "Sending", "sending": "Sending", "needs_approval": "Waiting for you", "proposed": "Waiting for you",
                 "needs_review": "Please check", "failed": "Did not send", "blocked": "Held back by a safety rule", "expired": "Too old, not sent", "cancelled": "Stopped", "approved": "Approved", "answered": "Answered", "rejected": "Declined"}
 TONE = {"sent": "good", "delivered": "good", "answered": "good", "approved": "good", "queued": "wait", "pending": "wait", "sending": "wait", "needs_approval": "you", "proposed": "you", "needs_review": "you", "failed": "bad", "undelivered": "bad", "blocked": "warn", "expired": "warn", "cancelled": "mute", "rejected": "mute"}

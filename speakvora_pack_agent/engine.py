@@ -19,7 +19,7 @@ from .state import State
 from . import web
 
 PHONE_RX = re.compile(r"(\+?\d[\d\-\s().]{8,}\d)")
-QUEUEABLE = ("sms", "call", "slack", "teams", "email", "webhook", "http", "calendar_create", "reason")       # actions that wait in the outbox when the network is down
+QUEUEABLE = ("sms", "call", "slack", "teams", "email", "webhook", "http", "calendar_create", "calendar_reschedule", "calendar_cancel", "calendar_delete", "reason")       # actions that wait in the outbox when the network is down
 KEEP_WHILE_BLOCKED = ("quiet_hours", "hourly_limit", "recipient_daily_limit")                      # a queued action blocked only by timing waits (until it expires); any other refusal drops it
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
@@ -712,8 +712,19 @@ class Agent:
         if kind == "calendar_create":
             if self.dry:
                 self.record(wf, kind, "dry_run", title=a.get("title")); return {"status": "dry_run"}
-            start = int(a["start"]); self.gcal.create(a["title"], start, start + 60 * int(a.get("minutes", 60)), a.get("description", ""), a.get("location", ""))
+            start = int(a["start"]); self.gcal.create(a["title"], start, start + 60 * int(a.get("minutes", 60)), a.get("description", ""), a.get("location", ""), ref=a.get("ref", ""))
             self.record(wf, kind, "created", title=a.get("title")); return {"status": "created"}
+        if kind in ("calendar_reschedule", "calendar_cancel", "calendar_delete"):
+            if self.dry:
+                self.record(wf, kind, "dry_run", ref=a.get("ref")); return {"status": "dry_run"}
+            ref = str(a.get("ref", "")).strip()
+            if kind == "calendar_reschedule":
+                start = int(a["start"]); self.gcal.reschedule(ref, start, start + 60 * int(a.get("minutes", 60))); done = "rescheduled"
+            elif kind == "calendar_cancel":
+                self.gcal.cancel(ref); done = "cancelled"
+            else:
+                self.gcal.delete(ref); done = "deleted"
+            self.record(wf, kind, done, ref=ref); return {"status": done}
         raise PackError(f"Unknown action '{kind}' in workflow {wf}.")
 
     # ---- triggers ------------------------------------------------------------------------------------------------------------------------------

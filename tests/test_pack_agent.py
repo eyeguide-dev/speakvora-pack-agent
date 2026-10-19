@@ -176,6 +176,27 @@ class Connectors(unittest.TestCase):
         r = Rig(extra={"google_calendar": {"allow_create": False}}); out = r.event("reservation.created", customer=CUST, party="4", start_epoch=int(NOON + 86400), start_text="x")
         self.assertEqual([x["status"] for x in out["workflows"][0]["results"] if x["action"] == "calendar_create"], ["skipped"]); r.close()
 
+    def test_appointment_calendar_lifecycle_create_move_cancel_delete_only_agents_own_events(self):
+        r = Rig(); t0 = int(NOON + 86400); cal = r.mock.cal
+        r.agent.workflows = [{"name": "appointment_created", "on": {"event": "appointment.created"}, "do": [{"action": "calendar_create", "title": "Appointment: {{customer.name}}", "ref": "{{appointment.id}}", "start": "{{start_epoch}}", "minutes": "{{minutes}}", "description": "Phone: {{customer.phone}}"}]},
+                             {"name": "appointment_changed", "on": {"event": "appointment.changed"}, "do": [{"action": "calendar_reschedule", "ref": "{{appointment.id}}", "start": "{{start_epoch}}", "minutes": "{{minutes}}"}]},
+                             {"name": "appointment_cancelled", "on": {"event": "appointment.cancelled"}, "do": [{"action": "calendar_cancel", "ref": "{{appointment.id}}"}]}]
+        r.agent.handle_event({"event": "appointment.created", "id": "a-1", "customer": CUST, "appointment": {"id": "BK-7"}, "start_epoch": t0, "start_text": "Tue 2 PM", "minutes": 30})
+        self.assertEqual(len(cal), 1); ev = next(iter(cal.values())); self.assertEqual(ev["extendedProperties"]["private"], {"speakvora": "1", "ref": "BK-7"})
+        r.agent.handle_event({"event": "appointment.changed", "id": "a-2", "customer": CUST, "appointment": {"id": "BK-7"}, "start_epoch": t0 + 7200, "start_text": "Tue 4 PM", "minutes": 45})
+        moved = next(iter(cal.values())); self.assertEqual(moved["start"]["dateTime"], dt.datetime.fromtimestamp(t0 + 7200, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        r.agent.handle_event({"event": "appointment.cancelled", "id": "a-3", "customer": CUST, "appointment": {"id": "BK-7"}})
+        self.assertTrue(next(iter(cal.values()))["summary"].startswith("Cancelled: ")); self.assertEqual(next(iter(cal.values()))["transparency"], "transparent")
+        cal["human1"] = {"id": "human1", "summary": "Dentist (mine)", "status": "confirmed", "extendedProperties": {"private": {"ref": "BK-9"}}}            # an event the agent did not make
+        out = r.agent.handle_event({"event": "appointment.cancelled", "id": "a-4", "customer": CUST, "appointment": {"id": "BK-9"}})
+        self.assertEqual(cal["human1"]["summary"], "Dentist (mine)"); self.assertIn("skipped", [x["status"] for w in out["workflows"] for x in w["results"] if x["action"] == "calendar_cancel"])
+        with self.assertRaises(PermissionError): r.agent.gcal.delete("BK-9")                                             # not the agent's event, even when asked directly
+        cal["ev1"]["status"] = "confirmed"; self.assertEqual(r.agent.gcal.find("BK-7")["id"], "ev1")                        # cancelled entries stay, but a live one is found by its reference
+        self.assertTrue(r.agent.gcal.delete("BK-7")["deleted"]); self.assertNotIn("ev1", cal); self.assertIn("human1", cal)
+        wfs = r.agent.workflows; r.close()
+        r = Rig(extra={"google_calendar": {"allow_create": False}}); r.agent.workflows = wfs; out = r.agent.handle_event({"event": "appointment.changed", "id": "b-1", "customer": CUST, "appointment": {"id": "X"}, "start_epoch": t0, "minutes": 30})
+        self.assertEqual([x["status"] for w in out["workflows"] for x in w["results"] if x["action"] == "calendar_reschedule"], ["skipped"]); r.close()
+
     def test_daily_briefing_posts_once_a_day(self):
         r = Rig(now=dt.datetime(2026, 10, 12, 14, 0, tzinfo=dt.timezone.utc).timestamp()); r.agent.tick(); r.agent.tick()          # 10:00 New York
         self.assertEqual(len([q for q in r.mock.calls("chat.postMessage") if "Today's reservations" in q["json"]["text"]]), 1); r.close()
@@ -771,6 +792,14 @@ class ConnectTab(unittest.TestCase):
         self.assertNotIn("order_ready", [w["name"] for w in self.r.agent.workflows]); self.assertFalse(next(w for w in json.load(open(self.r.agent.cfg["workflows"]))["workflows"] if w["name"] == "order_ready")["enabled"])
         self.assertEqual(self.r.agent.handle_event({"event": "order.ready", "id": "x1", "customer": CUST, "order": {"number": 1}})["matched"], 0)
         self.call("POST", "/dash/api/setup/workflow", {"name": "order_ready", "enabled": True}); self.assertIn("order_ready", [w["name"] for w in self.r.agent.workflows]); self.assertEqual(self.call("POST", "/dash/api/setup/workflow", {"name": "nope", "enabled": True})[0], 400)
+
+    def test_calendar_link_must_be_a_real_web_address_and_a_real_calendar(self):
+        save = lambda v: self.call("POST", "/dash/api/setup/save", {"card": "calendar", "values": {"ics_url": v}})        # noqa: E731
+        st, r = save("hen do the speakvora introducing and customers getting replied"); self.assertEqual(st, 400); self.assertIn("web address", r["message"])
+        self.assertEqual(save("ftp://nope/c.ics")[0], 400); self.assertEqual(save("webcal://example.test/c.ics")[0], 200)
+        self.assertEqual(save(self.r.mock.url + "/ical")[0], 200); st, r = self.call("POST", "/dash/api/setup/test", {"card": "calendar", "opts": {}}); self.assertTrue(r["ok"], r)
+        self.assertEqual(save(self.r.mock.url + "/ics")[0], 200); st, r = self.call("POST", "/dash/api/setup/test", {"card": "calendar", "opts": {}})
+        self.assertFalse(r["ok"]); self.assertIn("did not return a calendar", r["message"])
 
     def test_going_live_needs_a_checklist_and_is_remembered(self):
         st, s = self.call("GET", "/dash/api/setup"); self.assertFalse(s["live"]); self.assertFalse(s["readiness"]["ok"])

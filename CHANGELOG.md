@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.26.0
+Google Calendar now changes bookings, not just adds them: new workflow actions `calendar_reschedule`, `calendar_cancel` and `calendar_delete` (with `ref` on `calendar_create`), used by the appointment recipes for changed and cancelled bookings. The agent only changes entries it created itself. The calendar link box now rejects text that is not a web address and the test checks that the link returns a real calendar. Tested live against Google Calendar. See docs/google-calendar.md.
+
 ## 0.25.0
 Activity log (Settings): every change made in the dashboard, by whom and when, without what you typed. View-only access: a separate code that can look at Home, activity and the library but cannot change anything. See docs/roles-and-activity-log.md.
 

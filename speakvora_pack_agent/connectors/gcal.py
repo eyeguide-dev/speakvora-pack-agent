@@ -79,9 +79,48 @@ class GoogleCalendar:
             out.append({"id": e.get("id", ""), "title": e.get("summary", ""), "start": p(s), "end": p(en), "description": e.get("description", ""), "location": e.get("location", "")})
         return out
 
-    def create(self, title, start_ts, end_ts, description="", location=""):
+    def _writable(self):
         if not (self.mode == "oauth" and self.allow_create):
-            raise PermissionError("Creating calendar events is off. Set google_calendar.allow_create to true (oauth mode) if you want it.")
+            raise PermissionError("Changing calendar events is off. Set google_calendar.allow_create to true (oauth mode) if you want it.")
+
+    def _ev_url(self, event_id=""):
+        base = f"{self.api}/calendar/v3/calendars/{quote(self.calendar_id, safe='')}/events"
+        return base + ("/" + quote(event_id, safe="") if event_id else "")
+
+    def create(self, title, start_ts, end_ts, description="", location="", ref=""):
+        """Adds an event and tags it as made by this agent (and with your booking reference, if you give one) so it can later be moved or cancelled by the agent and by nothing else."""
+        self._writable()
         iso = lambda t: dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
-        body = {"summary": title, "description": description, "location": location, "start": {"dateTime": iso(start_ts)}, "end": {"dateTime": iso(end_ts)}}
-        return http.request("POST", f"{self.api}/calendar/v3/calendars/{quote(self.calendar_id, safe='')}/events", {"authorization": "Bearer " + self._access()}, body=body)[1]
+        priv = {"speakvora": "1"}
+        if ref:
+            priv["ref"] = str(ref)[:200]
+        body = {"summary": title, "description": description, "location": location, "start": {"dateTime": iso(start_ts)}, "end": {"dateTime": iso(end_ts)}, "extendedProperties": {"private": priv}}
+        return http.request("POST", self._ev_url(), {"authorization": "Bearer " + self._access()}, body=body)[1]
+
+    def find(self, ref):
+        """The live event this agent made for that booking reference. Events the agent did not make are never returned, so they can never be changed through it."""
+        ref = str(ref or "").strip()
+        if not ref:
+            raise PermissionError("Give a booking reference (for example the appointment id) so the right calendar entry can be found.")
+        q = f"?privateExtendedProperty={quote('speakvora=1')}&privateExtendedProperty={quote('ref=' + ref)}&maxResults=5&showDeleted=false"
+        _st, r = http.request("GET", self._ev_url() + q, {"authorization": "Bearer " + self._access()})
+        for e in (r.get("items") or []):
+            if e.get("status") != "cancelled" and ((e.get("extendedProperties") or {}).get("private") or {}).get("speakvora") == "1":
+                return e
+        raise PermissionError(f"No calendar entry made by this agent was found for reference {ref}.")
+
+    def reschedule(self, ref, start_ts, end_ts):
+        self._writable(); e = self.find(ref)
+        iso = lambda t: dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+        return http.request("PATCH", self._ev_url(e["id"]), {"authorization": "Bearer " + self._access()}, body={"start": {"dateTime": iso(start_ts)}, "end": {"dateTime": iso(end_ts)}})[1]
+
+    def cancel(self, ref):
+        """Keeps the entry but marks it cancelled and free, so your history shows what happened."""
+        self._writable(); e = self.find(ref); title = e.get("summary", "")
+        body = {"summary": title if title.startswith("Cancelled: ") else "Cancelled: " + title, "transparency": "transparent"}
+        return http.request("PATCH", self._ev_url(e["id"]), {"authorization": "Bearer " + self._access()}, body=body)[1]
+
+    def delete(self, ref):
+        self._writable(); e = self.find(ref)
+        http.request("DELETE", self._ev_url(e["id"]), {"authorization": "Bearer " + self._access()})
+        return {"id": e["id"], "deleted": True}

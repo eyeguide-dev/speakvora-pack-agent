@@ -65,7 +65,7 @@ CARDS = {
 }
 SELECTS = {"provider": [("anthropic", "Claude (Anthropic)"), ("openai", "ChatGPT (OpenAI)"), ("local", "Another or local AI (needs a server address)")], "mode": [("strict", "Careful"), ("standard", "Normal"), ("open", "Open (no limits)")]}
 # which card a workflow action needs
-NEEDS = {"sms": "twilio", "call": "twilio", "slack": "slack", "teams": "teams", "notify": "slack", "email": "email", "calendar_create": "calendar", "reason": "ai"}
+NEEDS = {"sms": "twilio", "call": "twilio", "slack": "slack", "teams": "teams", "notify": "slack", "email": "email", "calendar_create": "calendar", "calendar_reschedule": "calendar", "calendar_cancel": "calendar", "calendar_delete": "calendar", "reason": "ai"}
 TRIGGER_WORDS = {"event": "when your app sends this event", "calendar": "from your calendar", "sms": "when someone texts", "call": "when someone calls", "email": "when someone emails", "slack_command": "from a Slack command", "schedule": "every day"}
 
 
@@ -206,6 +206,10 @@ def save(agent, card, values):
         if kind == "secret":
             if val == "":                                        # an empty secret box means "leave it as it is"
                 continue
+            if key == "ics_url":                                 # a calendar link must really be a web address, never stray pasted text
+                val = re.sub(r"^webcal://", "https://", val, flags=re.I)
+                if not re.match(r"^https?://[^\s]+$", val):
+                    raise SetupError(f"{label} must be a web address that starts with https:// (copy the secret iCal address from your calendar's settings).")
             SS.set_value(sd, env, val); _set(raw, path, "env:" + env); continue
         if kind == "number":
             if val and not val.isdigit():
@@ -385,6 +389,11 @@ def test(agent, card, opts=None):
             agent.teams.post("Test message from your voice bundle's agent. If you can read this, Teams works.")
             return _passed(agent, card, "A test message was posted to your Teams channel.")
         if card == "calendar":
+            for cal in (agent.gcal, agent.outlook):
+                if getattr(cal, "mode", "") == "ics" and cal.configured:   # the link must return a real calendar, not a web page or an error
+                    _st, txt = web.request("GET", cal.cfg["ics_url"])
+                    if "BEGIN:VCALENDAR" not in (txt if isinstance(txt, str) else ""):
+                        return {"ok": False, "message": "That address did not return a calendar. Use the secret iCal address (it ends in .ics) from your calendar's settings."}
             now = time.time(); ev = agent._events(now - 86400, now + 7 * 86400)
             return _passed(agent, card, f"Calendar read: {len(ev)} event(s) in the next 7 days." + ("" if ev else " (An empty calendar is fine; check it is the right one.)"))
         if card == "email":

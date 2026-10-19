@@ -17,7 +17,7 @@ STOP and START replies are handled for you, as carriers require. Twilio bills yo
 
 ## Google Calendar
 Option A (simplest, read-only): in Google Calendar settings for the calendar, copy the "Secret address in iCal format" and set `CALENDAR_ICS_URL`; use `"mode": "ics"`. Repeating events are not expanded in this mode.
-Option B (read and, if you allow it, create events): create an OAuth client in your own Google Cloud project, get a refresh token for your account with the Calendar scope, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `"mode": "oauth"`, and `"allow_create": true` only if you want the agent to add events.
+Option B (read, create, move, cancel and delete events): create an OAuth client in your own Google Cloud project, get a refresh token for your account with the `calendar.events` scope, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `"mode": "oauth"`, optionally `"calendar_id"` (default `primary`), and `"allow_create": true` only if you want the agent to change your calendar. The agent only ever moves, cancels or deletes entries **it created itself** (it tags them); it never touches anything you or anyone else added. Step by step, with the workflow actions: [google-calendar.md](google-calendar.md).
 Google refreshes secret iCal feeds slowly (a new event can take hours to appear), so use the OAuth option for reminders that must fire on time.
 The agent finds the customer's phone number and consent in the event notes: write `Phone: 646-555-0101` and `SMS OK: yes`. `SMS OK: no` or nothing means it will not text them.
 

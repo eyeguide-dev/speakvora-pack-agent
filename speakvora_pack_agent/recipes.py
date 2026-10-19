@@ -93,10 +93,10 @@ def _workflows_for(profile):
     if has("appointment_confirmed"):
         w += [{"name": "appointment_created", "on": {"event": "appointment.created"}, "do": [
                   _sms(None, "{{business}}: {{slot:appointment_confirmed}} {{start_text}}."),
-                  {"action": "calendar_create", "title": "Appointment: {{customer.name}}", "start": "{{start_epoch}}", "minutes": "{{minutes}}", "description": "Name: {{customer.name}}\nPhone: {{customer.phone}}\nSMS OK: {{customer.sms_consent}}"},
+                  {"action": "calendar_create", "title": "Appointment: {{customer.name}}", "ref": "{{appointment.id}}", "start": "{{start_epoch}}", "minutes": "{{minutes}}", "description": "Name: {{customer.name}}\nPhone: {{customer.phone}}\nSMS OK: {{customer.sms_consent}}"},
                   {"action": "notify", "text": "New booking: {{customer.name}}, {{start_text}}. Text: {{last.sms}}."}]},
-              {"name": "appointment_changed", "on": {"event": "appointment.changed"}, "do": [_sms(None, "{{business}}: {{slot:appointment_changed}} {{start_text}}.")]},
-              {"name": "appointment_cancelled", "on": {"event": "appointment.cancelled"}, "do": [_sms(None, "{{business}}: {{slot:appointment_cancelled}}")]},
+              {"name": "appointment_changed", "on": {"event": "appointment.changed"}, "do": [{"action": "calendar_reschedule", "ref": "{{appointment.id}}", "start": "{{start_epoch}}", "minutes": "{{minutes}}"}, _sms(None, "{{business}}: {{slot:appointment_changed}} {{start_text}}.")]},
+              {"name": "appointment_cancelled", "on": {"event": "appointment.cancelled"}, "do": [{"action": "calendar_cancel", "ref": "{{appointment.id}}"}, _sms(None, "{{business}}: {{slot:appointment_cancelled}}")]},
               {"name": "appointment_reminder_24h", "on": {"calendar": {"starts_in_minutes": 1440, "window_minutes": 30, "title_contains": "Appointment"}}, "do": [_sms(None, "{{business}}: {{slot:appointment_reminder}} {{start_local}}.")]},
               {"name": "appointment_reminder_2h", "on": {"calendar": {"starts_in_minutes": 120, "window_minutes": 15, "title_contains": "Appointment"}}, "do": [_sms(None, "{{business}}: {{slot:appointment_reminder_today}} {{start_local}}.")]},
               {"name": "no_show_followup", "on": {"event": "appointment.no_show"}, "do": [_sms(None, "{{business}}: {{slot:no_show_followup}}")]},
