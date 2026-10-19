@@ -1236,6 +1236,23 @@ class Universal(unittest.TestCase):
         sig2 = base64.b64encode(hmac.new(b"shop-secret", body2, hashlib.sha256).digest()).decode(); self.post("/hook/shopify", body2, dict(hdr, **{"X-Shopify-Hmac-Sha256": sig2, "X-Shopify-Webhook-Id": "wh-2"}))
         self.assertEqual(len(self.r.mock.calls("Messages.json")), 1)                                                  # no marketing consent from Shopify: no text
 
+    def test_shipped_github_source_maps_every_event_it_lists(self):
+        from speakvora_pack_agent import sources as SRC
+        src = json.load(open(os.path.join(ROOT, "speakvora_pack_agent", "data", "sources", "github.json")))
+        cases = [("issues", {"action": "opened"}, "issue.opened"), ("release", {"action": "published"}, "release.published"), ("pull_request", {"action": "ready_for_review"}, "pull_request.ready"), ("pull_request", {"action": "review_requested"}, "pull_request.ready"),
+                 ("workflow_run", {"action": "completed", "workflow_run": {"conclusion": "failure"}}, "pipeline.failed"), ("workflow_run", {"action": "completed", "workflow_run": {"conclusion": "success"}}, "pipeline.succeeded"),
+                 ("dependabot_alert", {"action": "created"}, "security.alert"), ("code_scanning_alert", {"action": "created"}, "security.alert"), ("secret_scanning_alert", {"action": "created"}, "security.alert")]
+        for ev, payload, want in cases:
+            out = SRC.map_request(src, {"payload": dict(payload, repository={"full_name": "o/r"}, sender={"login": "u"}), "headers": {"x-github-event": ev}, "query": {}})
+            self.assertEqual((out or {}).get("event"), want, (ev, payload))
+        out = SRC.map_request(src, {"payload": {"action": "opened", "issue": {"title": "Login fails", "html_url": "https://github.com/o/r/issues/3"}, "repository": {"full_name": "o/r"}}, "headers": {"x-github-event": "issues"}, "query": {}})
+        self.assertEqual((out["title"], out["url"]), ("Login fails", "https://github.com/o/r/issues/3"))                          # an issue shows its title and link like a pull request does
+        self.assertIsNone((SRC.map_request(src, {"payload": {"action": "created"}, "headers": {"x-github-event": "ping"}, "query": {}}) or {}).get("event"))
+        gl = json.load(open(os.path.join(ROOT, "speakvora_pack_agent", "data", "sources", "gitlab.json")))                       # GitLab's own keys keep a trailing dot ("Release Hook."): exact matches still win
+        for ev, status, want in (("Pipeline Hook", "failed", "pipeline.failed"), ("Merge Request Hook", "opened", "pull_request.ready"), ("Release Hook", None, "release.published")):
+            out = SRC.map_request(gl, {"payload": {"object_attributes": ({"status": status} if status else {})}, "headers": {"x-gitlab-event": ev}, "query": {}}) or {}
+            self.assertEqual(out.get("event"), want, ev)
+
     def test_other_auth_styles_and_unmapped_events(self):
         b = json.dumps({"type": "TABLE_AVAILABLE", "guest": "Ola", "mobile": "6465550150", "optIn": True}).encode()
         self.assertEqual(self.post("/hook/pos", b, {"Authorization": "Bearer nope", "content-type": "application/json"})[0], 401); self.assertEqual(self.post("/hook/pos", b, {"Authorization": "Bearer tok", "content-type": "application/json"})[0], 200)

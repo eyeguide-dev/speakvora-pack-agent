@@ -28,9 +28,10 @@
   "branch": "payload.workflow_run.head_branch",
   "author": "payload.sender.login",
   "url": {
-   "from": "payload.workflow_run.html_url",
-   "default": "payload.pull_request.html_url"
+   "template": "{{payload.workflow_run.html_url}}{{payload.pull_request.html_url}}{{payload.issue.html_url}}{{payload.release.html_url}}"
   },
-  "title": "payload.pull_request.title"
+  "title": {
+   "template": "{{payload.pull_request.title}}{{payload.issue.title}}{{payload.release.name}}"
+  }
  }
 }

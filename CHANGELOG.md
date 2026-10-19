@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.27.1
+GitHub and GitLab events now reach your workflows. A live test with a real GitHub webhook found that every GitHub event except a failed or passed build (new issue, pull request ready, release published, security alert) was silently ignored, because the event name carried a stray dot. Fixed, and new issues, pull requests and releases now also carry their title and link. Shopify was also tested live: a real signed Shopify webhook arrives, is verified and starts the order-ready workflow.
+
 ## 0.27.0
 Google Calendar is complete for everyday business use: connect it from the dashboard (Connect, Google Calendar: client ID, client secret, refresh token, which calendar, what the agent may do), double-booking protection before adding or moving a booking (`ignore_busy` or `double_booking: allow` to override), and a clear test result. Tested live against Google Calendar: create, move, cancel, delete, double booking refused, a reminder fired from a live read, and the agent refused to touch an event it did not create. See docs/google-calendar.md.
 

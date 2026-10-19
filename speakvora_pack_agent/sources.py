@@ -46,7 +46,10 @@ def pick(spec, req):
         return spec.get("default")
     vals = spec.get("values")
     if vals is not None:
-        return vals.get(str(v), vals.get(v, spec.get("default")))
+        k = str(v)
+        if k not in vals and "template" in spec:                       # a part the sender left out (GitHub's workflow_run conclusion on an issue) leaves a dangling dot: try without it
+            k = k.strip(".")
+        return vals.get(k, vals.get(v, spec.get("default")))
     return v
 
 
