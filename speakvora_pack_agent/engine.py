@@ -127,9 +127,11 @@ class Agent:
     def ctx(self, **kw):
         return {"facts": self.cfg.get("facts", {}), "business": self.cfg.get("business", ""), "lang": self.lang, **kw}
 
-    def _slack_channel(self, name):
+    def _slack_channel(self, name, direct=False):
         """Workflows name a role ('#front', '#kitchen', '#host'). agent.json "slack": {"channel": "#general", "channels": {"#kitchen": "#orders"}}: a role listed under channels goes there, every other role goes to the one default channel, so a single setting is enough."""
         sc = self.cfg.get("slack") or {}; chmap = {str(k).lstrip("#"): v for k, v in (sc.get("channels") or {}).items()}
+        if direct and name:                                                              # a channel you typed into a workflow step (for example #bugs) is used exactly as written
+            return name
         key = str(name or "").lstrip("#")
         if key in chmap:
             return chmap[key]
@@ -644,7 +646,7 @@ class Agent:
             if blocked:
                 return blocked
             path = self.audio.playable_file(self.pack.resolve(a["audio"])["id"]) if a.get("audio") else None
-            ch = self._slack_channel(a.get("channel"))
+            ch = self._slack_channel(a.get("channel"), a.get("direct"))
             if self.dry:
                 self.record(wf, kind, "dry_run", text=a["text"], channel=ch, audio=bool(path)); return {"status": "dry_run"}
             self._need(self.slack.configured, "Slack", "add slack.bot_token (or slack.webhook_url) in agent.json")

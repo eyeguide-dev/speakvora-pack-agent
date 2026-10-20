@@ -2966,6 +2966,20 @@ class WorkflowBuilder(unittest.TestCase):
         finally:
             r.close()
 
+    def test_a_notify_step_can_name_its_own_slack_channel(self):
+        from speakvora_pack_agent import builder as BD
+        r = Rig()
+        try:
+            w = BD.save(r.agent, {"name": "Bug alert", "trigger": {"type": "event", "event": "incident.triggered"}, "steps": [{"type": "notify", "text": "Bug reported: {{customer.name}}", "channel": " #Bugs "}]})
+            self.assertEqual(w["then"], "tell my team (slack or teams) in #bugs")
+            self.assertEqual([d for d in BD.compiled(r.agent)[0]["do"]][0]["channel"], "#bugs")
+            r.event("incident.triggered", customer={"name": "Maya", "phone": "646-555-0101", "sms_consent": True})
+            posts = r.mock.calls("chat.postMessage"); self.assertTrue(posts); self.assertIn("#bugs", str(posts[-1]))                      # exactly the channel typed in the step, not the default one
+            with self.assertRaises(BD.BuildError): BD.save(r.agent, {"name": "x1", "trigger": {"type": "event", "event": "a.b"}, "steps": [{"type": "notify", "text": "hello there", "channel": "bad channel!"}]})
+            v = BD.save(r.agent, {"name": "No channel", "trigger": {"type": "event", "event": "c.d"}, "steps": [{"type": "notify", "text": "hello there"}]}); self.assertEqual(v["then"], "tell my team (slack or teams)")
+        finally:
+            r.close()
+
     def test_plain_words_when_something_is_wrong(self):
         from speakvora_pack_agent import builder as BD
         r = Rig()

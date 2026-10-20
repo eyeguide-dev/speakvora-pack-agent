@@ -109,6 +109,12 @@ def validate(spec):
             raise BuildError("The message looks like it contains a card number or password. Remove it.")
         _vars_ok(text, kind)
         item = {"type": k, "text": text}
+        if k == "notify":
+            ch = re.sub(r"\s+", "", str(st.get("channel") or "")).lstrip("#").lower()
+            if ch:
+                if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}|[CG][A-Z0-9]{8,12}", ch, re.I):
+                    raise BuildError("Slack channel: use the channel's name, like bugs or billing.")
+                item["channel"] = ch if re.fullmatch(r"[CG][A-Z0-9]{8,12}", ch, re.I) else "#" + ch
         if k == "email":
             to = str(st.get("to") or "").strip()
             if kind in ("daily", "sms_keywords") or (to and to != "customer"):
@@ -142,7 +148,7 @@ def compile_spec(spec, wid):
         elif s["type"] == "sms":
             do.append({"action": "sms", "to": "{{sms.from}}" if k == "sms_keywords" else "{{customer.phone}}", "text": s["text"]})
         elif s["type"] == "notify":
-            do.append({"action": "notify", "text": s["text"]})
+            do.append({"action": "notify", "text": s["text"], **({"channel": s["channel"], "direct": True} if s.get("channel") else {})})
         else:
             do.append({"action": "email", "to": ("{{customer.email}}" if s["to"] == "customer" else s["to"]), "subject": s["subject"], "text": s["text"]})
     return {"name": "custom_" + wid, "title": spec["name"], "custom": True, "enabled": spec["enabled"], "on": on, "do": do}
@@ -165,7 +171,7 @@ def when_text(spec):
 
 
 def then_text(spec):
-    return "; ".join(STEPS[s["type"]].lower() for s in spec["steps"])
+    return "; ".join(STEPS[s["type"]].lower() + (" in " + s["channel"] if s["type"] == "notify" and s.get("channel") else "") for s in spec["steps"])
 
 
 def view(agent):

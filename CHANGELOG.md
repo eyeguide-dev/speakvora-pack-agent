@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.29.0
+Workflows can tell a specific Slack channel. In the workflow builder, the "Tell my team" step has a new optional Slack channel box (for example #bugs): that step posts there instead of the one default channel, so bugs, billing and subscriptions can each go to the team that handles them. Leave it empty to keep the old behaviour. Test my agent now shows which channel a step would post to ("Would tell your team in #bugs"). The agent must be a member of the channel (add it with /invite). Everything else, including practice mode, quiet hours and approvals, is unchanged.
+
 ## 0.28.2
 Starting the agent is now one double-click. Start Speakvora Agent (or just `./sv-agent`) checks for a Speakvora agent already running: this folder's own agent is simply opened; an older copy of the same bundle from another folder is closed so you never end up with several; an agent for a different bundle is left alone (it may be answering real calls) and this one takes the next free port. Before, an agent already on the default port was mistaken for this one and its dashboard opened with no token. Typing `./sv-agent` with no command now starts it, and the download page on speakvora.com lists three steps instead of terminal commands.
 
