@@ -10,7 +10,7 @@ from .server import serve
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="speakvora-pack-agent", description="Turn an offline Speakvora pack into a small agent for your calendar, Slack, phone and texts.")
     ap.add_argument("--version", action="version", version=__version__)
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="cmd")
     c = sub.add_parser("check", help="validate agent.json, the pack, the workflows and which services are connected"); c.add_argument("-c", "--config", default="agent.json")
     r = sub.add_parser("run", help="start the agent"); r.add_argument("-c", "--config", default="agent.json"); r.add_argument("--live", action="store_true", help="really send texts, calls and messages (default is dry-run)")
     p = sub.add_parser("phrases", help="search the pack"); p.add_argument("words", nargs="*"); p.add_argument("--pack", default="./pack"); p.add_argument("--category", default="")
@@ -31,6 +31,8 @@ def main(argv=None):
     sa = sub.add_parser("start", help="the easy way: set everything up the first time, start the agent in practice mode and open the dashboard in your browser"); sa.add_argument("-c", "--config", default="agent.json"); sa.add_argument("--no-browser", action="store_true", help="do not open the browser")
     e = sub.add_parser("event", help="send a signed test event to a running agent"); e.add_argument("-c", "--config", default="agent.json"); e.add_argument("file"); e.add_argument("--url", default="")
     a = ap.parse_args(argv)
+    if not a.cmd:                                                         # typing just ./sv-agent means "start it"
+        a = ap.parse_args(["start"])
     if a.cmd == "phrases":
         for it in Pack(a.pack).search(" ".join(a.words), a.category, 25):
             print(f"{it['id']:>6}  [{it.get('category','')}]  {it['text']}")
@@ -66,16 +68,62 @@ def main(argv=None):
             print("First time here: setting up your agent for this bundle...")
             if main(["init", "--pack", ".", "--quiet"]) != 0:
                 return 1
+        import hashlib, signal, socket, subprocess, time
+        def _port_free(h, p):
+            with socket.socket() as sk:
+                sk.settimeout(0.5); return sk.connect_ex((h, p)) != 0
+        def _health(h, p):
+            try:
+                return json.load(urllib.request.urlopen(f"http://{h}:{p}/health", timeout=2))
+            except Exception:  # noqa: BLE001
+                return {}
+        def _close(h, p):
+            """Stops the Speakvora agent listening on this port (macOS/Linux, same user). Returns True once the port is free. Never touches a program that is not a Speakvora agent."""
+            try:
+                pids = subprocess.run(["lsof", "-nP", f"-iTCP:{p}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True, timeout=5).stdout.split()
+                for pid in pids:
+                    cmd = subprocess.run(["ps", "-p", pid, "-o", "command="], capture_output=True, text=True, timeout=5).stdout
+                    if "speakvora_pack_agent" in cmd:
+                        os.kill(int(pid), signal.SIGTERM)
+                for _ in range(20):
+                    if _port_free(h, p):
+                        return True
+                    time.sleep(0.25)
+            except Exception:  # noqa: BLE001
+                pass
+            return _port_free(h, p)
+        cfg_raw = json.load(open(a.config, encoding="utf-8")); lis = cfg_raw.get("listen", {}); host, port = lis.get("host", "127.0.0.1"), int(lis.get("port", 8787))
         try:
-            lis = json.load(open(a.config, encoding="utf-8")).get("listen", {}); url = f"http://{lis.get('host', '127.0.0.1')}:{lis.get('port', 8787)}/dashboard"
-            urllib.request.urlopen(url, timeout=2)                          # something already answers here: it is probably this agent, so just open it
-            tok = open(os.path.join("agent-state", "dashboard-token"), encoding="utf-8").read().strip() if os.path.exists(os.path.join("agent-state", "dashboard-token")) else ""
-            print("Your agent is already running. Opening the dashboard.")
-            if not a.no_browser:
-                import webbrowser; webbrowser.open(url + ("#token=" + tok if tok else ""))
-            return 0
-        except Exception:  # noqa: BLE001 - nothing running yet (or not ours): start it below
-            pass
+            mine = json.load(open("manifest.json", encoding="utf-8")).get("pack", "")
+        except Exception:  # noqa: BLE001
+            mine = ""
+        home = hashlib.sha256(os.path.abspath(cfg_raw.get("state_dir", "./agent-state")).encode()).hexdigest()[:12]
+        # One agent per bundle folder, one port. Look at the ports an agent may have used (this one and the next 59):
+        #  - this folder's agent already running -> just open it;  - a Speakvora agent of the SAME bundle from another folder (a stale copy) -> close it, so you never end up with five;
+        #  - an agent for a different bundle or any other program -> leave it alone (it may be answering real calls) and use the next free port.
+        for q in range(port, port + 60):
+            if _port_free(host, q):
+                continue
+            h = _health(host, q)
+            if h.get("pack") != mine or not mine:
+                continue
+            if h.get("home") == home:
+                tp = os.path.join(os.path.abspath(cfg_raw.get("state_dir", "./agent-state")), "dashboard-token")
+                tok = open(tp, encoding="utf-8").read().strip() if os.path.exists(tp) else ""
+                print(f"Your agent is already running (port {q}). Opening the dashboard.")
+                if not a.no_browser:
+                    import webbrowser; webbrowser.open(f"http://{host}:{q}/dashboard" + ("#token=" + tok if tok else ""))
+                return 0
+            if _close(host, q):
+                print(f"Closed an older copy of this bundle that was still running on port {q}.")
+        if not _port_free(host, port):
+            new_port = next((q for q in range(port + 1, port + 60) if _port_free(host, q)), None)
+            if new_port is None:
+                print(f"Port {port} is in use by another program and no nearby port is free. Close the other program and try again."); return 1
+            print(f"Port {port} is used by another program (probably an agent for a different bundle, which is left running). Using port {new_port} for this one instead.")
+            cfg_raw.setdefault("listen", {})["port"] = new_port
+            with open(a.config, "w", encoding="utf-8") as f:
+                json.dump(cfg_raw, f, indent=2)
         a.cmd, a.live, a.open = "run", False, not a.no_browser
     if a.cmd == "demo":
         from . import demo

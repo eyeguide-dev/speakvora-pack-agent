@@ -2416,6 +2416,32 @@ class DashboardDesign(unittest.TestCase):
         self.assertNotIn("click:manageSheet}},h('div',{class:'tile'},ic('sliders'))", ui.PAGE)       # the AI controls live in Settings, not on the Connect tab
         self.assertEqual(ui.PAGE.count("<body>"), 1); self.assertNotIn("['calls','Calls'", ui.PAGE); self.assertNotIn("['orders','Orders','box']", ui.PAGE)       # no extra tabs: calls and orders live inside Connect and Home
 
+    def test_start_never_mistakes_another_agent_on_the_port_for_itself(self):
+        import http.server, threading, tempfile, os
+        from unittest import mock
+        from speakvora_pack_agent import cli
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b'{"ok": true, "pack": "someone-else"}')
+            def log_message(self, *a): pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = os.getcwd(); d = tempfile.mkdtemp()
+        try:
+            os.chdir(d); json.dump({"pack": "mine"}, open("manifest.json", "w")); json.dump({"listen": {"host": "127.0.0.1", "port": port}}, open("agent.json", "w"))
+            with mock.patch.object(cli.config, "load", side_effect=RuntimeError("stop here")):
+                with self.assertRaises(RuntimeError):
+                    cli.main(["start", "--no-browser"])
+            self.assertNotEqual(json.load(open("agent.json"))["listen"]["port"], port)                      # it moved to a free port instead of opening the other agent's dashboard
+        finally:
+            os.chdir(old); srv.shutdown()
+
+    def test_bare_command_means_start(self):
+        import os
+        from unittest import mock
+        from speakvora_pack_agent import cli
+        with mock.patch.object(os.path, "exists", return_value=True), mock.patch("builtins.open", side_effect=RuntimeError("reached start")):
+            with self.assertRaises(RuntimeError):
+                cli.main([])
+
     def test_a_browser_that_signed_in_once_opens_the_dashboard_without_the_token(self):
         from speakvora_pack_agent import dashboard
         r = Rig(dry=True); tok = dashboard.token(r.agent)

@@ -1,6 +1,6 @@
 """The agent's web server (standard library). Endpoints: POST /event (from your app, signed), POST /twilio/sms and /twilio/call[/menu] (Twilio, signature checked), POST /slack/command (Slack, signature checked),
 GET /audio/<id>.mp3 (so Twilio can play pack audio), GET /health. A background thread runs the calendar and daily schedules about once a minute."""
-import hmac, json, re, threading, time
+import hashlib, hmac, json, os, re, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -92,7 +92,7 @@ def make_handler(agent):
             if p.startswith("/loc/"):
                 return self._loc("GET")
             if p == "/health":
-                return self._send(200, {"ok": True, "dry_run": agent.dry, "pack": agent.pack.meta.get("pack"), "workflows": len(agent.workflows), "missing_slots": agent.missing_slots, "missing_required_lines": agent.missing_required, "killed": agent.safe.killed(), "queued": len(agent.state.outbox()), "jobs": agent.state.job_counts()})
+                return self._send(200, {"ok": True, "home": hashlib.sha256(os.path.abspath(agent.state.dir).encode()).hexdigest()[:12], "dry_run": agent.dry, "pack": agent.pack.meta.get("pack"), "workflows": len(agent.workflows), "missing_slots": agent.missing_slots, "missing_required_lines": agent.missing_required, "killed": agent.safe.killed(), "queued": len(agent.state.outbox()), "jobs": agent.state.job_counts()})
             if p.startswith("/track/"):                                        # the customer's order page: public, holds only the step, protected by a long random code
                 from . import tracker
                 if self._limited():

@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.28.2
+Starting the agent is now one double-click. Start Speakvora Agent (or just `./sv-agent`) checks for a Speakvora agent already running: this folder's own agent is simply opened; an older copy of the same bundle from another folder is closed so you never end up with several; an agent for a different bundle is left alone (it may be answering real calls) and this one takes the next free port. Before, an agent already on the default port was mistaken for this one and its dashboard opened with no token. Typing `./sv-agent` with no command now starts it, and the download page on speakvora.com lists three steps instead of terminal commands.
+
 ## 0.28.1
 The dashboard looks and behaves like a real app on a computer: the tabs are a top bar on wide screens and the page is centred and wide (it was a phone layout stretched out). Practice mode shows once, in the header, on every tab (Settings no longer repeats it), and on a phone the logo, business name and mode no longer overlap. "Open my dashboard" on speakvora.com now works: the first time you open the dashboard in a browser (the Start Speakvora Agent file does this for you) that browser remembers it with a private cookie (HttpOnly, only for the dashboard page), and from then on the website button opens it with no token in the address. A browser that has never signed in still needs the token, so other people on the computer cannot open it. Also: a hint under the Go live button says what is not ready yet, and saving a Twilio call backup no longer clears the Twilio "tested" mark.
 
