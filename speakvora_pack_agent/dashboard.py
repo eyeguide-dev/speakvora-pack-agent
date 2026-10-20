@@ -25,6 +25,10 @@ def token(agent):
     return t
 
 
+def remember_cookie(agent):
+    return hmac.new(token(agent).encode(), b"svdash-remember", "sha256").hexdigest()
+
+
 def _gaps(agent):
     """Lines the workflows use that the pack cannot say yet: [{'slot','intent','example'}]."""
     reg = SL.registry(agent.profile)
@@ -146,7 +150,12 @@ def handle(agent, method, path, headers, raw):
     u = urlparse(path); p = u.path
     hdr = {"content-security-policy": CSP, "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cache-control": "no-store"}
     if p == "/dashboard" and method == "GET":
-        return 200, PAGE.encode(), "text/html; charset=utf-8", hdr
+        # A browser that has already opened the dashboard once with its private token keeps a cookie (set by POST /dash/api/remember). From then on the page opens with no token in the address,
+        # for example from the "Open my dashboard" button on speakvora.com. A browser without the cookie still needs the token.
+        page = PAGE; ck = dict(c.strip().split("=", 1) for c in {k.lower(): v for k, v in headers.items()}.get("cookie", "").split(";") if "=" in c)
+        if hmac.compare_digest(ck.get("svdash", "").encode(), remember_cookie(agent).encode()):
+            page = PAGE.replace("<script>", "<script>try{if(location.hash.indexOf('token=')<0&&!sessionStorage.getItem('t'))sessionStorage.setItem('t'," + json.dumps(token(agent)) + ")}catch(e){}", 1)
+        return 200, page.encode(), "text/html; charset=utf-8", hdr
     given = {k.lower(): v for k, v in headers.items()}.get("x-dashboard-token", "")
     role = "owner" if hmac.compare_digest(given.encode(), token(agent).encode()) else None
     vt = AU.viewer_token(agent) if role is None else ""
@@ -157,6 +166,10 @@ def handle(agent, method, path, headers, raw):
     if role == "viewer" and not (method == "GET" and (p in VIEW_OK or p == "/dash/api/me")):
         return 403, json.dumps({"error": "view_only", "message": "You have view-only access. Ask the owner to make this change."}).encode(), "application/json", hdr
     try:
+        if p == "/dash/api/remember" and method == "POST":
+            if role != "owner":
+                return 403, b'{"error":"owner_only"}', "application/json", hdr
+            return 200, b'{"ok":true}', "application/json", {**hdr, "set-cookie": f"svdash={remember_cookie(agent)}; Path=/dashboard; Max-Age=31536000; HttpOnly; SameSite=Lax"}
         if p == "/dash/api/me" and method == "GET":
             return 200, json.dumps({"role": role}).encode(), "application/json", hdr
         if p == "/dash/api/audit" and method == "GET":

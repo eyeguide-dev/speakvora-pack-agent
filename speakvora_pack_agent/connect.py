@@ -388,7 +388,10 @@ def twilio_fallback(agent):
 def twilio_fallback_set(agent, url):
     """Saves the backup address and sets it on the Twilio number, so Twilio asks it whenever the agent cannot be reached. An empty address removes it."""
     url = str(url or "").strip()
+    was = (agent.state.data.get("tested") or {}).get("twilio")          # saving resets a card's passed-test mark; the backup does not change whether Twilio connects, so keep it
     save(agent, "twilio", {"fallback_url": url})
+    if was:
+        agent.state.data.setdefault("tested", {})["twilio"] = was; agent.state.save()
     a = agent.twilio; own = str((agent.cfg.get("twilio") or {}).get("from_number") or "").replace(" ", "")
     if not (a.sid and a.token and own):
         return {"saved": url, "applied": False, "message": "Saved. Connect Twilio and choose your number, then press Save backup again to set it on the number."}

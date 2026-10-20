@@ -2416,6 +2416,16 @@ class DashboardDesign(unittest.TestCase):
         self.assertNotIn("click:manageSheet}},h('div',{class:'tile'},ic('sliders'))", ui.PAGE)       # the AI controls live in Settings, not on the Connect tab
         self.assertEqual(ui.PAGE.count("<body>"), 1); self.assertNotIn("['calls','Calls'", ui.PAGE); self.assertNotIn("['orders','Orders','box']", ui.PAGE)       # no extra tabs: calls and orders live inside Connect and Home
 
+    def test_a_browser_that_signed_in_once_opens_the_dashboard_without_the_token(self):
+        from speakvora_pack_agent import dashboard
+        r = Rig(dry=True); tok = dashboard.token(r.agent)
+        st, body, ct, h = dashboard.handle(r.agent, "GET", "/dashboard", {}, b""); self.assertEqual(st, 200); self.assertNotIn(tok, body.decode())          # a stranger gets the page, not the token
+        st, body, ct, h = dashboard.handle(r.agent, "POST", "/dash/api/remember", {"x-dashboard-token": tok}, b""); self.assertEqual(st, 200); ck = h["set-cookie"]
+        self.assertIn("HttpOnly", ck); self.assertIn("SameSite=Lax", ck); self.assertIn("Path=/dashboard", ck)
+        st, body, ct, h = dashboard.handle(r.agent, "GET", "/dashboard", {"cookie": ck.split(";")[0]}, b""); self.assertIn(tok, body.decode())                  # the remembered browser opens straight in
+        st, body, ct, h = dashboard.handle(r.agent, "GET", "/dashboard", {"cookie": "svdash=wrong"}, b""); self.assertNotIn(tok, body.decode())
+        st, body, ct, h = dashboard.handle(r.agent, "POST", "/dash/api/remember", {}, b""); self.assertEqual(st, 401)
+
     def test_activity_and_phrase_lists(self):
         from speakvora_pack_agent import activity as AC, dashboard
         r = Rig(extra={"twilio": {"speech_input": True}, "transcripts": {"enabled": True}, "tracking": {"enabled": True}})
@@ -2801,6 +2811,8 @@ class SimpleConnections(unittest.TestCase):
             SU.twilio_point(r.agent, "+15550001111")                                           # pointing the number later keeps the backup in place
             self.assertTrue(SU.twilio_fallback(r.agent)["protected"])
             o = SU.twilio_fallback_set(r.agent, ""); self.assertEqual(SU.twilio_fallback(r.agent)["saved"], "")
+            r.agent.state.data.setdefault("tested", {})["twilio"] = 123; SU.twilio_fallback_set(r.agent, "https://handler.twilio.com/twiml/EHabc")
+            self.assertEqual(r.agent.state.data["tested"].get("twilio"), 123)                   # setting the backup must not make Go live grey out again
         finally:
             r.close()
         r = Rig(extra={"public_base_url": "https://agent.example"})
