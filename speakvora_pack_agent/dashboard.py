@@ -5,7 +5,7 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import audit as AU, simulate as SIM, builder as BD, activity as AC, knowledge as KN, converse as CVN, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL
+from . import audit as AU, simulate as SIM, builder as BD, activity as AC, knowledge as KN, converse as CVN, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL, phonemenu as PM
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
@@ -227,6 +227,12 @@ def handle(agent, method, path, headers, raw):
             out = SU.twilio_fallback(agent)
         elif p == "/dash/api/setup/twilio/fallback" and method == "POST":
             out = SU.twilio_fallback_set(agent, json.loads(raw or b"{}").get("url"))
+        elif p == "/dash/api/sip/providers" and method == "GET":
+            out = {"providers": SU.sip_providers()}
+        elif p == "/dash/api/sip/admin-message" and method == "GET":
+            out = {"message": SU.sip_admin_message(agent, (parse_qs(u.query).get("provider") or ["other"])[0])}
+        elif p == "/dash/api/sip/status" and method == "GET":
+            out = SU.sip_status(agent)
         elif p == "/dash/api/support/report" and method == "GET":
             from . import setuplog
             out = {"report": setuplog.report(agent)}
@@ -344,7 +350,11 @@ def handle(agent, method, path, headers, raw):
         elif p == "/dash/api/simulate" and method == "GET":
             out = SIM.view(agent)
         elif p == "/dash/api/simulate" and method == "POST":
-            b = json.loads(raw or b"{}"); out = SIM.event(agent, b.get("event")) if b.get("event") else SIM.text(agent, b.get("text"), bool(b.get("new")))
+            b = json.loads(raw or b"{}")
+            if b.get("call") is not None:
+                c = b["call"] or {}; out = SIM.call(agent, c.get("digits", ""), c.get("said", ""), bool(c.get("new")))
+            else:
+                out = SIM.event(agent, b.get("event")) if b.get("event") else SIM.text(agent, b.get("text"), bool(b.get("new")))
             for x in out.get("did", []):
                 if x.get("reason") in WHY:
                     x["why"] = WHY[x["reason"]]
@@ -358,6 +368,22 @@ def handle(agent, method, path, headers, raw):
             b = json.loads(raw or b"{}"); BD.toggle(agent, str(b.get("id", "")), bool(b.get("on"))); out = BD.view(agent)
         elif p == "/dash/api/workflows/preview" and method == "POST":
             out = BD.preview(agent, json.loads(raw or b"{}").get("spec") or {})
+        elif p == "/dash/api/phonemenu" and method == "GET":
+            out = PM.view(agent)
+        elif p == "/dash/api/phonemenu" and method == "POST":
+            PM.save(agent, json.loads(raw or b"{}")); out = PM.view(agent)
+        elif p == "/dash/api/phonemenu/reset" and method == "POST":
+            PM.reset(agent); out = PM.view(agent)
+        elif p == "/dash/api/phonemenu/voice" and method == "POST":
+            m = PM.apply(agent, {}); n = 0
+            if not m.get("custom"):
+                raise ValueError("Switch your menu on and save it first.")
+            if not sharing._key(agent):
+                raise ValueError("Voicing needs your Speakvora key (Connect, Speakvora agent). Until then callers hear your words in the phone provider's voice.")
+            for t in dict.fromkeys([m["speech_say"], m["fallback_say"], m["speech_ask"], m["again_say"]]):
+                if not agent.audio.cached_dynamic(t, True) and "<Play>" in agent._ai_voice(t, True, True):
+                    n += 1
+            out = {"voiced": n, "message": f"Voiced {n} new line{'s' if n != 1 else ''} in your bundle's voice." if n else "Nothing new to voice: every line is already voiced, or the voice service did not answer (callers hear the phone provider's voice meanwhile)."}
         elif p == "/dash/api/insights" and method == "GET":
             out = AC.insights(agent, int((parse_qs(u.query).get("days") or ["7"])[0] or 7))
         elif p == "/dash/api/activity" and method == "GET":

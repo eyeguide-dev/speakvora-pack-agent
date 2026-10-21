@@ -2,6 +2,13 @@
 
 The agent signs in to your phone system as an extension, answers the calls you send to it, plays your recorded menu, and transfers to your staff. No Twilio. Time: up to an hour, most of it in your phone system's admin page.
 
+## The guided setup
+The card walks you through five steps: check your phone system, choose who sets it up (you, or copy a ready-made message for your phone admin), connect the extension, choose when the agent answers, and test with a real call. The last screen shows each part as it is proven: signed in, test call received, audio both ways, a key press, a transfer and a backup. It says Ready only after a real call has worked. If something is wrong it says so in plain words, with technical details for your phone admin.
+
+![Step 1: choose who provides your phone service](office-step1.jpg)
+![Step 3: connect the extension (example values)](office-step3.jpg)
+![Step 5: the live checklist, with every part proven by a real call](office-step5.jpg)
+
 ## Before you start
 - Admin access to your phone system, or the person who has it.
 - This agent running on a computer that stays on, on the same network as the phone system (for an on-site system) or with internet (for a cloud one).
@@ -43,12 +50,19 @@ That is the audio being blocked.
 We tested the connection against Asterisk, the open-source phone system behind FreePBX. It signed in with the extension password, rang the agent, played the menu, took a key press and transferred to a staff number.
 - In Asterisk and FreePBX the extension's name must be its number (for example 101), or the sign-in is refused.
 - If your phone system sends key presses as SIP INFO messages instead of the normal in-call tones, the agent understands both.
-- A phone system that only offers encrypted calls (TLS or SRTP) will not work yet; ask your provider for an unencrypted UDP SIP extension.
+
+## Make the menu your own
+The menu callers hear on this connection is the same one you edit in the **Automations** tab: change the keys, add "3 for Luli" with her number, and test it by pretending to call. See the Automations guide (the Full Guide button at the top of that tab).
+
+## Callers can speak
+With a Speakvora key saved (Connect, Speakvora agent), callers can say what they need instead of pressing keys: "what are your hours", "I want to book", "let me talk to a person". The agent listens until the caller pauses, sends only that short piece of audio to Speakvora to turn it into text (about $0.0015 a minute, not stored), and then answers exactly as it does for a key press. The keypad always works, and asking for a person always transfers. Turn it off with **Let callers speak** under Advanced in step 3. English only for now. We tested the listening and the hand-off to the menu with a recorded stand-in for the speech service; the live transcription is checked when you place a first test call.
+
+## Encrypted calls (TLS and SRTP)
+Some hosted phone systems, such as Zoom Phone, only accept encrypted devices. Under Advanced in step 3 set **Encrypted connection** to Encrypted (TLS) and **Encrypted audio** to Use it when offered or Require it. The agent checks the phone system's certificate: if it uses its own certificate, put the path of the certificate file your phone admin gives you in **Certificate file**. Zoom's usual encrypted port is 5091; most others use 5061. We tested the encrypted connection against a real Asterisk (sign-in and a call over TLS) and the encrypted audio against an independent SRTP implementation (ffmpeg's libsrtp) and the standard's test vectors. We have not tested Zoom Phone itself, so treat the first connection as a pilot.
 
 ## What it cannot do yet
 - Place outbound calls from the agent over this line.
 - Understand speech: callers use the keypad.
-- Providers that only allow encrypted SIP (TLS/SRTP).
 
 ## Keep it safe
 - If the agent's computer is off, calls simply never reach the extension; your phone system's normal rules should ring a person.

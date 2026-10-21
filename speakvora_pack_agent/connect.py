@@ -58,7 +58,9 @@ CARDS = {
         ("password", "Password or app password", "secret", "email.password", "EMAIL_PASSWORD", "Gmail: Google Account > Security > App passwords."),
         ("from", "Send from", "text", "email.from", None, "For example: Bella <hello@bella.com>."),
     ]},
-    "sip": {"title": "Your office phone system (calls)", "blurb": "Answers calls on the phone numbers you already have, with no Twilio. The agent signs in to your phone system as an extension, answers the calls you send to it, plays your recorded menu and transfers to your staff. Works with 3CX, FreePBX/Asterisk, RingCentral, 8x8, Zoom Phone, Ooma, Vonage, Telnyx and any phone system that offers SIP extensions.", "fields": [
+    "sip": {"title": "Use my existing business number", "blurb": "Connect a compatible office phone system. Keep your number and provider. No Twilio account needed. The agent signs in to your phone system as an extension, answers the calls you send to it, plays your recorded menu and transfers to your staff.", "fields": [
+        ("phone_system", "Who provides your phone service?", "select", "sip.provider", None, "Pick your phone system so the next steps match it. Choose \"I'm not sure\" if you do not know."),
+        ("answer_when", "When should the agent answer?", "select", "sip.answer_when", None, "Start with calls nobody answers or after hours. You set this rule in your phone system; the agent answers whatever is sent to its extension."),
         ("server", "Phone system address", "text", "sip.server", None, "The server name or IP your desk phones sign in to, for example sip.yourprovider.com or 192.168.1.5."),
         ("server_port", "Port (optional)", "number", "sip.server_port", None, "5060 unless your phone system uses a different one."),
         ("username", "Extension / username", "text", "sip.username", None, "The extension you created for the agent, for example 101."),
@@ -66,6 +68,10 @@ CARDS = {
         ("auth_username", "Authorization name (optional)", "text", "sip.auth_username", None, "Only if your provider gives a different sign-in name from the extension (RingCentral and Zoom Phone do)."),
         ("domain", "Domain (optional)", "text", "sip.domain", None, "Only if it differs from the address above."),
         ("fallback_number", "If something goes wrong, send callers to (optional)", "text", "sip.fallback_number", None, "A person's extension or number, so a caller is never left in silence."),
+        ("transport", "Encrypted connection", "select", "sip.transport", None, "Most office phone systems use the normal (not encrypted) connection. Zoom Phone and some hosted systems require the encrypted one (TLS)."),
+        ("srtp", "Encrypted audio", "select", "sip.srtp", None, "Use it when the phone system offers it is right for most. Choose Require it if your provider insists on encrypted audio."),
+        ("tls_ca_file", "Certificate file (optional)", "text", "sip.tls_ca_file", None, "Only if your phone system uses its own certificate: the full path of the certificate file your phone admin gives you."),
+        ("speech", "Let callers speak", "select", "sip.speech", None, "Callers can say what they need instead of pressing keys. Needs your Speakvora key; their words are turned into text by Speakvora (about $0.0015 a minute) and the audio is not kept."),
         ("external_ip", "This computer's public IP (optional)", "text", "sip.external_ip", None, "Only for a cloud phone system when the agent sits behind a router and the caller hears nothing."),
     ]},
     "android_sms": {"title": "Your Android phone (texts)", "blurb": "Texts from your own phone number and SIM, instantly: no Twilio, no carrier registration. Install the free SMS Gateway for Android app on the phone, sign in, and paste its details here.", "fields": [
@@ -95,7 +101,12 @@ CARDS = {
         ("base_url", "Server address", "url", "reasoner.base_url", None, "Only for a local model or another company that works like OpenAI (Groq, Together, OpenRouter, Azure). Example: http://localhost:11434/v1. Leave empty for Claude and OpenAI."),
     ]},
 }
-SELECTS = {"provider": [("anthropic", "Claude (Anthropic)"), ("openai", "ChatGPT (OpenAI)"), ("local", "Another or local AI (needs a server address)")], "allow_create": [("", "Read only"), ("true", "Add, move, cancel and delete its own bookings")], "mode": [("strict", "Careful"), ("standard", "Normal"), ("open", "Open (no limits)")]}
+SELECTS = {"transport": [("udp", "Not encrypted (UDP): most office phone systems"), ("tls", "Encrypted (TLS): needed by Zoom Phone and some hosted systems")],
+           "speech": [("on", "Yes, when a Speakvora key is set"), ("off", "No, keypad only")],
+           "srtp": [("optional", "Use it when the phone system offers it"), ("required", "Require it"), ("off", "Never")],
+           "phone_system": [("asterisk", "Asterisk or FreePBX"), ("3cx", "3CX"), ("ringcentral", "RingCentral"), ("zoom", "Zoom Phone"), ("8x8", "8x8"), ("ooma", "Ooma"), ("vonage", "Vonage Business"), ("telnyx", "Telnyx"), ("other", "Another system that offers SIP extensions"), ("unsure", "I'm not sure")],
+           "answer_when": [("unanswered", "Only calls nobody answers (safest to start)"), ("after_hours", "After hours only"), ("all", "Every call")],
+           "provider": [("anthropic", "Claude (Anthropic)"), ("openai", "ChatGPT (OpenAI)"), ("local", "Another or local AI (needs a server address)")], "allow_create": [("", "Read only"), ("true", "Add, move, cancel and delete its own bookings")], "mode": [("strict", "Careful"), ("standard", "Normal"), ("open", "Open (no limits)")]}
 # which card a workflow action needs
 STEPS = {
     "android_sms": ["Install the free SMS Gateway for Android app on the phone and switch on its Cloud server.", "Paste its username, password and webhook signing key below, then press Save and test."],
@@ -104,6 +115,7 @@ STEPS = {
     "sip": ["Create a SIP extension for the agent in your phone system.", "Paste its address, extension and password below, press Save and test, then send calls to that extension."],
 }
 GUIDES = {"android_sms": "android-sms", "telegram": "telegram", "whatsapp": "whatsapp", "sip": "office-phone", "twilio": "twilio", "slack": "slack", "teams": "teams", "calendar": "calendar", "email": "email", "ai": "ai", "account": "account"}
+EXTRA_GUIDES = {"automations": "automations"}          # guides for a page of the dashboard rather than a connection (the Automations tab)
 
 
 def _md_inline(t):
@@ -148,7 +160,7 @@ def guide_html(name, download=False):
 
 def guide(name):
     """The full A-to-Z setup guide for a channel (plain text with simple Markdown), shown in the dashboard."""
-    slug = next((v for k, v in GUIDES.items() if name in (k, v)), None)
+    slug = next((v for k, v in {**GUIDES, **EXTRA_GUIDES}.items() if name in (k, v)), None)
     if not slug:
         raise SetupError("There is no guide for that.")
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "guides", slug + ".md")
@@ -610,7 +622,7 @@ def test(agent, card, opts=None):
             return _passed(agent, card, msg)
         if card == "sip":
             s = agent.sip
-            if not s.sock:
+            if not s.running:
                 return {"ok": False, "message": "The agent's web server is not running, so the phone line cannot sign in. Start the agent, then test again."}
             for _ in range(24):
                 if s.registered or s.error:
@@ -1146,8 +1158,8 @@ def set_workflow_targets(agent, name, ids):
 def catalog(agent):
     """Everything the + Add connection button offers."""
     have = {c["name"] for c in status_cards(agent)}
-    short = {"slack": "Tell your team and use slash commands", "teams": "Post to a Teams channel", "twilio": "Send texts and make calls", "sip": "Answer calls on your own numbers, no Twilio", "android_sms": "Texts from your own phone, no Twilio", "telegram": "Answer customers on Telegram", "whatsapp": "Answer WhatsApp messages (Meta)", "calendar": "Reminders from your bookings", "email": "Send email from your mailbox", "ai": "Let it think, with your own key", "account": "Pair with a code to voice new lines"}
-    tiles = [{"id": n, "kind": "service", "name": t, "blurb": short[n], "added": connected(agent, n)} for n, t in (("slack", "Slack"), ("teams", "Microsoft Teams"), ("twilio", "Texts and calls (Twilio)"), ("sip", "Your office phone system (calls)"), ("android_sms", "Your Android phone (texts)"), ("telegram", "Telegram"), ("whatsapp", "WhatsApp Business"), ("calendar", "Google or Outlook calendar"), ("email", "Email"), ("ai", "AI reasoning (your own key)"), ("account", "Speakvora agent"))]
+    short = {"slack": "Tell your team and use slash commands", "teams": "Post to a Teams channel", "twilio": "Send texts and make calls", "sip": "Keep your number, connect your phone system, no Twilio", "android_sms": "Texts from your own phone, no Twilio", "telegram": "Answer customers on Telegram", "whatsapp": "Answer WhatsApp messages (Meta)", "calendar": "Reminders from your bookings", "email": "Send email from your mailbox", "ai": "Let it think, with your own key", "account": "Pair with a code to voice new lines"}
+    tiles = [{"id": n, "kind": "service", "name": t, "blurb": short[n], "added": connected(agent, n)} for n, t in (("slack", "Slack"), ("teams", "Microsoft Teams"), ("twilio", "Texts and calls (Twilio)"), ("sip", "Use my existing business number"), ("android_sms", "Your Android phone (texts)"), ("telegram", "Telegram"), ("whatsapp", "WhatsApp Business"), ("calendar", "Google or Outlook calendar"), ("email", "Email"), ("ai", "AI reasoning (your own key)"), ("account", "Speakvora agent"))]
     tools = {"shopify": "Shopify", "github": "GitHub", "gitlab": "GitLab", "pagerduty": "PagerDuty", "stripe": "Stripe", "calendly": "Calendly", "generic-pos": "Point of sale", "pos": "Point of sale"}
     for s in sources(agent):
         seen = (agent.state.data.get("tool_seen") or {}).get(s["name"])
@@ -1180,3 +1192,110 @@ _wrap("test", "test", lambda a, k: {"card": a[0] if a else k.get("card")})
 _wrap("channel_connect", "channel_connect", lambda a, k: {"card": a[0] if a else k.get("card")})
 _wrap("disconnect", "disconnect", lambda a, k: {"card": a[0] if a else k.get("card")})
 _wrap("go_live", "go_live", lambda a, k: {"on": bool(a[0] if a else k.get("on"))})
+
+
+# ---- guided setup for "Use my existing business number": what each phone system needs, a message for the phone admin, a live checklist and plain-words problems
+COMPAT = {"encrypted_untested": "Encrypted calls supported, not tested with this system", "tested": "Tested", "likely": "Should work", "relay": "Works on the office network; remote use needs a relay", "encrypted": "Not supported yet (needs encrypted calls)", "unknown": "Not checked"}
+PROVIDERS = {
+    "asterisk": {"name": "Asterisk or FreePBX", "compat": "tested", "where": "FreePBX: Applications, Extensions, Add Extension, Add New SIP [chan_pjsip] Extension. Asterisk: add an endpoint, auth and aor named after the extension in pjsip.conf.",
+                 "route": "FreePBX: use a Time Condition for after hours, or a Ring Group / Queue with a no-answer destination that is the agent extension. Always set a failover destination to a person or voicemail.",
+                 "notes": "The extension's name must be its number (for example 999) or sign-in is refused. We tested the agent against Asterisk."},
+    "3cx": {"name": "3CX", "compat": "relay", "where": "Extensions, Add, give it a number and name. Open the extension's Phone Provisioning tab to read the SIP ID and password.",
+            "route": "Use an office-hours rule, a ring group with a no-answer destination, or Digital Receptionist to send calls to the extension. Set the no-answer destination to a person or voicemail.",
+            "notes": "A third-party SIP client on the same network as the 3CX server can register with those details. Away from that network 3CX normally needs its SBC (a small relay program) or a public address with ports forwarded, which a plain extension cannot replace."},
+    "ringcentral": {"name": "RingCentral", "compat": "likely", "where": "Admin Portal, Phone System, Phones & Devices, Add Phone, choose Other or third-party phone. RingCentral then shows the SIP domain, outbound proxy, SIP ID (user name), authorization ID and password.",
+                    "route": "Use call handling rules (business hours, after hours) or a call queue with an overflow destination that is the agent extension. Keep a person or voicemail as the final failover.",
+                    "notes": "RingCentral may restrict which devices can register, and some plans or devices need RingCentral support to enable third-party registration. Ask them for SIP credentials for a third-party phone using UDP."},
+    "zoom": {"name": "Zoom Phone", "compat": "encrypted_untested", "where": "Zoom accepts third-party SIP devices only with encrypted signaling (TLS 1.2) and encrypted audio (SRTP), and Zoom support must enable it for your account. Zoom then shows a user name, authorization ID, password and outbound proxy (usually port 5091).",
+             "route": "Use Zoom's call handling (business hours, after hours or overflow) to send calls to that user, and keep a person as the failover.", "preset": {"transport": "tls", "srtp": "required", "server_port": "5091"},
+             "notes": "The agent speaks encrypted SIP (TLS) and encrypted audio (SRTP), which Zoom requires. We have not tested it against Zoom Phone itself, so treat the first connection as a pilot."},
+    "8x8": {"name": "8x8", "compat": "unknown", "where": "Ask 8x8 for SIP credentials for a third-party phone (server, user name, authorization name, password) over UDP.",
+            "route": "Use your auto-attendant or ring group overflow to send calls to that extension and keep a person as the failover.", "notes": "Not individually tested. Ask the provider whether third-party devices are allowed on your plan."},
+    "ooma": {"name": "Ooma", "compat": "unknown", "where": "Ask Ooma whether your plan allows a third-party SIP device and for its credentials over UDP.",
+             "route": "Route unanswered or after-hours calls to that extension and keep a person as the failover.", "notes": "Not individually tested."},
+    "vonage": {"name": "Vonage Business", "compat": "unknown", "where": "Ask Vonage for SIP credentials for a third-party phone (server, user name, password) over UDP.",
+               "route": "Use call forwarding rules or a ring group overflow to send calls to the extension and keep a person as the failover.", "notes": "Not individually tested."},
+    "telnyx": {"name": "Telnyx", "compat": "likely", "where": "Telnyx portal: SIP Connections, create a Credential connection and note the user name and password. The agent signs in to sip.telnyx.com.",
+               "route": "Assign your number to that connection, or forward unanswered calls to it, and keep a person as the failover.", "notes": "Use UDP and G.711 (PCMU or PCMA) and turn off encrypted media for this connection."},
+    "other": {"name": "Another SIP phone system", "compat": "unknown", "where": "Create a plain SIP extension (a desk-phone style extension) and note the server, user name, authorization name and password.",
+              "route": "Send the calls you choose (after hours, unanswered, or a queue overflow) to that extension and keep a person as the failover.", "notes": "Needs UDP SIP and G.711 audio without encryption."},
+    "unsure": {"name": "Not sure yet", "compat": "unknown", "where": "Ask whoever pays your phone bill or set up your phones: \"Who provides our phone service, and can they give us a third-party SIP extension?\" Use Copy message for my phone admin below.",
+               "route": "", "notes": "If your phones are plain mobile numbers with no phone system, use the Android phone or Telegram for messages and see the guide for calls."},
+}
+
+
+def _local_ip():
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("203.0.113.1", 9)); return s.getsockname()[0]
+    except OSError:
+        return "this computer's address"
+    finally:
+        s.close()
+
+
+def sip_providers():
+    return [{"id": k, "name": v["name"], "compat": v["compat"], "compat_text": COMPAT[v["compat"]], "where": v["where"], "route": v["route"], "notes": v["notes"], "preset": v.get("preset") or {}} for k, v in PROVIDERS.items()]
+
+
+def sip_admin_message(agent, provider):
+    """A plain message the owner can paste to the person who runs the phone system."""
+    pr = PROVIDERS.get(provider) or PROVIDERS["other"]; cfg = agent.cfg.get("sip") or {}; biz = agent.cfg.get("business") or "our business"
+    when = {"unanswered": "calls nobody answers", "after_hours": "calls outside business hours", "all": "every incoming call"}.get(cfg.get("answer_when"), "the calls we choose")
+    lines = [f"Hi, we are setting up an automated voice assistant for {biz} that answers calls on our existing phone system. It needs one dedicated SIP extension. Could you set it up and send me the details below?", "",
+             f"Phone system: {pr['name']}", "", "1. Create a new extension for it:", f"   {pr['where']}", "",
+             "2. Use these settings: transport UDP port 5060 (no TLS), audio G.711 u-law (PCMU) or A-law (PCMA) with no audio encryption, DTMF as RFC 2833 or SIP INFO, one concurrent call is enough to start, allow it to place transfers (SIP REFER).",
+             "", f"3. Send it {when}:", f"   {pr['route'] or 'Route the calls we choose to that extension.'}",
+             "   Please also set a failover: if the extension does not answer within about 15 seconds, the call should ring a person or go to voicemail. This protects us if the computer is off.", "",
+             "4. Network: the assistant runs on a computer in our office at " + _local_ip() + ". If the phone system is in the cloud or on another network, please allow UDP traffic between them on port 5060 and UDP ports 40000 to 40200.", "",
+             "5. Please send me back: the server address, the port, the extension number, the authorization name if it differs, and the password."]
+    if pr["notes"]:
+        lines += ["", "Notes: " + pr["notes"]]
+    return "\n".join(lines)
+
+
+SIP_PROBLEMS = {
+    "login_refused": ("Phone sign-in rejected", "The phone system refused the extension's user name or password. Re-copy the SIP password (not the admin password). RingCentral and Zoom also need the authorization name."),
+    "no_response": ("Can't reach your phone system", "Nothing answered at that address and port. Check the address for typos, that this computer is on the same network (or can reach it), and that a firewall is not blocking UDP 5060."),
+    "cannot_send": ("This computer can't send to the phone system", "The network refused the connection. Check the address and that the computer is online."),
+    "key_refused": ("Speech recognition key refused", "Speakvora did not accept the API key, so callers can use the keypad but not speak. Check the key under Connect, Speakvora agent."),
+    "free_minutes_used": ("Free speech minutes used", "Your free speech-to-text minutes are used up, so callers can use the keypad but not speak. Add credit in your Speakvora account to turn speaking back on."),
+    "stt_unavailable": ("Speech recognition didn't answer", "Speakvora could not turn the caller's words into text just now. Callers can still use the keypad; the agent will try again on the next call."),
+    "tls_certificate": ("The phone system's certificate isn't trusted", "The encrypted connection was refused because this computer does not trust the phone system's certificate. Ask your phone admin for the certificate file and put its path in Certificate file, or choose the not encrypted connection if your system allows it."),
+    "tls_failed": ("Encrypted connection failed", "The phone system did not complete the encrypted (TLS) connection. Check the address and port (usually 5061 or 5091 for encrypted), and that your phone system allows encrypted extensions."),
+    "connection_lost": ("Connection to the phone system was lost", "The agent is reconnecting by itself. If this keeps happening, check this computer's network and ask your phone admin whether the system closes idle connections."),
+    "no_inbound_audio": ("Caller audio isn't reaching your computer", "The call connected but no audio came in. First say a few words during the test call, because some phone systems send nothing while the caller is silent. If it still fails, open UDP ports 40000 to 40200 to this computer, or set This computer's public IP in the card if your phone system is in the cloud and this computer is behind a router."),
+}
+
+
+def sip_status(agent):
+    """The live checklist for the setup wizard: each item says whether it is proven, and the first problem is explained in plain words (technical details kept apart for the phone admin)."""
+    s = agent.sip; cfg = agent.cfg.get("sip") or {}; configured = bool(s.configured)
+    live = [{"t": int(x.started), "secs": int(time.time() - x.started), "audio_in": x.rx_audio, "audio_out": x.tx, "keys": x.digit_count, "transferred": x.transferred, "problem": x.problem, "caller": x.caller[-4:].rjust(4, "*"), "live": True} for x in list(s.calls.values())]
+    calls = list(s.history) + live; last = calls[-1] if calls else None; tested_ok = [h for h in calls if h["audio_in"] > 0 and h["audio_out"] > 0]
+    ok_ts = (agent.state.data or {}).get("sip_test_ok") or (tested_ok[-1]["t"] if tested_ok else 0)
+    facts = agent.cfg.get("facts") or {}; fallback = bool(str(cfg.get("fallback_number") or "").strip() or _real(facts.get("oncall_phone")))
+    items = [{"id": "online", "label": "Agent online", "ok": bool(s.running), "detail": "" if s.running else "The agent's web server is not running."},
+             {"id": "signed_in", "label": "Phone system signed in", "ok": bool(s.registered), "detail": "" if s.registered else (s.error or "Not signed in yet.")},
+             {"id": "call", "label": "Test call received", "ok": bool(last or ok_ts), "detail": "Call your business number now." if not (last or ok_ts) else ""},
+             {"id": "audio", "label": "Audio works both ways", "ok": bool(ok_ts), "detail": "" if ok_ts else ("Caller audio did not arrive." if last and last["audio_in"] == 0 else "Waiting for a test call.")},
+             {"id": "keys", "label": "Keypad press registered", "ok": any(h["keys"] > 0 for h in calls) or bool((agent.state.data or {}).get("sip_keys_ok")), "detail": "Press a menu key during the test call.", "optional": True},
+             {"id": "transfer", "label": "Transfer to staff attempted", "ok": any(h["transferred"] for h in calls) or bool((agent.state.data or {}).get("sip_transfer_ok")), "detail": "Press 0 during a test call.", "optional": True},
+             {"id": "speech", "label": "Callers can speak", "ok": bool((agent.state.data or {}).get("sip_speech_ok")), "optional": True,
+              "detail": ("Add your Speakvora key (Connect, Speakvora agent) so callers can say what they need." if not s.speech_ok(agent) else "Say \"what are your hours\" during a test call.")},
+             {"id": "fallback", "label": "Backup for when the agent can't answer", "ok": fallback, "detail": "" if fallback else "Add a staff number below, and set a no-answer rule in your phone system."}]
+    code = ""
+    if configured and not s.registered and s.err_code:
+        code = s.err_code
+    elif last and last.get("problem"):
+        code = last["problem"]
+    elif configured and getattr(s, "stt_error", ""):
+        code = s.stt_error
+    problem = None
+    if code in SIP_PROBLEMS:
+        problem = {"code": code, "title": SIP_PROBLEMS[code][0], "fix": SIP_PROBLEMS[code][1], "tech": s.error or code}
+    ready = configured and bool(s.registered) and bool(ok_ts) and fallback
+    first_missing = next((i["label"] for i in items if not i["ok"] and not i.get("optional")), "")
+    return {"configured": configured, "ready": ready, "summary": "Ready: your business number is connected." if ready else ("Not ready: " + first_missing if first_missing else "Not ready"), "items": items, "problem": problem,
+            "last_call": last, "last_test": ok_ts, "provider": cfg.get("provider") or "", "mode": cfg.get("answer_when") or ""}

@@ -124,3 +124,28 @@ def event(agent, name):
     names = [_title(agent, x["workflow"]) for x in r.get("workflows", [])]
     return {"kind": "event", "you": name, "matched": ", ".join(names) or "Nothing matched", "did": _tail(agent, start), "sent": False,
             "note": "" if names else "No switched-on workflow reacts to this event."}
+
+
+def call(agent, digits="", said="", new=False):
+    """Pretend to phone the business: the first call shows the greeting, then press a key or say something. Nothing is dialled, played or recorded as a real call, and the agent is held in practice mode while it runs."""
+    import re
+    from . import conversations as CV
+    digits = str(digits or "").strip()[:1]; said = " ".join(str(said or "").split())[:300]
+    with _LOCK:
+        was, start = agent.dry, _size(agent)
+        agent.dry = True
+        try:
+            agent._m().clear()
+            params = {"From": WHO, "CallSid": "sim-call"}
+            if said:
+                params["SpeechResult"] = said
+            xml = agent._handle_call(params, "start" if new else "menu", digits)
+        finally:
+            agent.dry = was
+    dial = re.search(r"<Dial[^>]*>\s*<Number>([^<]+)</Number>", xml or "")
+    you = "Calls in" if new else ("Presses " + digits if digits else ("Says: " + said if said else "Stays silent"))
+    ends = "<Hangup/>" in (xml or "") or bool(dial)
+    if dial:                                                                         # what plays after the Dial is only the "nobody picked up" fallback, not what the caller hears now
+        xml = xml[:xml.index("<Dial")] + "<Say>Connecting you now.</Say>"
+    return {"kind": "call", "you": you, "says": " ".join(CV._spoken(agent, xml)) if isinstance(CV._spoken(agent, xml), list) else CV._spoken(agent, xml), "transfer": dial.group(1) if dial else "", "menu": "<Gather" in (xml or ""), "ends": ends, "did": _tail(agent, start), "sent": False,
+            "note": ("A real caller would now be connected to " + dial.group(1) + ". (Nothing was dialled.)") if dial else ("The call would end here." if ends and "<Hangup/>" in xml else "")}

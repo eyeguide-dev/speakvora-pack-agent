@@ -84,9 +84,9 @@ class Agent:
     def sip_sync(self):
         """Keeps the office-phone-system connection (SIP) matching the saved settings: unchanged settings keep the running line, changed ones sign out and in again. It only runs while the web server runs."""
         new = Sip(self.cfg.get("sip")); old = getattr(self, "sip", None)
-        if old is not None and old.sock and old.cfg == new.cfg:
+        if old is not None and old.running and old.cfg == new.cfg:
             return
-        if old is not None and old.sock:
+        if old is not None and old.running:
             old.stop()
         self.sip = new
         if getattr(self, "_serving", False) and new.configured:
@@ -134,7 +134,7 @@ class Agent:
 
     def sip_stop(self):
         self.telegram_stop()
-        if getattr(self, "sip", None) is not None and self.sip.sock:
+        if getattr(self, "sip", None) is not None and self.sip.running:
             self.sip.stop()
 
     def reload(self, new_cfg):
@@ -1116,6 +1116,13 @@ class Agent:
     SPEECH_MENU = "Thanks for calling. You can speak, or use your keypad. Say or press one for hours, two to book, three for status, or zero for a person."
     SPEECH_ASK = "You can speak, or use your keypad. Say or press one for hours, two to book, three for status, or zero for a person."
 
+    def _ask_line(self, menu):
+        """The 'you can speak or press' line that lists the options: the bundle's recorded one, or yours when you built your own menu."""
+        if menu.get("custom"):
+            from xml.sax.saxutils import escape
+            return f"<Say>{escape(menu['speech_ask'])}</Say>"
+        return self._vp("menu_ask_speech", self.SPEECH_ASK)
+
     SPEECH_WORDS = {"1": ("hours", "open", "close", "closing", "address", "where", "location", "directions"), "2": ("book", "booking", "appointment", "schedule", "reschedule", "cancel", "quote", "estimate", "visit"),
                     "3": ("status", "order", "ready", "late", "update", "progress", "arrive")}
 
@@ -1130,6 +1137,9 @@ class Agent:
         return str(v) if v else ("2" if self.profile in ("clinic", "pharmacy", "dispensary") else "auto")
 
     def _speech_on(self):
+        tl = getattr(self, "_tl", None)
+        if tl is not None and hasattr(tl, "sip_speech"):                               # a call on your own phone system: speech only when the agent can turn words into text
+            return bool(tl.sip_speech) and self.pack.language == "en"
         if self.pack.language == "en" and self._ai_calls():
             return True
         return bool((self.cfg.get("twilio") or {}).get("speech_input")) and self.pack.language == "en"
@@ -1180,14 +1190,19 @@ class Agent:
         wf = next((w for w in self.workflows if (w.get("on") or {}).get("call")), None)
         if not wf:
             return twiml_message("Sorry, nobody is available to take your call.").replace("<Message>", "<Say>").replace("</Message>", "</Say>")
-        menu = wf["on"]["call"]["menu"]; base = self.cfg.get("public_base_url", "")
+        from . import phonemenu
+        menu = phonemenu.apply(self, wf["on"]["call"]["menu"]); base = self.cfg.get("public_base_url", "")
         ctx = self.ctx(call={"from": S.norm_phone(params.get("From", ""))}, customer={"phone": S.norm_phone(params.get("From", "")), "sms_consent": True})
         if step == "start" and self._ai_calls():
             return self._ai_greeting(menu, base)
         if step == "start":
             urls, hint, say = [], "", T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack)
             try:
-                if self._speech_on():                                                   # callers may speak or press: the greeting says so first, then gives the options
+                if menu.get("custom"):                                                  # the menu you built: your own words, in the bundle's voice once they have been voiced, otherwise the phone provider's voice
+                    say = menu["speech_say"] if self._speech_on() else menu["fallback_say"]
+                    voiced = self.audio.cached_dynamic(say, True)
+                    urls = [voiced] if voiced else []
+                elif self._speech_on():                                                 # callers may speak or press: the greeting says so first, then gives the options
                     say = self.SPEECH_MENU
                     if "menu_prompt_speech" in self.pack.slots:                         # the recorded version, once your bundle has it
                         urls = [self.audio.url(self.pack.resolve("menu_prompt_speech")["id"])]
@@ -1216,7 +1231,7 @@ class Agent:
             return "<Response>" + self._vp("opt_out_ack", "You have been unsubscribed and will not receive more messages or calls from us.") + "<Hangup/></Response>"
         bye = bool(re.search(r"\b(bye|goodbye|nope|nah|nothing|no thank you|no thanks|that's all|that is all|that's it|that is it|all done|all set|i'm good|im good|i am good)\b", said)) or said == "no"
         if step == "menu" and not (digits or "").strip() and re.fullmatch(r"(yes|yeah|yep|yup|sure|please|ok|okay|yes please|i do|i have)", said or "x") and self._speech_on():      # "yes" to "anything else?": give the options again
-            return twiml_menu([], f"{base}/twilio/call/menu", "", inner=self._vp("menu_ask_speech", self.SPEECH_ASK), speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
+            return twiml_menu([], f"{base}/twilio/call/menu", "", inner=self._ask_line(menu), speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
         digits = (digits or "").strip() or self._speech_choice(menu, said)
         if digits not in ("", "0") and self._ai_calls() and len(said.split()) >= 6:        # a detailed request goes to your AI; a short one ("hours", "book a table") still gets the instant recorded answer
             digits = ""
@@ -1228,7 +1243,7 @@ class Agent:
             if step in ("menu2", "menu3") and "0" in (menu.get("options") or {}):         # a second miss: do not leave the caller stuck, connect them to a person
                 digits = "0"
             else:
-                return twiml_menu([], f"{base}/twilio/call/menu2", "Sorry, I did not catch that. " + (self.SPEECH_ASK if self._speech_on() else T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack)), inner=(self._vp("call_not_understood", "Sorry, I did not catch that.") + self._vp("menu_ask_speech", self.SPEECH_ASK)) if self._speech_on() else None, speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
+                return twiml_menu([], f"{base}/twilio/call/menu2", "Sorry, I did not catch that. " + ((menu.get("speech_ask") or self.SPEECH_ASK) if self._speech_on() else T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack)), inner=(self._vp("call_not_understood", "Sorry, I did not catch that.") + self._ask_line(menu)) if self._speech_on() else None, speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
         opt = (menu.get("options") or {}).get(digits)
         self._m()["digits"] = digits
         xfer = [a for a in opt if isinstance(a, dict) and a.get("action") == "transfer"]
@@ -1249,8 +1264,12 @@ class Agent:
             xml += f"<Say>{escape(out['reply'])}</Say>"
         if xfer:                                                                  # connect the caller to a person right now (the staff phone from agent.json facts.oncall_phone)
             from xml.sax.saxutils import escape, quoteattr
-            to = S.norm_phone(T.render(str(xfer[0].get("to") or "{{fact:oncall_phone}}"), ctx, self.pack))
-            if to and "YOUR-" not in to and len(to) >= 8:
+            ext = bool(xfer[0].get("extension"))
+            to = T.render(str(xfer[0].get("to") or ""), ctx, self.pack).strip() if ext else S.norm_phone(T.render(str(xfer[0].get("to") or "{{fact:oncall_phone}}"), ctx, self.pack))
+            if ext and not getattr(getattr(self, "_tl", None), "sip_call", False):          # an extension only exists inside your office phone system
+                self.record(wf["name"], "transfer", "skipped", reason="an extension only works on an office phone system connection")
+                return xml + self._vp("call_staff_unavailable", "Sorry, nobody is available to take your call right now. We will call you back as soon as we can.") + "</Response>"
+            if to and "YOUR-" not in to and (ext and 2 <= len(to) <= 6 or len(to) >= 8):
                 self.record(wf["name"], "transfer", "sent", to=to)
                 return xml + f'<Dial timeout="25" answerOnBridge="true"><Number>{escape(to)}</Number></Dial>' + (f'<Say>{escape(xfer[0]["say_if_busy"])}</Say>' if xfer[0].get("say_if_busy") else self._vp("call_transfer_busy", "Sorry, nobody could pick up. We will call you back as soon as we can.")) + '<Hangup/></Response>'
             self.record(wf["name"], "transfer", "skipped", reason="no staff phone number set (facts.oncall_phone)")
@@ -1259,7 +1278,7 @@ class Agent:
             from xml.sax.saxutils import quoteattr
             hints = "no, no thanks, goodbye, hours, book, status, person" if self._speech_on() else ""
             mode = (f' input="dtmf speech" speechTimeout="{self._speech_timeout()}" speechModel="phone_call"' + (' enhanced="true"' if self._speech_enhanced() else '') + f' bargeIn="true" hints={quoteattr(hints)}') if hints else ' input="dtmf"'
-            return xml + f'<Gather{mode} numDigits="1" action={quoteattr(base + "/twilio/call/menu")} method="POST" timeout="' + ("10" if self._speech_on() else "6") + '">' + (self._vp("call_anything_else", "Is there anything else I can help with? You can speak, or use your keypad.") if self._speech_on() else "<Say>Is there anything else I can help with? Press 1 for hours, 2 to book, 3 for a status, or 0 for a person.</Say>") + '</Gather>' + self._vp("call_goodbye", "Thanks for calling. Goodbye.") + '<Hangup/></Response>'
+            return xml + f'<Gather{mode} numDigits="1" action={quoteattr(base + "/twilio/call/menu")} method="POST" timeout="' + ("10" if self._speech_on() else "6") + '">' + (self._vp("call_anything_else", "Is there anything else I can help with? You can speak, or use your keypad.") if self._speech_on() else ("<Say>" + __import__("xml.sax.saxutils", fromlist=["escape"]).escape(menu["again_say"]) + "</Say>" if menu.get("custom") else "<Say>Is there anything else I can help with? Press 1 for hours, 2 to book, 3 for a status, or 0 for a person.</Say>")) + '</Gather>' + self._vp("call_goodbye", "Thanks for calling. Goodbye.") + '<Hangup/></Response>'
         return xml + "<Hangup/></Response>"
 
     # ---- live conversation on calls -------------------------------------------------------------------------------------------------------------
