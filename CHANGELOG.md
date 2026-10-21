@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.32.1
+Fixed: the Full Guide pages (and their screenshots) were missing from the bundle files, so the Full Guide button on each connection and on the Automations tab would not open from inside a bundle. They are now packed with the agent. No other change.
+
 ## 0.32.0
 This release holds the unreleased 0.31.0 work (guided office-phone setup) and everything below; 0.31.0 was never published on its own.
 A new **Automations** tab, between Home and Connect (Connect is now the middle tab), is the one place for everything the agent does by itself: your own "when this happens, do this" workflows and the ready-made ones (they moved out of Settings), a **phone menu builder**, **Test my agent**, and the saved choices from Home. It is laid out as cards that sit side by side on a computer and stack on a phone, and it has its own Full Guide with screenshots.
