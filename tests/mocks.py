@@ -96,6 +96,25 @@ class Mock:
             return 200, "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"
         if p.startswith("/ics"):
             return 200, {}
+        if p == "/android/3rdparty/v1/message" and r["method"] == "POST":
+            return 202, {"id": "AM" + str(len(self.requests)), "state": "Pending"}
+        if p == "/android/3rdparty/v1/devices":
+            return 200, getattr(self, "android_devices", [{"id": "dev1"}])
+        if p == "/android/3rdparty/v1/webhooks":
+            return 201, {"id": "speakvora-sms"}
+        if re.fullmatch(r"/bot[^/]+/sendMessage", p):
+            return 200, {"ok": True, "result": {"message_id": 7}}
+        if re.fullmatch(r"/bot[^/]+/getUpdates", p):
+            ups, self.tg_updates = list(getattr(self, "tg_updates", [])), []
+            return 200, {"ok": True, "result": ups}
+        if re.fullmatch(r"/bot[^/]+/(getMe|setWebhook|deleteWebhook)", p):
+            return 200, {"ok": True, "result": {"username": "bella_bot"} if p.endswith("getMe") else True}
+        if re.fullmatch(r"/v21\.0/PID1/messages", p):
+            return 200, {"messages": [{"id": "wamid.1"}]}
+        if re.fullmatch(r"/v21\.0/WABA1/subscribed_apps", p) and r["method"] == "POST":
+            return 200, {"success": True}
+        if re.fullmatch(r"/v21\.0/PID1", p):
+            return 200, {"display_phone_number": "+1 555-000-2222", "verified_name": "Bella"}
         return 404, {"error": "unknown"}
 
     def calls(self, suffix):

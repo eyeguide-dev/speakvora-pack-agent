@@ -6,6 +6,8 @@ CUSTOMER_KINDS = ("sms", "call", "email")
 
 
 def norm_phone(p):
+    if str(p or "").startswith("tg:"):                                  # a Telegram chat, not a phone number
+        return str(p)
     d = re.sub(r"[^\d+]", "", str(p or ""))
     return d if d.startswith("+") else ("+1" + d if len(d) == 10 else ("+" + d if d else ""))
 

@@ -58,6 +58,32 @@ CARDS = {
         ("password", "Password or app password", "secret", "email.password", "EMAIL_PASSWORD", "Gmail: Google Account > Security > App passwords."),
         ("from", "Send from", "text", "email.from", None, "For example: Bella <hello@bella.com>."),
     ]},
+    "sip": {"title": "Your office phone system (calls)", "blurb": "Answers calls on the phone numbers you already have, with no Twilio. The agent signs in to your phone system as an extension, answers the calls you send to it, plays your recorded menu and transfers to your staff. Works with 3CX, FreePBX/Asterisk, RingCentral, 8x8, Zoom Phone, Ooma, Vonage, Telnyx and any phone system that offers SIP extensions.", "fields": [
+        ("server", "Phone system address", "text", "sip.server", None, "The server name or IP your desk phones sign in to, for example sip.yourprovider.com or 192.168.1.5."),
+        ("server_port", "Port (optional)", "number", "sip.server_port", None, "5060 unless your phone system uses a different one."),
+        ("username", "Extension / username", "text", "sip.username", None, "The extension you created for the agent, for example 101."),
+        ("password", "Extension password", "secret", "sip.password", "SIP_PASSWORD", "The SIP password of that extension (not the admin password)."),
+        ("auth_username", "Authorization name (optional)", "text", "sip.auth_username", None, "Only if your provider gives a different sign-in name from the extension (RingCentral and Zoom Phone do)."),
+        ("domain", "Domain (optional)", "text", "sip.domain", None, "Only if it differs from the address above."),
+        ("fallback_number", "If something goes wrong, send callers to (optional)", "text", "sip.fallback_number", None, "A person's extension or number, so a caller is never left in silence."),
+        ("external_ip", "This computer's public IP (optional)", "text", "sip.external_ip", None, "Only for a cloud phone system when the agent sits behind a router and the caller hears nothing."),
+    ]},
+    "android_sms": {"title": "Your Android phone (texts)", "blurb": "Texts from your own phone number and SIM, instantly: no Twilio, no carrier registration. Install the free SMS Gateway for Android app on the phone, sign in, and paste its details here.", "fields": [
+        ("username", "Username", "text", "android_sms.username", None, "SMS Gateway for Android app > Home tab > Cloud server > username."),
+        ("password", "Password", "secret", "android_sms.password", "ANDROID_SMS_PASSWORD", "The password shown next to the username in the app."),
+        ("signing_key", "Webhook signing key", "secret", "android_sms.signing_key", "ANDROID_SMS_SIGNING_KEY", "In the app: Settings > Webhooks > Signing key. Customer texts are only accepted when signed with it."),
+        ("lines_text", "Your phones / lines (optional)", "text", "android_sms.lines_text", None, "Only if you use more than one phone, for example: Front desk=DEVICE-ID, Billing=DEVICE-ID. A reply leaves from the phone the customer texted. Device IDs are in the app."),
+        ("base_url", "Phone address (optional, advanced)", "url", "android_sms.base_url", None, "Leave empty to go through the app's cloud relay. To keep everything on your own network, use the phone's address, for example https://192.168.1.20:8080."),
+    ]},
+    "telegram": {"title": "Telegram", "blurb": "Customers message your Telegram bot and the agent answers, free and instantly. Create the bot in Telegram with @BotFather and paste its token. Telegram does not let bots take voice calls.", "fields": [
+        ("bot_token", "Bot token", "secret", "telegram.bot_token", "TELEGRAM_BOT_TOKEN", "In Telegram, message @BotFather, send /newbot, and copy the token it gives you."),
+    ]},
+    "whatsapp": {"title": "WhatsApp Business (Meta)", "blurb": "Answers WhatsApp messages through Meta's own Cloud API, without Twilio. You need a Meta developer app with the WhatsApp product; replies are free within 24 hours of the customer's message.", "fields": [
+        ("access_token", "Access token", "secret", "whatsapp.access_token", "WHATSAPP_TOKEN", "Meta for Developers > your app > WhatsApp > API Setup. Use a permanent token from a system user for real use."),
+        ("phone_number_id", "Phone number ID", "text", "whatsapp.phone_number_id", None, "On the same API Setup page (not the phone number itself)."),
+        ("waba_id", "WhatsApp Business Account ID", "text", "whatsapp.waba_id", None, "Shown next to the phone number ID as the Messaging account ID. Lets the agent subscribe your app so Meta sends it incoming messages."),
+        ("app_secret", "App secret", "secret", "whatsapp.app_secret", "WHATSAPP_APP_SECRET", "Meta for Developers > App settings > Basic > App secret. Used to check that messages really come from Meta."),
+    ]},
     "account": {"title": "Your Speakvora agent", "blurb": "Connects this agent to your Speakvora account so it can create your hosted order pages (the links customers open), voice new phrases and ask for missing lines. Only order numbers and steps are sent for order pages, never customer details.", "fields": [
         ("api_key", "Speakvora API key", "secret", "speakvora.api_key", "SPEAKVORA_KEY", "On speakvora.com open your account, Voice API tab, and create a key. Paste it here."),
     ]},
@@ -71,6 +97,64 @@ CARDS = {
 }
 SELECTS = {"provider": [("anthropic", "Claude (Anthropic)"), ("openai", "ChatGPT (OpenAI)"), ("local", "Another or local AI (needs a server address)")], "allow_create": [("", "Read only"), ("true", "Add, move, cancel and delete its own bookings")], "mode": [("strict", "Careful"), ("standard", "Normal"), ("open", "Open (no limits)")]}
 # which card a workflow action needs
+STEPS = {
+    "android_sms": ["Install the free SMS Gateway for Android app on the phone and switch on its Cloud server.", "Paste its username, password and webhook signing key below, then press Save and test."],
+    "telegram": ["In Telegram message @BotFather, send /newbot, and copy the token it gives you.", "Paste the token below and press Save and test."],
+    "whatsapp": ["Create a Meta developer app with the WhatsApp product and copy the access token, phone number ID and app secret.", "Paste them below, press Save and test, then paste the callback address it shows into Meta."],
+    "sip": ["Create a SIP extension for the agent in your phone system.", "Paste its address, extension and password below, press Save and test, then send calls to that extension."],
+}
+GUIDES = {"android_sms": "android-sms", "telegram": "telegram", "whatsapp": "whatsapp", "sip": "office-phone", "twilio": "twilio", "slack": "slack", "teams": "teams", "calendar": "calendar", "email": "email", "ai": "ai", "account": "account"}
+
+
+def _md_inline(t):
+    from html import escape
+    t = escape(t)
+    t = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", t)
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", t)
+
+
+def guide_html(name, download=False):
+    """The full setup guide as one standalone web page (pictures embedded, so the saved file works offline). It holds no secrets and needs no sign-in: a new browser tab can open it."""
+    import base64
+    from html import escape
+    g = guide(name); d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "guides", "img"); out = []; lst = None
+    def close():
+        nonlocal lst
+        if lst:
+            out.append(f"</{lst}>"); lst = None
+    for line in g["markdown"].split("\n"):
+        ol, ul, im = re.match(r"^\d+\.\s+(.*)", line), re.match(r"^-\s+(.*)", line), re.match(r"^!\[([^\]]*)\]\(([\w.-]+)\)\s*$", line)
+        if ol or ul:
+            tag = "ol" if ol else "ul"
+            if lst != tag:
+                close(); out.append(f"<{tag}>"); lst = tag
+            out.append("<li>" + _md_inline((ol or ul).group(1)) + "</li>"); continue
+        close()
+        if im:
+            f = os.path.join(d, os.path.basename(im.group(2)))
+            if os.path.exists(f):
+                out.append(f'<figure><img alt="{escape(im.group(1))}" src="data:image/jpeg;base64,{base64.b64encode(open(f, "rb").read()).decode()}"><figcaption>{escape(im.group(1))}</figcaption></figure>')
+        elif line.startswith("# "):
+            out.append("<h1>" + _md_inline(line[2:]) + "</h1>")
+        elif line.startswith("## "):
+            out.append("<h2>" + _md_inline(line[3:]) + "</h2>")
+        elif line.strip():
+            out.append("<p>" + _md_inline(line) + "</p>")
+    close(); title = next((re.sub(r"<[^>]+>", "", x) for x in out if x.startswith("<h1>")), "Setup guide")
+    css = ":root{--bg:#fff;--fg:#1a1a1a;--mut:#666;--acc:#d9541e;--card:#f5f3ef}@media(prefers-color-scheme:dark){:root{--bg:#141414;--fg:#eee;--mut:#aaa;--acc:#ff8a5c;--card:#222}}body{background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,sans-serif;margin:0;padding:24px 16px}main{max-width:720px;margin:0 auto}h1{font-size:28px;margin:0 0 6px}h2{font-size:19px;margin:30px 0 4px;color:var(--acc)}code{background:var(--card);padding:1px 6px;border-radius:5px}figure{margin:14px 0}img{max-width:min(100%,340px);border-radius:12px;border:1px solid var(--card)}figcaption{color:var(--mut);font-size:13px}.note{color:var(--mut);font-size:13px;margin-top:36px}"
+    return ("<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>" + escape(title) + " | Speakvora agent</title><style>" + css + "</style></head><body><main>"
+            + "".join(out) + "<p class=note>Speakvora agent setup guide. Screenshots have the account details blurred out. Save this page (File, Save) to keep a copy.</p></main></body></html>")
+
+
+def guide(name):
+    """The full A-to-Z setup guide for a channel (plain text with simple Markdown), shown in the dashboard."""
+    slug = next((v for k, v in GUIDES.items() if name in (k, v)), None)
+    if not slug:
+        raise SetupError("There is no guide for that.")
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "guides", slug + ".md")
+    return {"name": slug, "markdown": open(p, encoding="utf-8").read()}
+
+
 NEEDS = {"sms": "twilio", "call": "twilio", "slack": "slack", "teams": "teams", "notify": "slack", "email": "email", "calendar_create": "calendar", "calendar_reschedule": "calendar", "calendar_cancel": "calendar", "calendar_delete": "calendar", "reason": "ai"}
 TRIGGER_WORDS = {"event": "when your app sends this event", "calendar": "from your calendar", "sms": "when someone texts", "call": "when someone calls", "email": "when someone emails", "slack_command": "from a Slack command", "schedule": "every day"}
 
@@ -156,6 +240,16 @@ def connected(agent, name):
     c = agent.cfg
     if name == "twilio":
         return bool(agent.twilio.configured and _real(agent.twilio.sid) and _real(agent.twilio.from_number))
+    if name == "sip":
+        return bool(agent.sip.configured)
+    if name == "android_sms":
+        return bool(agent.android.configured)
+    if name == "telegram":
+        return bool(agent.telegram.configured)
+    if name == "whatsapp":
+        return bool(agent.whatsapp.configured and _real(agent.whatsapp.phone_id))
+    if name == "texts":                                            # any way of sending a text: your phone, Telegram, WhatsApp, Twilio or your own provider
+        return bool(connected(agent, "twilio") or connected(agent, "android_sms") or connected(agent, "telegram") or connected(agent, "whatsapp") or agent.sms_provider.configured)
     if name == "slack":
         return bool(agent.slack.configured)
     if name == "teams":
@@ -175,13 +269,34 @@ def connected(agent, name):
     return False
 
 
+def capabilities(agent):
+    """What the agent can really do right now, by connection: incoming calls, outgoing calls, sending texts, receiving replies. Each says which connection provides it, or what to connect."""
+    base = str(agent.cfg.get("public_base_url", "")).rstrip("/"); public = _real(base) and base.startswith("https://")
+    tw = connected(agent, "twilio"); sip = connected(agent, "sip") and bool(agent.sip.registered)
+    send = [n for n, ok in (("Your Android phone", connected(agent, "android_sms")), ("Telegram", connected(agent, "telegram")), ("WhatsApp", connected(agent, "whatsapp")), ("Twilio", tw), ("your own provider", agent.sms_provider.configured)) if ok]
+    recv = [n for n, ok in (("Telegram", connected(agent, "telegram")),) if ok]                  # Telegram needs no public address: the agent asks for messages itself
+    if public:
+        recv += [n for n, ok in (("Your Android phone", connected(agent, "android_sms") and bool(agent.android.signing_key)), ("WhatsApp", connected(agent, "whatsapp") and bool(agent.whatsapp.app_secret)), ("Twilio", tw)) if ok]
+    callin = [n for n, ok in (("Office phone system", sip), ("Twilio", tw and public)) if ok]
+    callout = [n for n, ok in (("Twilio", tw), ("your own provider", agent.call_provider.configured)) if ok]
+    def cap(id_, label, via, fix):
+        return {"id": id_, "label": label, "ready": bool(via), "via": ", ".join(via), "fix": "" if via else fix}
+    warn = []
+    if (agent.state.data or {}).get("wa_token_bad"):
+        warn = [{"id": "wa_token", "label": "WhatsApp access token", "ready": False, "via": "", "fix": "It expired, so customers get no WhatsApp replies. Paste a new token (a permanent system-user token does not expire): Connect, WhatsApp Business, Full Guide."}]
+    return warn + [cap("calls_in", "Answer incoming calls", callin, "Connect your office phone system or Twilio" + ("" if public else ", and set your public address (Settings, Your business details)")),
+            cap("calls_out", "Place calls", callout, "Connect your office phone system or Twilio"),
+            cap("texts_out", "Send texts and messages", send, "Connect your Android phone, Telegram, WhatsApp or Twilio"),
+            cap("texts_in", "Receive replies", recv, "Connect a messaging app and set your public address (Settings, Your business details)" if not public else "Connect a messaging app and finish its signing key")]
+
+
 def status(agent):
     ensure_basics(agent); raw = _raw(agent); tested = agent.state.data.get("tested", {}); cards = []
     for name, card in CARDS.items():
-        cards.append({"name": name, "title": card["title"], "blurb": card["blurb"], "connected": connected(agent, name), "tested": tested.get(name), "fields": [_field_view(agent, raw, name, f) for f in card["fields"]]})
+        cards.append({"name": name, "title": card["title"], "blurb": card["blurb"], "steps": STEPS.get(name, []), "guide": name in GUIDES, "connected": connected(agent, name), "tested": tested.get(name), "fields": [_field_view(agent, raw, name, f) for f in card["fields"]]})
     base = str(agent.cfg.get("public_base_url", "")).rstrip("/")
     listen = agent.cfg.get("listen") or {}
-    return {"cards": cards, "workflows": workflows(agent), "readiness": readiness(agent), "live": not agent.dry, "event_url": (base if _real(base) else f"http://{listen.get('host', '127.0.0.1')}:{listen.get('port', 8787)}") + "/event",
+    return {"cards": cards, "capabilities": capabilities(agent), "workflows": workflows(agent), "readiness": readiness(agent), "live": not agent.dry, "event_url": (base if _real(base) else f"http://{listen.get('host', '127.0.0.1')}:{listen.get('port', 8787)}") + "/event",
             "has_public": _real(base), "slack_manifest": slack_manifest(agent) if connected(agent, "business") or True else None, "sources": sources(agent)}
 
 
@@ -408,6 +523,46 @@ def twilio_fallback_set(agent, url):
     return {"saved": url, "applied": True, "message": ("Backup set. If Twilio cannot reach this computer, it will ask that address and the call goes to your team." if url else "Backup removed.")}
 
 
+def channel_connect(agent, card):
+    """Points a text channel at this agent so customer messages arrive: registers the webhook with the phone app (Android) or Telegram, and for WhatsApp makes the verify token and returns what to paste into Meta's dashboard."""
+    base = str(agent.cfg.get("public_base_url", "")).rstrip("/"); sd = agent.state.dir
+    if not connected(agent, card):
+        raise SetupError("Fill in this section and save it first.")
+    if card == "telegram" and not (_real(base) and base.startswith("https://")):         # no public address: the agent asks Telegram for messages itself
+        try:
+            me = agent.telegram.me(); agent.telegram.delete_webhook(); agent.telegram_sync()
+        except Exception as e:  # noqa: BLE001
+            raise SetupError(_explain(e))
+        return {"card": card, "address": "", "message": f"Done. Open Telegram, search @{me.get('username', '')}, press Start and send a message. The agent checks for messages itself while it is running, so no web address is needed."}
+    if not (_real(base) and base.startswith("https://")):
+        raise SetupError("Your agent has no public web address yet (Settings, Your business details). Messages can only reach an https address on the internet.")
+    try:
+        if card == "android_sms":
+            agent.android.register_webhook(base + "/android/sms")
+            return {"card": card, "address": base + "/android/sms", "message": "Done. Your phone will now send every text it receives to this agent. Text your phone from another number to try it."}
+        if card == "telegram":
+            if not SS.read(sd).get("TELEGRAM_WEBHOOK_SECRET"):
+                SS.set_value(sd, "TELEGRAM_WEBHOOK_SECRET", _rnd.token_hex(24))
+            raw = _raw(agent); _set(raw, "telegram.webhook_secret", "env:TELEGRAM_WEBHOOK_SECRET"); _write_raw(agent, raw); _reload(agent)
+            agent.telegram.set_webhook(base + "/telegram/webhook", SS.read(sd)["TELEGRAM_WEBHOOK_SECRET"])
+            me = agent.telegram.me()
+            return {"card": card, "address": base + "/telegram/webhook", "message": f"Done. Open Telegram, search @{me.get('username', '')} and send it a message to try it."}
+        if card == "whatsapp":
+            if not SS.read(sd).get("WHATSAPP_VERIFY_TOKEN"):
+                SS.set_value(sd, "WHATSAPP_VERIFY_TOKEN", _rnd.token_hex(12))
+            raw = _raw(agent); _set(raw, "whatsapp.verify_token", "env:WHATSAPP_VERIFY_TOKEN"); _write_raw(agent, raw); _reload(agent)
+            subscribed = False
+            try:
+                subscribed = agent.whatsapp.subscribe_account()
+            except Exception:  # noqa: BLE001 - not fatal: the guide shows how to do it by hand
+                pass
+            return {"card": card, "address": base + "/whatsapp/webhook", "verify_token": SS.read(sd)["WHATSAPP_VERIFY_TOKEN"], "subscribed": subscribed,
+                    "message": ("Your app is subscribed to your WhatsApp account. " if subscribed else "Add the WhatsApp Business Account ID so the agent can subscribe your app, or see the Full Guide. ") + "In Meta for Developers open WhatsApp > Configuration, press Edit on Webhook, paste the callback address and the verify token, then subscribe to \"messages\"."}
+    except Exception as e:  # noqa: BLE001
+        raise SetupError(_explain(e))
+    raise SetupError("That section does not receive messages.")
+
+
 def twilio_point(agent, number):
     """Points a Twilio number's call and text webhooks at this agent's public address, so the owner never opens the Twilio console."""
     a = agent.twilio; base = str(agent.cfg.get("public_base_url", "")).rstrip("/")
@@ -453,6 +608,38 @@ def test(agent, card, opts=None):
                 a.sms(to, "Test text from your voice bundle's agent. If you got this, texting works.")
                 msg += f" A test text was sent to {to}."
             return _passed(agent, card, msg)
+        if card == "sip":
+            s = agent.sip
+            if not s.sock:
+                return {"ok": False, "message": "The agent's web server is not running, so the phone line cannot sign in. Start the agent, then test again."}
+            for _ in range(24):
+                if s.registered or s.error:
+                    break
+                time.sleep(0.25)
+            if not s.registered:
+                return {"ok": False, "message": (s.error or "No answer from the phone system yet.") + " Check the address, extension and password, and that this computer can reach the phone system."}
+            return _passed(agent, card, f"Signed in to {s.server} as extension {s.user}. Send the calls you want answered to that extension.")
+        if card == "android_sms":
+            a = agent.android; r = a.devices(); n = len(r) if isinstance(r, list) else None
+            msg = "Signed in to the SMS Gateway" + (f": {n} phone(s) registered." if n is not None else ".")
+            if n == 0:
+                return {"ok": False, "message": msg + " Open the app on your phone and switch the Cloud server on."}
+            if not a.signing_key:
+                return {"ok": False, "message": msg + " Add the webhook signing key (app > Settings > Webhooks) so customer texts can be accepted."}
+            if opts.get("to"):
+                to = str(opts["to"]).replace(" ", "")
+                if not re.fullmatch(r"\+\d{8,15}", to):
+                    return {"ok": False, "message": "Type your own phone number with the country code to receive a test text."}
+                a.send(to, "Test text from your voice bundle's agent. If you got this, texting from your phone works.")
+                msg += f" A test text was sent to {to}."
+            return _passed(agent, card, msg)
+        if card == "telegram":
+            me = agent.telegram.me()
+            return _passed(agent, card, f"Connected to the Telegram bot @{me.get('username', '')}. Customers find it by that name.")
+        if card == "whatsapp":
+            r = agent.whatsapp.me() or {}
+            agent.state.data.pop("wa_token_bad", None)
+            return _passed(agent, card, f"Connected to WhatsApp number {r.get('display_phone_number', agent.whatsapp.phone_id)} ({r.get('verified_name', 'name pending')}).")
         if card == "slack":
             s = agent.slack; msg = ""
             if s.token:
@@ -554,7 +741,7 @@ def workflows(agent):
         needs = sorted({NEEDS[k] for k in _kinds(w) if k in NEEDS}); on = w.get("on") or {}
         trig = next((TRIGGER_WORDS[k] for k in TRIGGER_WORDS if k in on), "")
         out.append({"name": w["name"], "title": re.sub(r"\s+", " ", w["name"].replace("_", " ")).capitalize(), "what": recipes.NICE.get(w["name"], ""), "when": trig, "enabled": w.get("enabled", True), "also": w.get("also_send_to") or [], "needs": needs,
-                    "missing": [n for n in needs if not connected(agent, n)]})
+                    "missing": [n for n in needs if not (connected(agent, "texts") if n == "twilio" and "call" not in _kinds(w) else connected(agent, n))]})      # texts alone can go through your phone, Telegram or WhatsApp; calls still need Twilio
     return out
 
 
@@ -664,7 +851,7 @@ def setup_order_pages(agent, values):
 def readiness(agent):
     """What must be true before the agent sends for real."""
     wfs = workflows(agent); on = [w for w in wfs if w["enabled"]]; tested = agent.state.data.get("tested", {})
-    live_services = [n for n in ("twilio", "slack", "teams", "email", "calendar") if connected(agent, n)]
+    live_services = [n for n in ("twilio", "sip", "android_sms", "telegram", "whatsapp", "slack", "teams", "email", "calendar") if connected(agent, n)]
     checks = [{"ok": connected(agent, "business"), "text": "Your business name is filled in."},
               {"ok": bool(live_services), "text": "At least one service is connected (texts and calls, Slack, Teams, email or calendar)."},
               {"ok": bool(live_services) and all(tested.get(n) for n in live_services), "text": "Every connected service passed its test."},
@@ -959,8 +1146,8 @@ def set_workflow_targets(agent, name, ids):
 def catalog(agent):
     """Everything the + Add connection button offers."""
     have = {c["name"] for c in status_cards(agent)}
-    short = {"slack": "Tell your team and use slash commands", "teams": "Post to a Teams channel", "twilio": "Send texts and make calls", "calendar": "Reminders from your bookings", "email": "Send email from your mailbox", "ai": "Let it think, with your own key", "account": "Pair with a code to voice new lines"}
-    tiles = [{"id": n, "kind": "service", "name": t, "blurb": short[n], "added": connected(agent, n)} for n, t in (("slack", "Slack"), ("teams", "Microsoft Teams"), ("twilio", "Texts and calls (Twilio)"), ("calendar", "Google or Outlook calendar"), ("email", "Email"), ("ai", "AI reasoning (your own key)"), ("account", "Speakvora agent"))]
+    short = {"slack": "Tell your team and use slash commands", "teams": "Post to a Teams channel", "twilio": "Send texts and make calls", "sip": "Answer calls on your own numbers, no Twilio", "android_sms": "Texts from your own phone, no Twilio", "telegram": "Answer customers on Telegram", "whatsapp": "Answer WhatsApp messages (Meta)", "calendar": "Reminders from your bookings", "email": "Send email from your mailbox", "ai": "Let it think, with your own key", "account": "Pair with a code to voice new lines"}
+    tiles = [{"id": n, "kind": "service", "name": t, "blurb": short[n], "added": connected(agent, n)} for n, t in (("slack", "Slack"), ("teams", "Microsoft Teams"), ("twilio", "Texts and calls (Twilio)"), ("sip", "Your office phone system (calls)"), ("android_sms", "Your Android phone (texts)"), ("telegram", "Telegram"), ("whatsapp", "WhatsApp Business"), ("calendar", "Google or Outlook calendar"), ("email", "Email"), ("ai", "AI reasoning (your own key)"), ("account", "Speakvora agent"))]
     tools = {"shopify": "Shopify", "github": "GitHub", "gitlab": "GitLab", "pagerduty": "PagerDuty", "stripe": "Stripe", "calendly": "Calendly", "generic-pos": "Point of sale", "pos": "Point of sale"}
     for s in sources(agent):
         seen = (agent.state.data.get("tool_seen") or {}).get(s["name"])
@@ -973,3 +1160,23 @@ def catalog(agent):
 
 def status_cards(agent):
     return [{"name": n} for n in CARDS]
+
+
+# ---- every setup step is written to the local setup log (see setuplog.py): what was saved (field names only), what each test said, and what a channel connection returned
+def _wrap(name, kind, describe):
+    fn = globals()[name]
+    def wrapper(agent, *a, **k):
+        from . import setuplog
+        try:
+            out = fn(agent, *a, **k)
+        except Exception as e:  # noqa: BLE001
+            setuplog.record(agent, kind, **describe(a, k), ok=False, error=f"{type(e).__name__}: {str(e)[:200]}"); raise
+        res = out if isinstance(out, dict) else {}
+        setuplog.record(agent, kind, **describe(a, k), ok=res.get("ok", True) if kind == "test" else True, **({"message": str(res.get("message", ""))[:200]} if kind in ("test", "channel_connect") else {}))
+        return out
+    wrapper.__name__ = name; globals()[name] = wrapper
+_wrap("save", "save", lambda a, k: {"card": a[0] if a else k.get("card"), "fields": sorted((a[1] if len(a) > 1 else k.get("values") or {}).keys())})
+_wrap("test", "test", lambda a, k: {"card": a[0] if a else k.get("card")})
+_wrap("channel_connect", "channel_connect", lambda a, k: {"card": a[0] if a else k.get("card")})
+_wrap("disconnect", "disconnect", lambda a, k: {"card": a[0] if a else k.get("card")})
+_wrap("go_live", "go_live", lambda a, k: {"on": bool(a[0] if a else k.get("on"))})

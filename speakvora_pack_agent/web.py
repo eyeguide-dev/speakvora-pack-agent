@@ -29,6 +29,7 @@ def is_offline(exc):
 
 def request(method, url, headers=None, form=None, body=None, raw=None, timeout=15):
     data, h = None, dict(headers or {})
+    h.setdefault("user-agent", "SpeakvoraAgent/0.30 (+https://speakvora.com)")          # services behind Cloudflare (the SMS gateway relay) refuse Python's default user agent with error 1010
     if form is not None:
         data = urllib.parse.urlencode(form, doseq=True).encode(); h.setdefault("content-type", "application/x-www-form-urlencoded")
     elif body is not None:

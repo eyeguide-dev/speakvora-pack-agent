@@ -227,6 +227,19 @@ def handle(agent, method, path, headers, raw):
             out = SU.twilio_fallback(agent)
         elif p == "/dash/api/setup/twilio/fallback" and method == "POST":
             out = SU.twilio_fallback_set(agent, json.loads(raw or b"{}").get("url"))
+        elif p == "/dash/api/support/report" and method == "GET":
+            from . import setuplog
+            out = {"report": setuplog.report(agent)}
+        elif p == "/dash/api/support/send" and method == "POST":
+            from . import setuplog
+            if not agent.mail.configured:
+                raise SU.SetupError("Connect your email first (Connect, Email), or use Download report and email the file to support@speakvora.com.")
+            agent.mail.send("support@speakvora.com", f"Setup report from {agent.cfg.get('business') or 'a new agent'}", setuplog.report(agent)); setuplog.record(agent, "support_report_emailed")
+            out = {"sent": True}
+        elif p.startswith("/dash/api/guide/") and method == "GET":
+            out = SU.guide(p.rsplit("/", 1)[1])
+        elif p == "/dash/api/setup/channel/connect" and method == "POST":
+            out = SU.channel_connect(agent, json.loads(raw or b"{}").get("card"))
         elif p == "/dash/api/setup/twilio/point" and method == "POST":
             out = SU.twilio_point(agent, json.loads(raw or b"{}").get("number"))
         elif p == "/dash/api/setup/pair" and method == "POST":

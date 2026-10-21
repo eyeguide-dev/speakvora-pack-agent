@@ -752,7 +752,7 @@ class ConnectTab(unittest.TestCase):
         self.assertEqual(self.call("GET", "/dash/api/setup", tok=False)[0], 401)
         st, s = self.call("GET", "/dash/api/setup"); self.assertEqual(st, 200); txt = json.dumps(s)
         for secret in (TOKEN, "xoxb-1", SLACK_SECRET, "ya29"): self.assertNotIn(secret, txt)
-        self.assertEqual([c["name"] for c in s["cards"]], ["business", "twilio", "slack", "teams", "calendar", "email", "account", "ai"])
+        self.assertEqual([c["name"] for c in s["cards"]], ["business", "twilio", "slack", "teams", "calendar", "email", "sip", "android_sms", "telegram", "whatsapp", "account", "ai"])
         tw = self.card("twilio"); self.assertTrue(tw["connected"]); self.assertTrue(next(f for f in tw["fields"] if f["key"] == "auth_token")["set"]); self.assertTrue(next(f for f in tw["fields"] if f["key"] == "auth_token")["hint"].endswith(TOKEN[-4:]))
 
     def test_saving_a_card_stores_keys_privately_applies_at_once_and_keeps_old_ones_when_the_box_is_empty(self):

@@ -12,6 +12,10 @@ from .connectors.mailer import Email
 from .connectors.outlook import OutlookCalendar
 from .connectors.teams import Teams
 from .connectors.slack import Slack
+from .connectors.androidsms import AndroidSms
+from .connectors.sip import Sip
+from .connectors.telegram import Telegram
+from .connectors.whatsapp import WhatsApp
 from .connectors.twilio import Twilio, twiml_menu, twiml_message, twiml_parts, twiml_play
 from .providers import HttpProvider
 from .pack import Pack, PackError
@@ -30,7 +34,7 @@ class Agent:
         self.pack = Pack(cfg["pack"])
         self.state = State(cfg["state_dir"], now)
         self.safe = S.Safety(cfg, self.state, now)
-        self.audio = AudioStore(self.pack, cfg["state_dir"], cfg.get("public_base_url", ""))
+        self.audio = AudioStore(self.pack, cfg["state_dir"], cfg.get("public_base_url", "") or ("http://sip.local" if (cfg.get("sip") or {}).get("server") else ""))
         from . import learned
         learned.attach(self)                                                     # lines learned from your AI's repeated replies
         self.imap_factory = None
@@ -62,6 +66,8 @@ class Agent:
         self.twilio, self.slack, self.gcal, self.mail = Twilio(cfg["twilio"]), Slack(cfg["slack"]), GoogleCalendar(cfg["google_calendar"]), Email(cfg["email"])
         self.teams, self.outlook, self.inbox = Teams(cfg.get("teams", {})), OutlookCalendar(cfg.get("microsoft_calendar", {})), Inbox(cfg.get("inbox", {}))
         self.sms_provider, self.call_provider = HttpProvider(cfg.get("sms_provider")), HttpProvider(cfg.get("call_provider"))
+        self.android, self.telegram, self.whatsapp = AndroidSms(cfg.get("android_sms")), Telegram(cfg.get("telegram")), WhatsApp(cfg.get("whatsapp"))
+        self.sip_sync(); self.telegram_sync()
         base = str(cfg.get("public_base_url", "")).rstrip("/")
         self.twilio.status_url = base + "/twilio/status" if base.startswith("https://") and "YOUR-" not in base else ""     # Twilio tells us later whether a text or call really arrived
 
@@ -75,11 +81,67 @@ class Agent:
         self.workflows = mine + [w for w in wf.get("workflows", []) if w.get("enabled", True)]
         return wf
 
+    def sip_sync(self):
+        """Keeps the office-phone-system connection (SIP) matching the saved settings: unchanged settings keep the running line, changed ones sign out and in again. It only runs while the web server runs."""
+        new = Sip(self.cfg.get("sip")); old = getattr(self, "sip", None)
+        if old is not None and old.sock and old.cfg == new.cfg:
+            return
+        if old is not None and old.sock:
+            old.stop()
+        self.sip = new
+        if getattr(self, "_serving", False) and new.configured:
+            try:
+                new.start(self)
+            except OSError as e:
+                new.error = f"Could not reach the phone system: {e}"[:200]
+
+    def _has_public(self):
+        b = str(self.cfg.get("public_base_url", "")).rstrip("/")
+        return b.startswith("https://") and "YOUR-" not in b
+
+    def telegram_sync(self):
+        """With no public web address the agent asks Telegram for new messages itself (long polling), so a bot works on any computer with nothing to set up. With a public address Telegram delivers by webhook instead and this stays off."""
+        t = self.telegram; want = bool(t.configured and getattr(self, "_serving", False) and not self._has_public())
+        cur = getattr(self, "_tg_poll", None)
+        if cur and (not want or cur["token"] != t.token):
+            cur["stop"].set(); self._tg_poll = None; cur = None
+        if want and not cur:
+            stop = threading.Event(); self._tg_poll = {"stop": stop, "token": t.token}
+            threading.Thread(target=self._tg_loop, args=(t, stop), daemon=True).start()
+
+    def _tg_loop(self, t, stop):
+        try:
+            t.delete_webhook()                                              # Telegram refuses polling while a webhook is set
+        except Exception:  # noqa: BLE001
+            pass
+        while not stop.is_set():
+            try:
+                off = int(self.state.data.get("tg_offset", 0))
+                for u in t.updates(off, 20 if not os.environ.get("SV_TEST") else 1):
+                    self.state.data["tg_offset"] = max(int(self.state.data.get("tg_offset", 0)), int(u["update_id"]) + 1); self.state.save()
+                    m = t.parse(u)
+                    if m and self.state.once("telegram:" + str(u["update_id"])):
+                        self.handle_chat("telegram", m["from"], m["body"])
+            except Exception as e:  # noqa: BLE001 - a network blip never stops the bot
+                self.state.log(workflow="telegram", status="error", error=f"{type(e).__name__}: {e}"[:160]); stop.wait(5)
+            if os.environ.get("SV_TEST"):
+                stop.wait(0.2)
+
+    def telegram_stop(self):
+        cur = getattr(self, "_tg_poll", None)
+        if cur:
+            cur["stop"].set(); self._tg_poll = None
+
+    def sip_stop(self):
+        self.telegram_stop()
+        if getattr(self, "sip", None) is not None and self.sip.sock:
+            self.sip.stop()
+
     def reload(self, new_cfg):
         """Applies a changed agent.json / secrets / workflows without a restart (the dashboard's Save). The same cfg object is updated in place because the web server holds a reference to it."""
         keep = {k: self.cfg[k] for k in ("dry_run",) if k in self.cfg}
         self.cfg.clear(); self.cfg.update(new_cfg); self.cfg.update(keep)
-        self.audio.base = str(self.cfg.get("public_base_url", "")).rstrip("/")             # the address phones fetch audio from: a changed public address must apply at once, not after a restart
+        self.audio.base = str(self.cfg.get("public_base_url", "") or ("http://sip.local" if (self.cfg.get("sip") or {}).get("server") else "")).rstrip("/")             # the address phones fetch audio from: a changed public address must apply at once, not after a restart
         self._init_services(); self._load_workflows()
         oc = str((self.cfg.get("facts") or {}).get("oncall_phone", ""))
         if oc and "YOUR-" not in oc and oc not in (self.cfg.setdefault("recipients", {}).setdefault("allow", [])):
@@ -603,16 +665,22 @@ class Agent:
             if blocked:
                 return blocked
             media = self.audio.url(self.pack.resolve(a["audio"])["id"]) if a.get("audio") and a.get("media", False) else None
-            wa = a.get("channel") == "whatsapp"                                  # same Twilio account; the number must be WhatsApp-enabled in Twilio (twilio.whatsapp_from)
+            route = self._text_route(a, to); wa = route == "whatsapp_twilio"
             text = a["text"] if a.get("raw") else self._sms_text(a["text"], to)  # required notices (opt-out footer, debt-collector notice...) are added for you
             if self.dry:
-                self.record(wf, kind, "dry_run", to=to, text=text, media=media, channel="whatsapp" if wa else "sms"); return {"status": "dry_run"}
-            self._need(self.twilio.configured or self.sms_provider.configured, "Texting", "add the twilio section (or sms_provider) in agent.json")
-            if self.sms_provider.configured and not wa:
+                self.record(wf, kind, "dry_run", to=to, text=text, media=media, channel=self._chan_label(route)); return {"status": "dry_run"}
+            self._need(route != "none", "Texting", "connect your phone, Telegram, WhatsApp or Twilio (Connect tab), or add the twilio section (or sms_provider) in agent.json")
+            if route == "telegram":
+                r = self.telegram.send(to[3:], text, idem=ctx.get("_jid"))
+            elif route == "whatsapp":
+                r = self.whatsapp.send(to, text, idem=ctx.get("_jid"))
+            elif route == "android":
+                r = self.android.send(to, text, line=a.get("line") or ctx.get("_line"), idem=ctx.get("_jid"))
+            elif route == "provider":
                 r = self.sms_provider.send(to=to, text=text, media_url=media or "", _idem=ctx.get("_jid"))
             else:
                 r = self.twilio.sms("whatsapp:" + to if wa else to, text, media, from_=("whatsapp:" + self.cfg["twilio"].get("whatsapp_from", self.twilio.from_number)) if wa else None, idem=ctx.get("_jid"))
-            self.state.once(f"footer:{to}"); self.safe.sent("sms", to); self.record(wf, kind, "sent", to=to, sid=(r or {}).get("sid"), channel="whatsapp" if wa else "sms"); return {"status": "sent", "sid": (r or {}).get("sid")}
+            self.state.once(f"footer:{to}"); self.safe.sent("sms", to); self.record(wf, kind, "sent", to=to, sid=(r or {}).get("sid"), channel=self._chan_label(route)); return {"status": "sent", "sid": (r or {}).get("sid")}
         if kind == "teams":
             blocked = self._gate(wf, "teams", "teams", ctx)
             if blocked:
@@ -946,6 +1014,87 @@ class Agent:
             return ""
         self.state.log(workflow="sms_ai", action="reply", status="sent", dry_run=False, to=who, handoff=r["action"] == "handoff", why=r.get("why", ""), ai_ms=r.get("ai_ms"), prompt_chars=r.get("prompt_chars"))
         reply = self._sms_text(reply, who); self.state.once(f"footer:{who}"); return reply
+
+    @staticmethod
+    def _chan_label(route):
+        return {"whatsapp_twilio": "whatsapp", "provider": "sms", "none": "sms"}.get(route, route)
+
+    def _text_route(self, a, to):
+        """Which connection carries a text: a Telegram chat id goes to Telegram; channel/via 'whatsapp' to Meta WhatsApp (else Twilio's); a plain text to your phone (Android) when that is connected and Twilio is not, or when android_sms.outbound is 'always';
+        otherwise your own provider, then Twilio. 'none' = nothing can send it."""
+        via = str(a.get("via") or a.get("channel") or "")
+        if to.startswith("tg:") or via == "telegram":
+            return "telegram" if self.telegram.configured else "none"
+        if via == "whatsapp":
+            return "whatsapp" if self.whatsapp.configured else ("whatsapp_twilio" if self.twilio.configured else "none")
+        if via == "android":
+            return "android" if self.android.configured else "none"
+        if self.android.configured and (not self.twilio.configured and not self.sms_provider.configured or (self.cfg.get("android_sms") or {}).get("outbound") == "always"):
+            return "android"
+        if self.sms_provider.configured:
+            return "provider"
+        return "twilio" if self.twilio.configured else "none"
+
+    def _person_reply(self, who, body):
+        """Runs your 'ask for a person' workflow (it tells your team) and returns what it wants said, or ''."""
+        person = next((w for w in self.workflows if w["name"] == "sms_person"), None)
+        if not person:
+            return ""
+        ctx = self.ctx(sms={"from": who, "body": body}, customer={"phone": who, "sms_consent": True}); out = {"reply": "", "play": []}
+        self.run_actions(person["name"], person.get("do", []), ctx, out)
+        return out["reply"]
+
+    UNSUPPORTED = "I can only read typed messages here, not pictures or voice notes. Please type your question and I will help."
+
+    def handle_unsupported(self, channel, frm):
+        """A picture, voice note or file arrived: say once that only text can be read, instead of staying silent."""
+        who = S.norm_phone(frm)
+        seen = self.state.data.setdefault("unsupported_sent", {}); key = f"{channel}:{who}"
+        if self.safe.killed() or self.dry or self.now() - seen.get(key, 0) < 3600:                                   # at most once an hour per person
+            return ""
+        try:
+            (self.whatsapp.send(who, self.UNSUPPORTED) if channel == "whatsapp" else self.telegram.send(who[3:], self.UNSUPPORTED))
+        except Exception as e:  # noqa: BLE001 - a failed send must not use up the hour
+            self.record("inbound_" + channel, "sms", "error", to=who, error=type(e).__name__ + ": " + str(e)[:100]); return ""
+        seen[key] = int(self.now()); self.state.save()
+        self.record("inbound_" + channel, "sms", "sent", to=who, channel=channel, note="unsupported_media"); return self.UNSUPPORTED
+
+    def handle_chat(self, channel, frm, body, line=None, own=None):
+        if not self.state.data.setdefault("first_inbound", {}).get(channel):                        # the first message on a channel proves it works end to end: note it for the setup log
+            self.state.data["first_inbound"][channel] = int(self.now()); self.state.save()
+            from . import setuplog
+            setuplog.record(self, "first_message", channel=channel)
+        """A text that arrived by your phone (Android), Telegram or WhatsApp: answered by the same rules as any inbound text, and the reply goes back the way it came. They messaged first, so replying is allowed."""
+        who = S.norm_phone(frm)
+        if channel != "telegram" and who and who == S.norm_phone(own or ""):                  # the agent texting its own phone would answer itself forever
+            self.state.log(workflow="inbound_" + channel, status="ignored", reason="own_number"); return ""
+        if self.state.sent_since(3600, to=who) >= 15:                                           # two machines answering each other, or a spammer: stop replying after 15 an hour to one sender
+            self.state.log(workflow="inbound_" + channel, status="blocked", reason="loop_guard", to=who); return ""
+        low = (body or "").strip().lower()
+        if self.state.is_opted_out(who) and low not in ("start", "unstop", "yes", "help"):                       # after STOP nothing more is sent until they text START
+            self.state.log(workflow="inbound_" + channel, status="blocked", reason="opted_out", to=who); return ""
+        reply = self.handle_sms({"From": who, "Body": body or ""})
+        if not reply and (body or "").strip():                                                         # nothing matched and no AI answered: say so and tell your team, never stay silent
+            from . import converse
+            reply = self._person_reply(who, body) or converse.HANDOFF_TEXT
+            self.state.log(workflow="inbound_" + channel, status="fallback", reason="no_answer", to=who)
+        if reply:
+            wf = "inbound_" + channel
+            if self.safe.killed():                                          # the kill switch silences every reply
+                self.record(wf, "sms", "blocked", to=who, reason="kill_switch"); return ""
+            if self.dry:
+                self.record(wf, "sms", "dry_run", to=who, text=reply, channel=channel); return reply
+            try:                                                           # they messaged first, so the answer (and the STOP confirmation) is not held back by quiet hours or limits, exactly like a reply to a Twilio text
+                r = (self.android.send(who, reply, line=line) if channel == "android" else self.telegram.send(who[3:], reply) if channel == "telegram" else self.whatsapp.send(who, reply))
+            except Exception as e:  # noqa: BLE001
+                bad = channel == "whatsapp" and self.whatsapp.token_expired(e)
+                if bad:
+                    self.state.data["wa_token_bad"] = int(self.now()); self.state.save()
+                self.record(wf, "sms", "error", to=who, channel=channel, error=type(e).__name__ + ": " + str(e)[:120], **({"hint": "The WhatsApp access token has expired or was revoked. Paste a new one (a permanent system-user token does not expire): Connect, WhatsApp Business, Full Guide."} if bad else {})); return ""
+            if channel == "whatsapp":
+                self.state.data.pop("wa_token_bad", None)
+            self.safe.sent("sms", who); self.record(wf, "sms", "sent", to=who, sid=(r or {}).get("sid"), channel=channel)
+        return reply
 
     def sms_via_provider(self, frm, body):
         """A text that arrived through a source mapping (any provider's webhook, not Twilio): answer it with the configured sms provider."""

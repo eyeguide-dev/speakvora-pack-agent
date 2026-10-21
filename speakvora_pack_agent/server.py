@@ -103,6 +103,21 @@ def make_handler(agent):
                     return self._send(200, d) if d else self._send(404, {"error": "not_found"})
                 body = tracker.page(agent, code)
                 return self._send(200, body, "text/html; charset=utf-8") if body else self._send(404, {"error": "not_found"})
+            if p.startswith("/guide/"):                                            # the full setup guides: public documentation with nothing private in it, so a new browser tab can open it
+                from . import connect as _SU
+                try:
+                    page = _SU.guide_html(p.rsplit("/", 1)[1]).encode()
+                except _SU.SetupError:
+                    return self._send(404, {"error": "not_found"})
+                self.send_response(200); self.send_header("content-type", "text/html; charset=utf-8"); self.send_header("content-length", str(len(page)))
+                self.send_header("content-security-policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline'")
+                if "download=1" in self.path:
+                    self.send_header("content-disposition", f'attachment; filename="speakvora-{p.rsplit("/", 1)[1]}-setup-guide.html"')
+                self.end_headers(); self.wfile.write(page); return
+            if p == "/whatsapp/webhook":                                       # Meta's one-time check when you save the webhook address
+                from urllib.parse import urlparse
+                ch = agent.whatsapp.handshake(parse_qs(urlparse(self.path).query))
+                return self._send(200, ch, "text/plain") if ch is not None else self._send(403, {"error": "bad_verify_token"})
             if p.startswith("/audio/"):
                 got = agent.audio.serve(p[len("/audio/"):].rsplit(".", 1)[0])
                 return self._send(200, got[0], got[1]) if got else self._send(404, {"error": "not_found"})
@@ -152,6 +167,36 @@ def make_handler(agent):
                         reply = agent.handle_sms(params)
                         return self._send(200, twiml_message(reply) if reply else "<Response></Response>", "text/xml")
                     return self._send(200, agent.handle_call(params, "start" if p == "/twilio/call" else ("menu3" if p.endswith("menu3") else "menu2" if p.endswith("menu2") else "menu"), params.get("Digits", "")), "text/xml")
+                if p == "/android/sms":                                        # a text your Android phone received (signed by the SMS Gateway app)
+                    if not agent.android.verify(raw, self.headers.get("X-Timestamp", ""), self.headers.get("X-Signature", "")):
+                        __import__("speakvora_pack_agent.setuplog", fromlist=["x"]).record(agent, "webhook_rejected", channel="android"); agent.state.log(workflow="inbound_android", status="rejected", reason="bad_signature_or_old_timestamp", has_signature=bool(self.headers.get("X-Signature")), hint="re-copy the signing key from the phone app (an apostrophe or space typed differently is enough to fail)")
+                        return self._send(401, {"error": "bad_signature"})
+                    m = agent.android.parse(json.loads(raw or b"{}"))
+                    if not m or not agent.state.once("android:" + (m["id"] or hashlib.sha256(raw).hexdigest())):          # the app retries until it gets a 200: answer each text once
+                        return self._send(200, {"ignored": True})
+                    return self._send(200, {"replied": bool(agent.handle_chat("android", m["from"], m["body"], m["line"], m.get("own")))})
+                if p == "/telegram/webhook":
+                    if not agent.telegram.verify(self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")):
+                        agent.state.log(workflow="inbound_telegram", status="rejected", reason="bad_secret")
+                        return self._send(401, {"error": "bad_secret"})
+                    upd = json.loads(raw or b"{}"); m = agent.telegram.parse(upd)
+                    if not m or not agent.state.once("telegram:" + str(upd.get("update_id", hashlib.sha256(raw).hexdigest()))):
+                        return self._send(200, {"ignored": True})
+                    return self._send(200, {"replied": bool(agent.handle_chat("telegram", m["from"], m["body"]))})
+                if p == "/whatsapp/webhook":
+                    if not agent.whatsapp.verify(raw, self.headers.get("X-Hub-Signature-256", "")):
+                        __import__("speakvora_pack_agent.setuplog", fromlist=["x"]).record(agent, "webhook_rejected", channel="whatsapp"); agent.state.log(workflow="inbound_whatsapp", status="rejected", reason="bad_signature", hint="check the App secret (Meta, App settings, Basic) saved in the agent")
+                        return self._send(401, {"error": "bad_signature"})
+                    try:
+                        kinds = [m.get("type") for e in json.loads(raw or b"{}").get("entry", []) for c in e.get("changes", []) for m in (c.get("value") or {}).get("messages", [])]
+                    except (ValueError, AttributeError):
+                        kinds = []
+                    agent.state.log(workflow="inbound_whatsapp", status="received", bytes=len(raw), kinds=kinds or "status")
+                    n = 0
+                    for m in agent.whatsapp.parse(json.loads(raw or b"{}")):
+                        if agent.state.once("whatsapp:" + hashlib.sha256(raw).hexdigest() + m["from"]):
+                            n += bool(agent.handle_unsupported("whatsapp", m["from"]) if m.get("unsupported") else agent.handle_chat("whatsapp", m["from"], m["body"]))
+                    return self._send(200, {"replied": n})
                 if p == "/slack/command":
                     if not agent.slack.verify(raw, self.headers.get("X-Slack-Request-Timestamp", ""), self.headers.get("X-Slack-Signature", "")):
                         return self._send(401, {"error": "bad_signature"})
@@ -182,4 +227,7 @@ def serve(agent, host=None, port=None, tick_seconds=60):
                 agent.state.log(workflow="tick", status="error", error=str(e)[:200])
     threading.Thread(target=loop, daemon=True).start()
     srv.stopper = stop
+    agent._serving = True; agent.sip_sync(); agent.telegram_sync()
+    _shutdown = srv.shutdown
+    srv.shutdown = lambda: (agent.sip_stop(), _shutdown())
     return srv
