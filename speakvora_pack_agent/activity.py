@@ -6,7 +6,7 @@ import re, time
 from . import conversations as CV, learned, tracker
 
 LABEL = {"sent": "Sent", "delivered": "Delivered", "failed": "Failed", "undelivered": "Not delivered", "blocked": "Held back", "queued": "Waiting", "needs_review": "Needs a look", "expired": "Expired", "cancelled": "Dismissed"}
-KIND_TITLE = {"sms": "Text sent", "call": "Call placed", "slack": "Team updated", "teams": "Team updated", "email": "Email sent", "http": "Sent to your app", "webhook": "Sent to your app", "calendar_create": "Calendar entry added", "calendar_reschedule": "Calendar entry moved", "calendar_cancel": "Calendar entry cancelled", "calendar_delete": "Calendar entry removed", "reason": "AI suggestion"}
+KIND_TITLE = {"sms": "Text sent", "call": "Call placed", "slack": "Team updated", "teams": "Team updated", "jira_bug": "Bug reported to Jira", "confluence_log": "Known-issues page updated", "email": "Email sent", "http": "Sent to your app", "webhook": "Sent to your app", "calendar_create": "Calendar entry added", "calendar_reschedule": "Calendar entry moved", "calendar_cancel": "Calendar entry cancelled", "calendar_delete": "Calendar entry removed", "reason": "AI suggestion"}
 
 
 def _pretty(s):

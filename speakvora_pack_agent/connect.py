@@ -8,6 +8,7 @@ from urllib.parse import quote
 from . import reasoner as R, secrets_store as SS, slots as SL, web
 from .connectors.slack import Slack
 from .connectors.teams import Teams
+from .connectors import atlassian as ATL
 
 TIMEZONES = ["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Phoenix", "America/Anchorage", "Pacific/Honolulu", "America/Toronto", "America/Vancouver", "America/Mexico_City", "America/Sao_Paulo",
              "Europe/London", "Europe/Dublin", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Rome", "Europe/Amsterdam", "Africa/Cairo", "Africa/Johannesburg", "Asia/Dubai", "Asia/Kolkata", "Asia/Singapore", "Asia/Tokyo",
@@ -41,7 +42,17 @@ CARDS = {
         ("signing_secret", "Signing secret (for slash commands)", "secret", "slack.signing_secret", "SLACK_SIGNING_SECRET", "Slack app > Basic Information > Signing Secret."),
     ]},
     "teams": {"title": "Microsoft Teams", "blurb": "Posts to a Teams channel. Text only.", "fields": [
-        ("webhook_url", "Workflow / webhook URL", "secret", "teams.webhook_url", "TEAMS_WEBHOOK_URL", "In Teams: channel > Workflows > \"Post to a channel when a webhook request is received\", then copy its URL."),
+        ("webhook_url", "Workflow / webhook URL", "secret", "teams.webhook_url", "TEAMS_WEBHOOK_URL", "In Teams: channel > Workflows > \"Send webhook alerts to a channel\" (older name: \"Post to a channel when a webhook request is received\"), then copy its URL."),
+    ]},
+    "atlassian": {"title": "Jira and Confluence", "blurb": "Reports bugs to your own Jira and keeps a known-issues page in your own Confluence. Needs your own Atlassian account and API token.", "fields": [
+        ("site", "Your Atlassian site", "text", "atlassian.site", None, "The address you use for Jira, for example yourcompany.atlassian.net."),
+        ("email", "Your Atlassian email", "text", "atlassian.email", None, "The email you sign in to Atlassian with."),
+        ("api_token", "API token", "secret", "atlassian.api_token", "ATLASSIAN_API_TOKEN", "id.atlassian.com, Security, Create and manage API tokens, Create API token. Copy it once."),
+        ("project", "Jira project key", "text", "atlassian.project", None, "The short capital letters in your tickets, for example BUG in BUG-12."),
+        ("issue_type", "Ticket type for bugs", "text", "atlassian.issue_type", None, "Usually Bug. Use the exact name your project uses."),
+        ("link_type", "How to link a bug to a story", "text", "atlassian.link_type", None, "Optional. Usually Relates. Use a link name from your Jira, for example Blocks."),
+        ("space", "Confluence space key (optional)", "text", "atlassian.space", None, "The space for the known-issues page, for example ENG. Leave empty to use Jira only."),
+        ("page_title", "Known-issues page title", "text", "atlassian.page_title", None, "Optional. The page is created if it does not exist. Default: Known issues."),
     ]},
     "calendar": {"title": "Google or Outlook calendar", "blurb": "Reads your bookings to send reminders (a private link is enough). To also add, move and cancel bookings in Google Calendar, fill in the Google sign-in details below.", "fields": [
         ("ics_url", "Private calendar link (iCal / ICS)", "secret", "google_calendar.ics_url", "CALENDAR_ICS_URL", "Google Calendar: Settings > your calendar > Integrate calendar > Secret address in iCal format. Outlook: Settings > Calendar > Shared calendars > Publish a calendar > ICS link."),
@@ -73,6 +84,10 @@ CARDS = {
         ("tls_ca_file", "Certificate file (optional)", "text", "sip.tls_ca_file", None, "Only if your phone system uses its own certificate: the full path of the certificate file your phone admin gives you."),
         ("speech", "Let callers speak", "select", "sip.speech", None, "Callers can say what they need instead of pressing keys. Needs your Speakvora key; their words are turned into text by Speakvora (about $0.0015 a minute) and the audio is not kept."),
         ("external_ip", "This computer's public IP (optional)", "text", "sip.external_ip", None, "Only for a cloud phone system when the agent sits behind a router and the caller hears nothing."),
+    ]},
+    "address": {"title": "Permanent address", "blurb": "A fixed web address for this agent, so Twilio, WhatsApp, Telegram and your own apps always reach it and you never type 127.0.0.1 and a port number again. Free with Cloudflare Tunnel (use your own domain) or Tailscale.", "fields": [
+        ("hostname", "Webhook address", "text", "address.hostname", None, "A name on your domain, for example hooks.yourbusiness.com."),
+        ("token", "Cloudflare tunnel token", "secret", "address.token", "TUNNEL_TOKEN", "The long token from your tunnel's page in Cloudflare."),
     ]},
     "android_sms": {"title": "Your Android phone (texts)", "blurb": "Texts from your own phone number and SIM, instantly: no Twilio, no carrier registration. Install the free SMS Gateway for Android app on the phone, sign in, and paste its details here.", "fields": [
         ("username", "Username", "text", "android_sms.username", None, "SMS Gateway for Android app > Home tab > Cloud server > username."),
@@ -114,8 +129,8 @@ STEPS = {
     "whatsapp": ["Create a Meta developer app with the WhatsApp product and copy the access token, phone number ID and app secret.", "Paste them below, press Save and test, then paste the callback address it shows into Meta."],
     "sip": ["Create a SIP extension for the agent in your phone system.", "Paste its address, extension and password below, press Save and test, then send calls to that extension."],
 }
-GUIDES = {"android_sms": "android-sms", "telegram": "telegram", "whatsapp": "whatsapp", "sip": "office-phone", "twilio": "twilio", "slack": "slack", "teams": "teams", "calendar": "calendar", "email": "email", "ai": "ai", "account": "account"}
-EXTRA_GUIDES = {"automations": "automations"}          # guides for a page of the dashboard rather than a connection (the Automations tab)
+GUIDES = {"android_sms": "android-sms", "telegram": "telegram", "whatsapp": "whatsapp", "sip": "office-phone", "twilio": "twilio", "slack": "slack", "teams": "teams", "atlassian": "atlassian", "calendar": "calendar", "email": "email", "ai": "ai", "account": "account", "address": "permanent-address"}
+EXTRA_GUIDES = {"automations": "automations", "jira": "atlassian"}          # guides for a page of the dashboard rather than a connection (the Automations tab)
 
 
 def _md_inline(t):
@@ -162,12 +177,28 @@ def guide(name):
     """The full A-to-Z setup guide for a channel (plain text with simple Markdown), shown in the dashboard."""
     slug = next((v for k, v in {**GUIDES, **EXTRA_GUIDES}.items() if name in (k, v)), None)
     if not slug:
-        raise SetupError("There is no guide for that.")
+        return _tool_guide(name)
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "guides", slug + ".md")
     return {"name": slug, "markdown": open(p, encoding="utf-8").read()}
 
 
-NEEDS = {"sms": "twilio", "call": "twilio", "slack": "slack", "teams": "teams", "notify": "slack", "email": "email", "calendar_create": "calendar", "calendar_reschedule": "calendar", "calendar_cancel": "calendar", "calendar_delete": "calendar", "reason": "ai"}
+def _tool_guide(name):
+    """A tool that sends events here (GitHub, Stripe...) has its steps in toolguides.py: the full guide is made from them, so the connect window itself stays short."""
+    from .toolguides import GUIDES as TG
+    g = TG.get(name)
+    if not g:
+        raise SetupError("There is no guide for that.")
+    md = [f"# Connect {g['title']} to your agent", "", "Your agent needs a permanent web address first (Connect, Permanent address). Then:", ""]
+    md += [f"{i}. {s}" for i, s in enumerate(g.get("steps", []), 1)]
+    if g.get("where"):
+        md += ["", f"Where to find it: {g['where']}."]
+    if g.get("says"):
+        md += ["", "## What the agent understands", ""] + [f"- {v}" for v in dict.fromkeys(g["says"].values())]
+    md += ["", "## The two things to copy", "", "In the agent open Connect, find this tool, and copy the address it shows (and the secret, if it shows one). Paste them where the steps above say so, then press Save and test in the agent."]
+    return {"name": name, "markdown": "\n".join(md) + "\n"}
+
+
+NEEDS = {"sms": "twilio", "call": "twilio", "slack": "slack", "teams": "teams", "notify": "slack", "jira_bug": "atlassian", "confluence_log": "atlassian", "email": "email", "calendar_create": "calendar", "calendar_reschedule": "calendar", "calendar_cancel": "calendar", "calendar_delete": "calendar", "reason": "ai"}
 TRIGGER_WORDS = {"event": "when your app sends this event", "calendar": "from your calendar", "sms": "when someone texts", "call": "when someone calls", "email": "when someone emails", "slack_command": "from a Slack command", "schedule": "every day"}
 
 
@@ -252,6 +283,10 @@ def connected(agent, name):
     c = agent.cfg
     if name == "twilio":
         return bool(agent.twilio.configured and _real(agent.twilio.sid) and _real(agent.twilio.from_number))
+    if name == "address":
+        from . import address as AD
+        v = AD.view(agent)
+        return bool(v["in_use"] and (v["tunnel"].get("connected") or v["provider"] in ("tailscale", "own")))
     if name == "sip":
         return bool(agent.sip.configured)
     if name == "android_sms":
@@ -266,6 +301,8 @@ def connected(agent, name):
         return bool(agent.slack.configured)
     if name == "teams":
         return bool(agent.teams.configured)
+    if name == "atlassian":
+        return bool(agent.atlassian.jira_ready)
     if name == "email":
         return bool(agent.mail.configured)
     if name == "calendar":
@@ -374,6 +411,10 @@ def save(agent, card, values):
             raise SetupError("Choose one of the listed AIs.")
         if key == "channel" and val and not val.startswith(("#", "C", "G")):
             val = "#" + val
+        if card == "atlassian" and key == "project":
+            val = val.upper()
+        if card == "atlassian" and key == "site" and val and not re.fullmatch(r"(https?://)?[A-Za-z0-9\-]+\.atlassian\.net/?", val):
+            raise SetupError("The Atlassian site looks like yourcompany.atlassian.net.")
         if card == "ai" and key == "provider" and val == "local":
             _set(raw, "reasoner.provider", "openai")
             if not (values.get("base_url") or _get(raw, "reasoner.base_url")):
@@ -395,6 +436,11 @@ def save(agent, card, values):
         pass
     _write_raw(agent, raw); _reload(agent)
     agent.state.data.get("tested", {}).pop(card, None); agent.state.save()
+    if card == "atlassian" and agent.atlassian.jira_ready and not agent.state.data.get("bug_text_on"):          # first time Jira is connected: switch on "a customer's text that reports a problem becomes a bug" (once; your own switch is kept afterwards)
+        try:
+            set_workflow(agent, "auto_bug_text", True); agent.state.data["bug_text_on"] = True; agent.state.save()
+        except SetupError:
+            pass
     if card in ("business", "account", "twilio") and tracking_needed(agent):               # keep the hosted pages in step with what was just saved (best effort: offline is retried later)
         try:
             from . import tracker
@@ -665,6 +711,35 @@ def test(agent, card, opts=None):
             elif not s.token:
                 return {"ok": True, "message": "A webhook is saved. Press \"Send a test message\" to check it."}
             return _passed(agent, card, msg.strip())
+        if card == "atlassian":
+            at = agent.atlassian
+            if not at.configured:
+                return {"ok": False, "message": "Fill in your Atlassian site, email and API token first."}
+            try:
+                me = at.myself()
+            except web.HttpError as e:
+                return {"ok": False, "message": "Atlassian did not accept the email and token" + (" (the address may be wrong)." if e.status in (404, 0) else ".")}
+            msg = f"Signed in as {me.get('displayName', 'your account')}."
+            if at.project:
+                try:
+                    pj = at.project_info()
+                except web.HttpError:
+                    return {"ok": False, "message": msg + f" The project {at.project} was not found, or your account cannot see it."}
+                types = [t.get("name") for t in pj.get("issueTypes", [])]
+                if types and at.issue_type not in types:
+                    return {"ok": False, "message": msg + f" The project {at.project} has no ticket type called {at.issue_type}. It has: {', '.join(types)}."}
+                msg += f" Project {pj.get('name', at.project)} found."
+            if at.space:
+                try:
+                    at.space_id(); msg += f" Confluence space {at.space} found."
+                except web.HttpError:
+                    return {"ok": False, "message": msg + f" The Confluence space {at.space} was not found, or your account cannot see it."}
+            if opts.get("create"):
+                if not at.jira_ready:
+                    return {"ok": False, "message": msg + " Add the project key first."}
+                key = at.create_bug("Speakvora test bug (safe to close)", ATL.adf([("p", "Created by the Test button in the Speakvora agent to check this connection. You can close or delete it.")]), at.labels + ["speakvora-test"])
+                msg += f" A test ticket {key} was created: {at.link(key)}"
+            return _passed(agent, card, msg)
         if card == "teams":
             if not opts.get("post"):
                 return {"ok": True, "message": "Saved. Press \"Send a test message\" to check it: Teams cannot be checked without posting."}
@@ -731,11 +806,11 @@ def _workflow_file(agent):
     return json.load(open(agent.cfg["workflows"], encoding="utf-8"))
 
 
-def _kinds(w):
+def _kinds(w, skip_optional=False):
     out = set()
     def walk(o):
         if isinstance(o, dict):
-            if "action" in o:
+            if "action" in o and not (skip_optional and o.get("optional")):          # an optional step (the Jira step of a ready-made automation) is skipped quietly when its service is not connected, so it never blocks going live
                 out.add(o["action"])
             for v in o.values():
                 walk(v)
@@ -750,7 +825,7 @@ def workflows(agent):
     from . import recipes
     out = []
     for w in _workflow_file(agent).get("workflows", []):
-        needs = sorted({NEEDS[k] for k in _kinds(w) if k in NEEDS}); on = w.get("on") or {}
+        needs = sorted({NEEDS[k] for k in _kinds(w, True) if k in NEEDS}); on = w.get("on") or {}
         trig = next((TRIGGER_WORDS[k] for k in TRIGGER_WORDS if k in on), "")
         out.append({"name": w["name"], "title": w.get("title") or re.sub(r"\s+", " ", w["name"].replace("_", " ")).capitalize(), "what": w.get("what") or recipes.NICE.get(w["name"], ""), "when": trig, "enabled": w.get("enabled", True), "also": w.get("also_send_to") or [], "needs": needs,
                     "missing": [n for n in needs if not (connected(agent, "texts") if n == "twilio" and "call" not in _kinds(w) else connected(agent, n))]})      # texts alone can go through your phone, Telegram or WhatsApp; calls still need Twilio
@@ -866,7 +941,7 @@ def setup_order_pages(agent, values):
 def readiness(agent):
     """What must be true before the agent sends for real."""
     wfs = workflows(agent); on = [w for w in wfs if w["enabled"]]; tested = agent.state.data.get("tested", {})
-    live_services = [n for n in ("twilio", "sip", "android_sms", "telegram", "whatsapp", "slack", "teams", "email", "calendar") if connected(agent, n)]
+    live_services = [n for n in ("twilio", "sip", "android_sms", "telegram", "whatsapp", "slack", "teams", "atlassian", "email", "calendar") if connected(agent, n)]
     checks = [{"ok": connected(agent, "business"), "text": "Your business name is filled in."},
               {"ok": bool(live_services), "text": "At least one service is connected (texts and calls, Slack, Teams, email or calendar)."},
               {"ok": bool(live_services) and all(tested.get(n) for n in live_services), "text": "Every connected service passed its test."},
@@ -934,7 +1009,7 @@ def tool_view(agent, name):
     mode = g.get("mode", "generate"); secret_set = bool(env and SS.read(agent.state.dir).get(env))
     ev = (src.get("map") or {}).get("event") or {}; says = g.get("says") or {}
     return {"name": name, "title": g.get("title", name.title()), "added": src["name"] in have, "mode": mode, "secret_label": g.get("secret_label", "Secret"), "secret_set": secret_set,
-            "url": (base + src.get("path", "")) if public else "", "public": public, "where": g.get("where", ""), "steps": g.get("steps", []), "extra": g.get("extra", ""),
+            "url": (base + src.get("path", "")) if public else "", "public": public, "where": g.get("where", ""), "steps": g.get("steps", []), "extra": g.get("extra", ""), "lead": g.get("lead", ""),
             "events": [{"they": k, "we": v, "says": says.get(v, v)} for k, v in (ev.get("values") or {}).items()], "last_seen": seen}
 
 
@@ -1161,9 +1236,9 @@ def set_workflow_targets(agent, name, ids):
 def catalog(agent):
     """Everything the + Add connection button offers."""
     have = {c["name"] for c in status_cards(agent)}
-    short = {"slack": "Tell your team and use slash commands", "teams": "Post to a Teams channel", "twilio": "Send texts and make calls", "sip": "Keep your number, connect your phone system, no Twilio", "android_sms": "Texts from your own phone, no Twilio", "telegram": "Answer customers on Telegram", "whatsapp": "Answer WhatsApp messages (Meta)", "calendar": "Reminders from your bookings", "email": "Send email from your mailbox", "ai": "Let it think, with your own key", "account": "Pair with a code to voice new lines"}
-    tiles = [{"id": n, "kind": "service", "name": t, "blurb": short[n], "added": connected(agent, n)} for n, t in (("slack", "Slack"), ("teams", "Microsoft Teams"), ("twilio", "Texts and calls (Twilio)"), ("sip", "Use my existing business number"), ("android_sms", "Your Android phone (texts)"), ("telegram", "Telegram"), ("whatsapp", "WhatsApp Business"), ("calendar", "Google or Outlook calendar"), ("email", "Email"), ("ai", "AI reasoning (your own key)"), ("account", "Speakvora agent"))]
-    tools = {"shopify": "Shopify", "github": "GitHub", "gitlab": "GitLab", "pagerduty": "PagerDuty", "stripe": "Stripe", "calendly": "Calendly", "generic-pos": "Point of sale", "pos": "Point of sale"}
+    short = {"slack": "Tell your team and use slash commands", "teams": "Post to a Teams channel", "atlassian": "Report bugs to Jira and keep a Confluence page", "twilio": "Send texts and make calls", "address": "A fixed web address for your agent, free", "sip": "Keep your number, connect your phone system, no Twilio", "android_sms": "Texts from your own phone, no Twilio", "telegram": "Answer customers on Telegram", "whatsapp": "Answer WhatsApp messages (Meta)", "calendar": "Reminders from your bookings", "email": "Send email from your mailbox", "ai": "Let it think, with your own key", "account": "Pair with a code to voice new lines"}
+    tiles = [{"id": n, "kind": "service", "name": t, "blurb": short[n], "added": connected(agent, n)} for n, t in (("slack", "Slack"), ("teams", "Microsoft Teams"), ("atlassian", "Jira and Confluence"), ("twilio", "Texts and calls (Twilio)"), ("address", "Permanent address"), ("sip", "Use my existing business number"), ("android_sms", "Your Android phone (texts)"), ("telegram", "Telegram"), ("whatsapp", "WhatsApp Business"), ("calendar", "Google or Outlook calendar"), ("email", "Email"), ("ai", "AI reasoning (your own key)"), ("account", "Speakvora agent"))]
+    tools = {"shopify": "Shopify", "github": "GitHub", "gitlab": "GitLab", "pagerduty": "PagerDuty", "stripe": "Stripe", "calendly": "Calendly", "jira": "Jira ticket updates", "generic-pos": "Point of sale", "pos": "Point of sale"}
     for s in sources(agent):
         seen = (agent.state.data.get("tool_seen") or {}).get(s["name"])
         tiles.append({"id": s["name"], "kind": "tool", "name": tools.get(s["name"], s["name"].title()), "added": s["added"],

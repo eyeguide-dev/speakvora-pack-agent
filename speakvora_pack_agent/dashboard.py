@@ -5,7 +5,7 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import audit as AU, simulate as SIM, builder as BD, activity as AC, knowledge as KN, converse as CVN, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL, phonemenu as PM
+from . import audit as AU, simulate as SIM, builder as BD, activity as AC, knowledge as KN, converse as CVN, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL, phonemenu as PM, address as AD
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
@@ -47,7 +47,7 @@ def _requests(agent):
         return []
 
 
-KIND_LABEL = {"sms": "Text message", "call": "Phone call", "slack": "Slack message", "teams": "Teams message", "email": "Email", "calendar_create": "Calendar entry", "calendar_reschedule": "Calendar entry moved", "calendar_cancel": "Calendar entry cancelled", "calendar_delete": "Calendar entry removed", "webhook": "Message to your app", "http": "Message to your app", "reason": "Suggestion from your AI"}
+KIND_LABEL = {"sms": "Text message", "call": "Phone call", "slack": "Slack message", "teams": "Teams message", "jira_bug": "Jira bug", "confluence_log": "Confluence page", "email": "Email", "calendar_create": "Calendar entry", "calendar_reschedule": "Calendar entry moved", "calendar_cancel": "Calendar entry cancelled", "calendar_delete": "Calendar entry removed", "webhook": "Message to your app", "http": "Message to your app", "reason": "Suggestion from your AI"}
 STATUS_LABEL = {"sent": "Sent", "delivered": "Delivered", "undelivered": "Not delivered", "queued": "Waiting for internet", "pending": "Sending", "sending": "Sending", "needs_approval": "Waiting for you", "proposed": "Waiting for you",
                 "needs_review": "Please check", "failed": "Did not send", "blocked": "Held back by a safety rule", "expired": "Too old, not sent", "cancelled": "Stopped", "approved": "Approved", "answered": "Answered", "rejected": "Declined"}
 TONE = {"sent": "good", "delivered": "good", "answered": "good", "approved": "good", "queued": "wait", "pending": "wait", "sending": "wait", "needs_approval": "you", "proposed": "you", "needs_review": "you", "failed": "bad", "undelivered": "bad", "blocked": "warn", "expired": "warn", "cancelled": "mute", "rejected": "mute"}
@@ -368,6 +368,20 @@ def handle(agent, method, path, headers, raw):
             b = json.loads(raw or b"{}"); BD.toggle(agent, str(b.get("id", "")), bool(b.get("on"))); out = BD.view(agent)
         elif p == "/dash/api/workflows/preview" and method == "POST":
             out = BD.preview(agent, json.loads(raw or b"{}").get("spec") or {})
+        elif p == "/dash/api/address" and method == "GET":
+            out = AD.view(agent)
+        elif p == "/dash/api/address/save" and method == "POST":
+            out = AD.save(agent, json.loads(raw or b"{}"))
+        elif p == "/dash/api/address/check" and method == "POST":
+            out = AD.check(agent)
+        elif p == "/dash/api/address/install" and method == "POST":
+            AD.install_cloudflared(agent); AD.sync(agent); out = AD.view(agent)
+        elif p == "/dash/api/address/funnel" and method == "POST":
+            ok, msg = AD.tailscale_funnel(agent.cfg["listen"]["port"]); out = {"ok": ok, "message": msg, **AD.check(agent)}
+        elif p == "/dash/api/address/use" and method == "POST":
+            out = AD.use_everywhere(agent, bool(json.loads(raw or b"{}").get("force")))
+        elif p == "/dash/api/address/remove" and method == "POST":
+            out = AD.remove(agent)
         elif p == "/dash/api/phonemenu" and method == "GET":
             out = PM.view(agent)
         elif p == "/dash/api/phonemenu" and method == "POST":

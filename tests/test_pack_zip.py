@@ -50,7 +50,7 @@ class PackZip(unittest.TestCase):
             self.assertTrue(h["dry_run"]); self.assertGreater(h["workflows"], 5)
             json.dump({"event": "order.ready", "id": "z1", "customer": {"name": "A", "phone": "6465550101", "sms_consent": True}, "order": {"number": 5}}, open(os.path.join(self.d, "ev.json"), "w"))
             r = self.sv("event", "ev.json"); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(json.loads(r.stdout)["matched"], 1)
-            log = [json.loads(x) for x in open(os.path.join(self.d, "agent-state", "agent.log.jsonl"))]; self.assertTrue(log and all(x["status"] in ("dry_run", "skipped") for x in log if x.get("action")))
+            log = [json.loads(x) for x in open(os.path.join(self.d, "agent-state", "agent.log.jsonl"))]; self.assertTrue(log and all(x["status"] in ("dry_run", "skipped", "warning") for x in log if x.get("action")))
         finally:
             p.terminate(); p.wait(timeout=5)
 

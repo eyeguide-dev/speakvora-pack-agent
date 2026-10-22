@@ -38,6 +38,13 @@ def make_handler(agent):
             if (cfg.get("dashboard") or {}).get("allow_remote"):
                 return True
             h = {k.lower(): v for k, v in self.headers.items()}
+            ad = cfg.get("address") or {}
+            if ad.get("remote_dashboard") and ad.get("dashboard_hostname") and h.get("host", "").rsplit(":", 1)[0].lower() == str(ad["dashboard_hostname"]).lower():      # the dashboard has its own address, never the webhook one
+                who = h.get("cf-access-authenticated-user-email", "").strip().lower()
+                if ad.get("require_access", True) is not False and not who:          # Cloudflare Access (the email login in front of this address) must have let the person in
+                    return False
+                allowed = [str(x).lower() for x in (ad.get("allowed_emails") or [])]
+                return not allowed or who in allowed
             if any(k in h for k in ("x-forwarded-for", "x-forwarded-host", "forwarded", "x-real-ip", "cf-connecting-ip", "cf-ray", "x-forwarded-proto")):
                 return False
             host = h.get("host", "").rsplit(":", 1)[0].strip("[]").lower() if not h.get("host", "").startswith("[") else h.get("host", "").split("]")[0].strip("[").lower()
@@ -227,7 +234,7 @@ def serve(agent, host=None, port=None, tick_seconds=60):
                 agent.state.log(workflow="tick", status="error", error=str(e)[:200])
     threading.Thread(target=loop, daemon=True).start()
     srv.stopper = stop
-    agent._serving = True; agent.sip_sync(); agent.telegram_sync()
+    agent._serving = True; agent.sip_sync(); agent.telegram_sync(); agent.address_sync()
     _shutdown = srv.shutdown
-    srv.shutdown = lambda: (agent.sip_stop(), _shutdown())
+    srv.shutdown = lambda: (agent.sip_stop(), getattr(getattr(agent, 'tunnel', None), 'stop', lambda: None)(), _shutdown())
     return srv

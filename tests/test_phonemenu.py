@@ -204,3 +204,14 @@ class Guides(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DashboardScriptIsValid(unittest.TestCase):
+    def test_the_dashboard_javascript_has_no_syntax_errors(self):
+        import shutil, subprocess, tempfile
+        from speakvora_pack_agent import ui
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        f = tempfile.NamedTemporaryFile("w", suffix=".js", delete=False); f.write(ui.JS.replace("__LOGOS__", "{}")); f.close()
+        r = subprocess.run([node, "--check", f.name], capture_output=True, text=True); self.assertEqual(r.returncode, 0, r.stderr[:400])

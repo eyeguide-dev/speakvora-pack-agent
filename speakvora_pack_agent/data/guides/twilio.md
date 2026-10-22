@@ -15,6 +15,8 @@ Twilio sells phone numbers and carries your texts and calls. You pay Twilio dire
 1. In the agent open **Connect, Texts and calls (Twilio)**.
 2. Paste the Account SID and Auth Token and press **Save and test**.
 3. Press **Find my numbers** and choose the number you bought.
+![Twilio in the agent: account SID, auth token and your number](twilio-1-agent-card.jpg)
+
 4. Under **Last step** press the button that points that number at your agent. The agent sets the number's call and text addresses in Twilio for you, so you never edit them by hand. This needs your agent's public web address (Settings, Your business details).
 
 ## Step 4. If you are in the US: register for business texting

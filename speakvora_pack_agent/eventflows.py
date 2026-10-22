@@ -58,7 +58,15 @@ SPECS = {
     "pull_request.ready": ("Tell your team a pull request is ready", "tells your team", "t", "Pull request ready for review: {{repo}} {{pull_request.title}} {{url}}"),
     "issue.opened": ("Tell your team about a new issue", "tells your team", "t", "New issue: {{repo}} {{issue.title}} {{url}}"),
     "security.alert": ("Alert your team about a security alert", "tells your team", "t", "SECURITY ALERT: {{repo}} {{alert.title}} {{url}}"),
+    "bug.reported": ("Report a bug to Jira", "creates a Jira bug (or adds to the matching one), updates your Confluence page, and tells your team", "j", "Bug reported: {{description}} {{jira.key}} {{jira.url}} (reports so far: {{jira.count}})"),
+    "bug.resolved": ("Update Confluence when a bug is fixed", "marks the bug resolved on your Confluence known-issues page and tells your team", "k", "Bug {{ticket}} is resolved: {{title}}"),
 }
+
+# a customer's text that reports a problem becomes a Jira bug (off until Jira is connected: connecting it switches this on)
+BUG_TEXT = {"name": "auto_bug_text", "title": "Report a customer's bug to Jira", "what": "turns a text that reports a problem into a Jira bug and thanks the customer without promising a fix", "general": True, "enabled": False, "priority": True,
+            "on": {"sms": {"keywords": ["bug", "error", "crashes", "crashed", "freezes", "frozen", "glitch", "not working", "doesn't work", "stuck", "broken"]}},
+            "do": [{"action": "jira_bug", "optional": True}, {"action": "reply", "text": "Thank you for telling us. We have logged this and our team will look into it. We cannot promise when it will be fixed, but we will use your report."},
+                   {"action": "notify", "text": "Customer reported a problem: {{jira.key}} {{jira.url}} (reports so far: {{jira.count}})"}]}
 
 
 def name_for(event):
@@ -71,6 +79,10 @@ def workflow(event):
         do = [{"action": "sms", "to": "{{customer.phone}}", "text": text}]
     elif kind == "t":
         do = [{"action": "notify", "text": text}]
+    elif kind == "j":
+        do = [{"action": "jira_bug", "optional": True}, {"action": "notify", "text": text}]
+    elif kind == "k":
+        do = [{"action": "confluence_log", "status": "Resolved", "resolved": True, "optional": True}, {"action": "notify", "text": text}]
     else:
         team, cust = text.split("|", 1)
         do = [{"action": "notify", "text": team}, {"action": "sms", "to": "{{customer.phone}}", "text": cust}]
@@ -92,7 +104,12 @@ def ensure(agent):
         return 0
     have = covered(doc); names = {w.get("name") for w in doc.get("workflows", [])}
     add = [workflow(e) for e in SPECS if e not in have and name_for(e) not in names]
-    if not add:
+    if BUG_TEXT["name"] not in names:
+        add.append(json.loads(json.dumps(BUG_TEXT)))
+    fixed = [w for w in doc.get("workflows", []) if w.get("name") == BUG_TEXT["name"] and not w.get("priority")]          # agents that already have it get the new flag (their on/off switch is kept)
+    for w in fixed:
+        w["priority"] = True
+    if not add and not fixed:
         return 0
     doc.setdefault("workflows", []).extend(add)
     try:

@@ -1,0 +1,21 @@
+{
+ "name": "jira",
+ "path": "/hook/jira",
+ "auth": {
+  "type": "token_header",
+  "header": "X-Speakvora-Token",
+  "secret": "env:JIRA_WEBHOOK_TOKEN"
+ },
+ "map": {
+  "event": {
+   "from": "payload.status_category",
+   "values": {
+    "Done": "bug.resolved"
+   }
+  },
+  "ticket": "payload.key",
+  "title": "payload.summary",
+  "status": "payload.status",
+  "url": "payload.url"
+ }
+}

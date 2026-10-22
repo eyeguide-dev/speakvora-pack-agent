@@ -14,6 +14,9 @@ def lookup(ctx, path):
     return cur
 
 
+MISSING = set()      # slot names a pack did not have, since the agent last looked
+
+
 def render(text, ctx, pack=None):
     """{{customer.name}} from the context, {{slot:order_ready}} the spoken text of a pack slot, {{fact:hours}} a fact from agent.json."""
     def sub(m):
@@ -22,6 +25,10 @@ def render(text, ctx, pack=None):
             try:
                 return pack.text(key[5:])
             except Exception:  # noqa: BLE001
+                MISSING.add(key[5:])                                   # the pack has no such line: the agent logs it, and an English pack falls back to the plain built-in sentence instead of saying nothing
+                if str((getattr(pack, "meta", None) or {}).get("language", "en")).lower().startswith("en"):
+                    from . import slots as _slots
+                    return _slots.fallback_text(key[5:])
                 return ""
         if key.startswith("slotvar:") and pack:                       # the slot NAME comes from the context, e.g. a Slack command argument
             try:

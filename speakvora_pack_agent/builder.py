@@ -19,7 +19,7 @@ EVENTS = {
     "ticket.created": "A support ticket is opened", "ticket.in_progress": "A ticket is being worked on", "ticket.updated": "A ticket is updated", "ticket.resolved": "A ticket is resolved", "customer.escalated": "A customer asks for a manager",
     "pipeline.failed": "A build fails", "pipeline.succeeded": "A build passes", "deploy.succeeded": "A deployment succeeds", "deploy.failed": "A deployment fails",
     "incident.triggered": "An incident is triggered", "incident.resolved": "An incident is resolved", "release.published": "A release is published", "pull_request.ready": "A pull request is ready for review", "issue.opened": "A new issue is opened",
-    "security.alert": "A security alert is raised", "facility.lockdown": "A facility lockdown starts"}
+    "security.alert": "A security alert is raised", "bug.reported": "A bug is reported", "bug.resolved": "A bug is fixed in Jira", "facility.lockdown": "A facility lockdown starts"}
 TRIGGERS = {"sms_keywords": "A customer messages you", "event": "Something happens in your business", "before_booking": "A booking is coming up", "daily": "Every day at a set time"}
 STEPS = {"reply": "Reply to their text", "sms": "Text the customer", "notify": "Tell my team (Slack or Teams)", "email": "Email someone"}
 BEFORE = {15: "15 minutes", 60: "1 hour", 120: "2 hours", 240: "4 hours", 1440: "1 day", 2880: "2 days"}

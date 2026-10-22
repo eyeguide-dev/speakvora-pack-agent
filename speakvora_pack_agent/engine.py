@@ -11,6 +11,7 @@ from .connectors.imap import Inbox
 from .connectors.mailer import Email
 from .connectors.outlook import OutlookCalendar
 from .connectors.teams import Teams
+from .connectors import atlassian as AT
 from .connectors.slack import Slack
 from .connectors.androidsms import AndroidSms
 from .connectors.sip import Sip
@@ -23,7 +24,7 @@ from .state import State
 from . import web
 
 PHONE_RX = re.compile(r"(\+?\d[\d\-\s().]{8,}\d)")
-QUEUEABLE = ("sms", "call", "slack", "teams", "email", "webhook", "http", "calendar_create", "calendar_reschedule", "calendar_cancel", "calendar_delete", "reason")       # actions that wait in the outbox when the network is down
+QUEUEABLE = ("sms", "call", "slack", "teams", "email", "webhook", "http", "jira_bug", "confluence_log", "calendar_create", "calendar_reschedule", "calendar_cancel", "calendar_delete", "reason")       # actions that wait in the outbox when the network is down
 KEEP_WHILE_BLOCKED = ("quiet_hours", "hourly_limit", "recipient_daily_limit")                      # a queued action blocked only by timing waits (until it expires); any other refusal drops it
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
@@ -65,6 +66,8 @@ class Agent:
         cfg = self.cfg
         self.twilio, self.slack, self.gcal, self.mail = Twilio(cfg["twilio"]), Slack(cfg["slack"]), GoogleCalendar(cfg["google_calendar"]), Email(cfg["email"])
         self.teams, self.outlook, self.inbox = Teams(cfg.get("teams", {})), OutlookCalendar(cfg.get("microsoft_calendar", {})), Inbox(cfg.get("inbox", {}))
+        self.atlassian = AT.Atlassian(cfg.get("atlassian", {}))
+        self.gcal.default_tz = cfg.get("timezone")
         self.sms_provider, self.call_provider = HttpProvider(cfg.get("sms_provider")), HttpProvider(cfg.get("call_provider"))
         self.android, self.telegram, self.whatsapp = AndroidSms(cfg.get("android_sms")), Telegram(cfg.get("telegram")), WhatsApp(cfg.get("whatsapp"))
         self.sip_sync(); self.telegram_sync()
@@ -83,6 +86,13 @@ class Agent:
         own = {(w.get("on") or {}).get("event") for w in mine if (w.get("on") or {}).get("event")}
         self.workflows = mine + [w for w in wf.get("workflows", []) if w.get("enabled", True) and not (w.get("general") and (w.get("on") or {}).get("event") in own)]      # your own workflow for an event replaces the ready-made one
         return wf
+
+    def address_sync(self):
+        """Keeps the permanent-address helper (the free Cloudflare tunnel) running to match the saved settings. Only while the web server runs."""
+        from . import address
+        if not hasattr(self, "tunnel"):
+            self.tunnel = address.Tunnel()
+        address.sync(self)
 
     def sip_sync(self):
         """Keeps the office-phone-system connection (SIP) matching the saved settings: unchanged settings keep the running line, changed ones sign out and in again. It only runs while the web server runs."""
@@ -277,6 +287,10 @@ class Agent:
                 self._mirror(wf_name, ctx, results, job_prefix)
             except Exception as e:  # noqa: BLE001 - a broken connection never stops the workflow
                 self.record(wf_name, "mirror", "error", error=str(e)[:200])
+        for slot in sorted(T.MISSING):                                              # a line the pack does not have is written down once, so it can be asked for (Library, missing lines)
+            if self.state.once(f"missing_line:{slot}"):
+                self.record(wf_name, "missing_line", "warning", slot=slot)
+        T.MISSING.clear()
         return results
 
     def _tracking_on(self):
@@ -636,6 +650,86 @@ class Agent:
         finally:
             self._flush_lock.release()
 
+    # ---- Jira and Confluence (the customer's own Atlassian account) -----------------------------------------------------------------------------------------------------------------
+    def _report_text(self, a, ctx):
+        t = str(a.get("text") or "").strip()
+        if not t:
+            t = str((ctx.get("sms") or {}).get("body") or "").strip()
+        for k in ("description", "message", "error", "title"):
+            if not t and ctx.get(k):
+                t = str(ctx[k]).strip()
+        return t
+
+    def _jira_bug(self, wf, a, ctx):
+        """Creates a Jira Bug from a report, or adds the report as evidence to the open bug that matches it. Records what was reported, never a cause or a fix."""
+        kind = "jira_bug"; text = self._report_text(a, ctx)
+        if not text:
+            self.record(wf, kind, "skipped", reason="no_report_text"); return {"status": "skipped"}
+        blocked = self._gate(wf, "jira", "jira", ctx)
+        if blocked:
+            return blocked
+        fp = AT.fingerprint(text); summary = str(a.get("summary") or "").strip() or AT.summary_of(text)
+        source = str(a.get("source") or (ctx.get("sms") and "text message") or ctx.get("source") or "event")
+        ver = str(a.get("app_version") or ctx.get("app_version") or ""); err = str(a.get("error_id") or ctx.get("error_id") or "")
+        if self.dry:
+            ctx["jira"] = {"key": "(practice)", "url": "", "duplicate": False, "count": 1}
+            self.record(wf, kind, "dry_run", summary=summary, fingerprint=fp); return {"status": "dry_run"}
+        if a.get("optional") and not self.atlassian.jira_ready:
+            self.record(wf, kind, "skipped", reason="jira_not_connected"); return {"status": "skipped"}
+        self._need(self.atlassian.jira_ready, "Jira", "connect it in the Connect tab (site, email, API token, project)")
+        at = self.atlassian; bugs = self.state.data.setdefault("jira_bugs", {}); stems = AT.words(AT.redact(text))
+        best = max(bugs.items(), key=lambda kv: AT.similar(stems, kv[1].get("stems", [])), default=(fp, {}))          # the same problem in other words: the most similar bug this agent reported
+        if AT.similar(stems, best[1].get("stems", [])) >= 0.6:
+            fp = best[0]
+        known = bugs.get(fp) or {}; key = known.get("key", "")
+        if key and not at.search(f'key = "{key}" AND statusCategory != Done', 1):
+            key = ""                                                                     # that ticket was finished since: a new report is a new ticket
+        key = key or at.find_duplicate(fp, err)
+        now = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+        if key:
+            count = int(known.get("count", 1)) + 1 if known.get("key") == key else 2
+            at.comment(key, [("p", f"Another report ({count} so far), {now}, through {source}."), ("p", AT.clean(text, 1200) or "Unknown")] + ([("p", f"App version: {ver}")] if ver else []))
+            dup = True
+        else:
+            count = 1; dup = False
+            key = at.create_bug(summary, AT.bug_description(text, source, ver, now, 1, {"Error id": err} if err else None), list(dict.fromkeys(at.labels + [fp])))
+            story = str(a.get("story") or ctx.get("story") or "").strip()
+            if story:
+                try:
+                    at.link_issues(key, story)
+                except Exception as e:  # noqa: BLE001 - the bug exists; a failed link is reported, not hidden
+                    self.record(wf, kind, "link_failed", ticket=key, story=story, error=str(e)[:160])
+        with self.state.lock:
+            bugs[fp] = {"key": key, "count": count, "summary": summary, "stems": known.get("stems") if known.get("key") == key and known.get("stems") else stems, "opened": known.get("opened") if known.get("key") == key else time.strftime("%Y-%m-%d")}
+            self.state.save()
+        ctx["jira"] = {"key": key, "url": at.link(key), "duplicate": dup, "count": count}
+        if at.docs_ready and a.get("document", True):
+            try:
+                at.log(key, summary, "Open", count, bugs[fp]["opened"])
+            except Exception as e:  # noqa: BLE001
+                self.record(wf, "confluence_log", "failed", ticket=key, error=str(e)[:160])
+        self.safe.sent("jira", "jira"); self.record(wf, kind, "sent", ticket=key, duplicate=dup, reports=count); return {"status": "sent", "ticket": key, "duplicate": dup}
+
+    def _confluence_log(self, wf, a, ctx):
+        """Writes (or updates) one row of the known-issues page in Confluence: ticket, problem, status, reports, dates and the verified workaround."""
+        kind = "confluence_log"; key = str(a.get("ticket") or ctx.get("ticket") or "").strip()
+        if not key:
+            self.record(wf, kind, "skipped", reason="no_ticket"); return {"status": "skipped"}
+        blocked = self._gate(wf, "confluence", "confluence", ctx)
+        if blocked:
+            return blocked
+        status = str(a.get("status") or ctx.get("status") or "Open"); note = AT.clean(a.get("note") or "", 500)
+        if self.dry:
+            self.record(wf, kind, "dry_run", ticket=key, to_status=status); return {"status": "dry_run"}
+        if a.get("optional") and not self.atlassian.docs_ready:
+            self.record(wf, kind, "skipped", reason="confluence_not_connected"); return {"status": "skipped"}
+        self._need(self.atlassian.docs_ready, "Confluence", "connect it in the Connect tab (Confluence space)")
+        info = next((v for v in (self.state.data.get("jira_bugs") or {}).values() if v.get("key") == key), {})
+        summary = str(a.get("summary") or ctx.get("title") or info.get("summary") or key)
+        resolved = time.strftime("%Y-%m-%d") if a.get("resolved") else ""
+        self.atlassian.log(key, AT.clean(summary, 200), status, info.get("count", 1), info.get("opened", ""), resolved, note)
+        self.safe.sent("confluence", "confluence"); self.record(wf, kind, "sent", ticket=key, to_status=status); return {"status": "sent", "ticket": key}
+
     def _do_now(self, wf, kind, a, ctx, out):
         if kind == "reply":
             out["reply"] = a.get("text", ""); self.record(wf, kind, "ok"); return {"status": "ok"}
@@ -692,6 +786,10 @@ class Agent:
                 self.record(wf, kind, "dry_run", text=a["text"]); return {"status": "dry_run"}
             self._need(self.teams.configured, "Microsoft Teams", "add teams.webhook_url in agent.json")
             self.teams.post(a["text"], a.get("title")); self.safe.sent("teams", "teams"); self.record(wf, kind, "sent"); return {"status": "sent"}
+        if kind == "jira_bug":
+            return self._jira_bug(wf, a, ctx)
+        if kind == "confluence_log":
+            return self._confluence_log(wf, a, ctx)
         if kind == "notify":
             # staff alert to every team chat you connected (Slack and/or Teams): the workflow does not care which one you use
             res = []
@@ -951,7 +1049,8 @@ class Agent:
             return self.cfg.get("help_text") or i18n.glue("help", self.lang)
         from . import converse
         ai_first = converse.enabled(self, "sms") and len(low.split()) >= 5                 # a detailed message goes to your AI; one or two words ("hours", "parking") still get the instant keyword answer
-        for w in ([x for x in self.workflows if x.get("custom")] if ai_first else self.workflows):          # your own workflows always win; the ready-made keyword answers step aside for a detailed message
+        ordered = sorted(self.workflows, key=lambda x: not x.get("priority"))                                    # a priority workflow (a customer reporting a bug) is looked at first
+        for w in ([x for x in ordered if x.get("custom") or x.get("priority")] if ai_first else ordered):          # your own workflows always win; the ready-made keyword answers step aside for a detailed message
             kw = self._triggers((w.get("on") or {}).get("sms"))
             if kw and any(i18n.matches(k, low, self.lang) for k in kw):
                 self._m()["wf"] = w["name"]

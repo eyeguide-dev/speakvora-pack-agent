@@ -12,7 +12,33 @@ def _unfold(t):
     return re.sub(r"\r?\n[ \t]", "", t)
 
 
-def _ics_time(val, params):
+# Outlook and Microsoft 365 calendars name time zones the Windows way ("Eastern Standard Time"); Python only knows the IANA names, so they are translated here
+WINDOWS_ZONES = {
+    "Dateline Standard Time": "Etc/GMT+12", "UTC-11": "Etc/GMT+11", "Hawaiian Standard Time": "Pacific/Honolulu", "Alaskan Standard Time": "America/Anchorage", "Pacific Standard Time": "America/Los_Angeles",
+    "Pacific Standard Time (Mexico)": "America/Tijuana", "Mountain Standard Time": "America/Denver", "US Mountain Standard Time": "America/Phoenix", "Mountain Standard Time (Mexico)": "America/Chihuahua",
+    "Central Standard Time": "America/Chicago", "Central America Standard Time": "America/Guatemala", "Canada Central Standard Time": "America/Regina", "Central Standard Time (Mexico)": "America/Mexico_City",
+    "Eastern Standard Time": "America/New_York", "US Eastern Standard Time": "America/Indianapolis", "SA Pacific Standard Time": "America/Bogota", "Atlantic Standard Time": "America/Halifax",
+    "Newfoundland Standard Time": "America/St_Johns", "SA Eastern Standard Time": "America/Cayenne", "E. South America Standard Time": "America/Sao_Paulo", "Argentina Standard Time": "America/Buenos_Aires",
+    "Pacific SA Standard Time": "America/Santiago", "GMT Standard Time": "Europe/London", "Greenwich Standard Time": "Atlantic/Reykjavik", "W. Europe Standard Time": "Europe/Berlin",
+    "Central Europe Standard Time": "Europe/Budapest", "Romance Standard Time": "Europe/Paris", "Central European Standard Time": "Europe/Warsaw", "GTB Standard Time": "Europe/Bucharest",
+    "E. Europe Standard Time": "Europe/Chisinau", "FLE Standard Time": "Europe/Kiev", "Turkey Standard Time": "Europe/Istanbul", "Russian Standard Time": "Europe/Moscow", "Israel Standard Time": "Asia/Jerusalem",
+    "Egypt Standard Time": "Africa/Cairo", "South Africa Standard Time": "Africa/Johannesburg", "W. Central Africa Standard Time": "Africa/Lagos", "E. Africa Standard Time": "Africa/Nairobi",
+    "Arab Standard Time": "Asia/Riyadh", "Arabian Standard Time": "Asia/Dubai", "Arabic Standard Time": "Asia/Baghdad", "Iran Standard Time": "Asia/Tehran", "Pakistan Standard Time": "Asia/Karachi",
+    "India Standard Time": "Asia/Calcutta", "Sri Lanka Standard Time": "Asia/Colombo", "Nepal Standard Time": "Asia/Katmandu", "Bangladesh Standard Time": "Asia/Dhaka", "SE Asia Standard Time": "Asia/Bangkok",
+    "China Standard Time": "Asia/Shanghai", "Singapore Standard Time": "Asia/Singapore", "W. Australia Standard Time": "Australia/Perth", "Taipei Standard Time": "Asia/Taipei", "Tokyo Standard Time": "Asia/Tokyo",
+    "Korea Standard Time": "Asia/Seoul", "AUS Eastern Standard Time": "Australia/Sydney", "E. Australia Standard Time": "Australia/Brisbane", "Cen. Australia Standard Time": "Australia/Adelaide",
+    "AUS Central Standard Time": "Australia/Darwin", "New Zealand Standard Time": "Pacific/Auckland", "UTC": "UTC", "Coordinated Universal Time": "UTC"}
+
+
+def _zone(name):
+    from zoneinfo import ZoneInfo
+    try:
+        return ZoneInfo(WINDOWS_ZONES.get(name, name))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _ics_time(val, params, default_tz=None):
     val = val.strip()
     if re.fullmatch(r"\d{8}", val):
         return int(dt.datetime.strptime(val, "%Y%m%d").replace(tzinfo=dt.timezone.utc).timestamp())
@@ -20,14 +46,11 @@ def _ics_time(val, params):
         return int(dt.datetime.strptime(val, "%Y%m%dT%H%M%SZ").replace(tzinfo=dt.timezone.utc).timestamp())
     naive = dt.datetime.strptime(val, "%Y%m%dT%H%M%S")
     tz = re.search(r"TZID=([^;:]+)", params or "")
-    try:
-        from zoneinfo import ZoneInfo
-        return int(naive.replace(tzinfo=ZoneInfo(tz.group(1)) if tz else dt.timezone.utc).timestamp())
-    except Exception:  # noqa: BLE001
-        return int(naive.replace(tzinfo=dt.timezone.utc).timestamp())
+    zone = _zone(tz.group(1).strip('"')) if tz else _zone(default_tz) if default_tz else None      # a time with no zone is the calendar owner's local time: the agent's own time zone
+    return int(naive.replace(tzinfo=zone or dt.timezone.utc).timestamp())
 
 
-def parse_ics(text):
+def parse_ics(text, default_tz=None):
     events = []
     for blk in re.findall(r"BEGIN:VEVENT(.*?)END:VEVENT", _unfold(text), re.S):
         f = {}
@@ -38,9 +61,9 @@ def parse_ics(text):
         if "DTSTART" not in f:
             continue
         unesc = lambda s: s.replace("\\n", "\n").replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\")  # noqa: E731
-        start = _ics_time(*f["DTSTART"])
+        start = _ics_time(*f["DTSTART"], default_tz)
         events.append({"id": f.get("UID", ("", ""))[0] or f"{start}", "title": unesc(f.get("SUMMARY", ("", ""))[0]), "start": start,
-                       "end": _ics_time(*f["DTEND"]) if "DTEND" in f else start, "description": unesc(f.get("DESCRIPTION", ("", ""))[0]), "location": unesc(f.get("LOCATION", ("", ""))[0])})
+                       "end": _ics_time(*f["DTEND"], default_tz) if "DTEND" in f else start, "description": unesc(f.get("DESCRIPTION", ("", ""))[0]), "location": unesc(f.get("LOCATION", ("", ""))[0])})
     return events
 
 
@@ -53,7 +76,7 @@ class GoogleCalendar:
         self.calendar_id = cfg.get("calendar_id", "primary")
         self.allow_create = bool(cfg.get("allow_create"))
         self.configured = (self.mode == "ics" and bool(cfg.get("ics_url"))) or (self.mode == "oauth" and all(cfg.get(k) for k in ("client_id", "client_secret", "refresh_token")))
-        self._tok = ("", 0)
+        self._tok = ("", 0); self.default_tz = None             # the agent's own time zone, set by the agent
 
     def _access(self, now=None):
         now = now or time.time()
@@ -67,7 +90,7 @@ class GoogleCalendar:
         """Events that START between the two times (epoch seconds), oldest first."""
         if self.mode == "ics":
             _st, txt = http.request("GET", self.cfg["ics_url"])
-            return sorted([e for e in parse_ics(txt if isinstance(txt, str) else "") if start_ts <= e["start"] < end_ts], key=lambda e: e["start"])
+            return sorted([e for e in parse_ics(txt if isinstance(txt, str) else "", self.default_tz) if start_ts <= e["start"] < end_ts], key=lambda e: e["start"])
         iso = lambda t: dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
         url = f"{self.api}/calendar/v3/calendars/{quote(self.calendar_id, safe='')}/events?singleEvents=true&orderBy=startTime&timeMin={iso(start_ts)}&timeMax={iso(end_ts)}&maxResults=100"
         _st, r = http.request("GET", url, {"authorization": "Bearer " + self._access()})

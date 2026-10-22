@@ -21,7 +21,7 @@ class EveryEvent(unittest.TestCase):
                         self.assertTrue(r.mock.calls("Messages.json"), ev + ": the customer text was not sent")
                         text = str(r.mock.calls("Messages.json"))
                         self.assertNotIn("{{", text, ev)
-                    if kind in ("t", "b"):
+                    if kind in ("t", "b", "j", "k"):
                         self.assertTrue(r.mock.calls("chat.postMessage"), ev + ": the team was not told")
                 finally:
                     r.close()
@@ -48,7 +48,7 @@ class EveryEvent(unittest.TestCase):
         r = Rig(); self.addCleanup(r.close); a = r.agent
         v = SIM.view(a); self.assertEqual([e["id"] for e in v["events"] if e["soon"]], ["facility.lockdown"]); self.assertTrue(v["events"][-1]["soon"])
         self.assertTrue(all(e["handled"] for e in v["events"] if not e["soon"]))
-        bv = BD.view(a); self.assertTrue(bv["events"][-1]["soon"]); self.assertEqual(len(bv["events"]), 51)
+        bv = BD.view(a); self.assertTrue(bv["events"][-1]["soon"]); self.assertEqual(len(bv["events"]), 53)
         self.assertEqual(a.handle_event({"event": "facility.lockdown", "id": "l1", "customer": CUST})["matched"], 0)
         soon = [w for w in SU.workflows(a) if w.get("soon")]; self.assertEqual(len(soon), 1); self.assertTrue(SU.workflows(a)[-1]["soon"])
 

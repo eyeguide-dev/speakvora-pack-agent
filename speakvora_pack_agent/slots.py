@@ -140,6 +140,16 @@ PROFILE_OF = {"jail-corrections-bail": "corrections", "restaurants-food": "food"
               "crypto-pawn-rent-to-own": "finance", "customer-service": "support", "it-saas-support": "devops", "ivr-phone-menus": "support", "website-hosting-internet": "devops", "dating-social-apps": "support", "apps-and-devices": "devops"}
 
 
+def fallback_text(name):
+    """The plain English sentence for a slot, from the built-in examples of every industry. Used when a pack does not have the line, so a customer is never left without an answer."""
+    if name in COMMON:
+        return COMMON[name][1]
+    for _word, _fams, extra in PROFILES.values():
+        if name in extra:
+            return extra[name][1]
+    return ""
+
+
 def profile_for(pack_slug):
     return PROFILE_OF.get(pack_slug, "generic")
 

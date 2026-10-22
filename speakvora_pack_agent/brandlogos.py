@@ -45,6 +45,10 @@ LOGOS = {
 "0 0 24 24",
 "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"3\" fill=\"#fff\"/><path fill=\"#4285F4\" d=\"M3 6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v1H3z\"/><path fill=\"#34A853\" d=\"M21 17v1a3 3 0 0 1-3 3h-1v-4z\"/><path fill=\"#FBBC04\" d=\"M3 17h4v4H6a3 3 0 0 1-3-3z\"/><path fill=\"#EA4335\" d=\"M17 17h4v-3h-4z\"/><text x=\"12\" y=\"16.8\" font-family=\"Arial,sans-serif\" font-size=\"9\" font-weight=\"700\" text-anchor=\"middle\" fill=\"#4285F4\">31</text>"
 ],
+"atlassian": [
+"0 0 24 24",
+"<path fill=\"#2684FF\" d=\"M7.1 11.4c-.3-.3-.8-.3-1 .1L.6 21.4c-.2.4.1.9.5.9h7.7c.2 0 .4-.1.5-.3 1.7-3.4.7-8.5-2.2-10.6z\"/><path fill=\"#2684FF\" d=\"M11.6 1.6c-3.1 4.8-2.8 10 0 13.3l3.8 7.2c.1.2.3.3.5.3h7.7c.4 0 .7-.5.5-.9L12.6 1.7c-.2-.4-.8-.4-1 0z\"/>"
+],
 "teams": [
 "0 0 24 24",
 "<circle cx=\"17.5\" cy=\"6\" r=\"2.6\" fill=\"#7B83EB\"/><path fill=\"#5059C9\" d=\"M15 9.5h6a1 1 0 0 1 1 1V15a3 3 0 0 1-3 3 3 3 0 0 1-3-3z\"/><circle cx=\"10\" cy=\"5.6\" r=\"3.2\" fill=\"#7B83EB\"/><rect x=\"2\" y=\"9\" width=\"13\" height=\"12\" rx=\"2.2\" fill=\"#5059C9\"/><path fill=\"#fff\" d=\"M5.4 12.4h6.2v1.5H9.3v5.7H7.7v-5.7H5.4z\"/>"
