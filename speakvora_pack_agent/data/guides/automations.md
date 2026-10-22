@@ -72,3 +72,15 @@ The same tab works on a phone: the tiles shrink, the cards stack, and the editor
 - On an office phone connection a custom greeting is spoken with the computer's own voice (Mac and many Linux systems have one). If the computer has none, the agent plays the bundle's recorded standard menu until you voice your greeting with Voice it in my bundle's voice.
 - Switch back any time: **Use the standard menu** restores the bundle's menu. Your custom menu is saved separately, so a bundle update never overwrites it.
 - Stuck? Press Full Guide on the connection you are setting up, or see the other guides in Connect.
+
+## Bookings: let your AI book and confirm on the phone
+Turn this on and your AI can book a table (or an appointment) and confirm it while the caller is still on the line, instead of only passing a request to your team.
+1. Open **Automations, Bookings** and press **Set my rules and switch on**.
+2. Choose the days you take bookings, when seating opens and the last seating, how long a booking lasts, the largest party the AI may book, and your seating areas with how many seats each has (for example inside 40, outside 24).
+3. Press **Save and switch on**. The AI is now allowed to book (Settings, Built-in safeguards shows it as "Book and confirm tables or appointments").
+
+What happens on a call: the guest asks their questions, then asks to book. The AI collects the name, how many people, the day and time and where they want to sit, one question at a time. The booking book checks the request against your rules, against the bookings already made, and against your calendar (an event whose title says "Closed", "Private party" or "Event" closes that time). If it fits, the AI says the real result: "You are booked: a table for four outside, tonight at 7 PM, under Daniel. Your confirmation code is 4 8 2 7." If it does not fit, the guest hears the nearest times that do. Your team is told in Slack or Teams for every booking, and you can cancel one from the same card.
+
+**Your calendar.** Every booking is published as a calendar feed. Copy the address shown under **Your bookings as a calendar** and add it to Outlook, Google Calendar or Apple Calendar (Add calendar, From the internet); bookings then appear in your own calendar. Calendars refresh on their own schedule (Outlook can take a few hours), so the agent's booking book, not the calendar, decides what is free. If you connected a Google calendar the agent may write to, the booking is confirmed only after that calendar accepts it. In practice mode bookings are kept and marked "practice booking": nothing is published or written to a calendar.
+
+**Slow speech.** The AI says things it has not said before by generating new speech. On a free account that can take several seconds, so callers hear short "one moment" lines meanwhile. Settings, Built-in safeguards has a limit for how long they wait before a person takes over (default about six seconds, up to 30). Paid accounts use a faster lane.

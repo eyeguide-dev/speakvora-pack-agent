@@ -4,7 +4,7 @@ A turn goes: safety checks on what the person said (emergency, secrets, opt-out 
 On a call, an answer that takes the AI more than a moment is covered by a short recorded filler so the line never goes quiet (see Agent._talk). The AI only answers; it cannot send, change or approve anything."""
 import hashlib, json, re, threading, time
 
-from . import brain, controls, guardrails as G, industry_rules, knowledge, learned, reasoner as R
+from . import bookings, brain, controls, guardrails as G, industry_rules, knowledge, learned, reasoner as R
 
 PRIVATE_PROFILES = ("clinic", "pharmacy", "dispensary", "legal", "finance", "education", "lodging", "public", "collections", "corrections")
 SYSTEM = ("You are the front-desk voice of a small business, answering one customer message or one phone turn. Speak like a warm, brief person: one or two short sentences, plain words, no lists, no emoji. "
@@ -13,7 +13,8 @@ SYSTEM = ("You are the front-desk voice of a small business, answering one custo
           "If an approved line says exactly what you want to say, choose it by its number instead of writing your own. "
           'Reply with ONE JSON object only: {"say": "what to say", "line": "L3 or empty", "action": "continue" | "handoff" | "end"}. '
           "Use \"end\" only when the person says they are done. Use \"handoff\" for complaints, anything urgent, anything you cannot answer, or when they ask for a person.")
-ACTION_HELP = {"notify": "notify: tell the team something they must act on (a booking request, a callback, a complaint, a quote). text = a short summary with the customer's name, what they want and when.",
+ACTION_HELP = {"book": "book: book a table or appointment for the customer. Fields: name = the guest's name, party = how many people (a number), start = the local date and time as YYYY-MM-DDTHH:MM, area = where they want to sit (inside or outside), notes = extra needs such as a dog. Use it only when you have all of name, party, start and area. The booking book checks it and confirms or offers other times: never say it is booked yourself. If anything is missing, ask for it (one question at a time) and do not use book yet.",
+               "notify": "notify: tell the team something they must act on (a booking request, a callback, a complaint, a quote). text = a short summary with the customer's name, what they want and when.",
                "sms": "sms: text the customer a short confirmation of what was agreed. text = the message.",
                "calendar_create": "calendar_create: add a booking to the calendar once the customer has given a day and time. title = a short title, start = the local date and time as YYYY-MM-DDTHH:MM, minutes = length."}
 TEMPLATES = {"service": "This is a service business (appointments, quotes, repairs). When someone wants a booking or a quote, collect their name, what they need and the day or time they prefer, one question at a time, then use notify with a summary. Never promise a price or an arrival time that is not in the approved information.",
@@ -111,6 +112,25 @@ def _checked(agent, say, user_text):
     return ""
 
 
+def _booking_rules(agent, cfg, channel):
+    """When the owner switched booking on: today's date (so "tonight" and "Friday" become real dates), the rules the book enforces, and how to take a booking."""
+    if "book" not in usable_actions(agent, cfg, channel):
+        return ""
+    b = bookings.settings(agent); now = bookings.dt.datetime.now(bookings._tz(agent)); days = ", ".join(bookings.WORDS[d] for d in b["days"])
+    return (f"Today is {now.strftime('%A %Y-%m-%d')} and the time is {now.strftime('%H:%M')} (local). We take bookings {days}, from {b['open']} to {b['last_seating']}, for up to {b['max_party']} people, "
+            f"sitting {' or '.join(b['areas'])}. Answer the guest's questions first, from the approved information, and start taking a booking only when they ask to book. To take a booking collect the name, how many people, the day and time, and where they want to sit, one question at a time, then use book. "
+            "The booking book confirms it or offers other times. Never promise a table yourself.\n")
+
+
+def _phone(agent, key):
+    """The caller's number when it is known: a text conversation is keyed by it, a call on an office phone system carries it as the caller id."""
+    if key.startswith("sms:"):
+        return key[4:]
+    call = getattr(getattr(agent, "_tl", None), "sip_call", None)
+    who = str(getattr(call, "caller", "") or "")
+    return who if re.fullmatch(r"\+?\d{7,15}", who) else ""
+
+
 def usable_actions(agent, cfg, channel=""):
     """The allowed actions that can actually run right now: notify needs Slack or Teams connected, calendar_create needs a calendar that can create events, sms needs Twilio."""
     ok = []
@@ -118,6 +138,8 @@ def usable_actions(agent, cfg, channel=""):
         if a == "notify" and (getattr(agent.slack, "configured", False) or getattr(agent.teams, "configured", False)):
             ok.append(a)
         elif a == "sms" and channel != "sms" and getattr(agent.twilio, "configured", False):            # in a text conversation the reply already is the text
+            ok.append(a)
+        elif a == "book" and bookings.settings(agent)["enabled"]:
             ok.append(a)
         elif a == "calendar_create" and (getattr(agent.gcal, "configured", False) and (agent.cfg.get("google_calendar") or {}).get("allow_create")):
             ok.append(a)
@@ -134,6 +156,9 @@ def _actions(agent, raw, cfg, channel=""):
         if a["type"] in ("notify", "sms") and (len(t) < 6 or controls.guard_speech(t) == "secret" or industry_rules.violation(agent, t)):
             continue
         item = {"type": a["type"], "text": t}
+        if a["type"] == "book":
+            item.update(name=" ".join(str(a.get("name") or "").split())[:60], party=a.get("party"), start=str(a.get("start") or "").strip(), area=str(a.get("area") or "").strip().lower()[:20], notes=" ".join(str(a.get("notes") or "").split())[:200])
+            out.append(item); continue
         if a["type"] == "calendar_create":
             m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})", str(a.get("start") or "").strip())
             if not m:
@@ -163,7 +188,7 @@ def turn(agent, key, channel, text):
         user = (f"Business: {agent.cfg.get('business', '')}\nChannel: {'text message' if channel == 'sms' else 'phone call (speak in short natural sentences)'}\n" + industry_rules.prompt(agent) + (brain.for_prompt(agent) or "") + docs
                 + ("APPROVED FACTS:\n" + facts + "\n" if facts else "") + (order + "\n" if order else "")
                 + ("APPROVED LINES (choose by number when one fits exactly):\n" + "\n".join(f"L{i + 1}: {it['text']}" for i, it in enumerate(lib)) + "\n" if lib else "")
-                + (TEMPLATES.get(PROFILE_TEMPLATE.get(agent.profile, ""), "") + "\n" if TEMPLATES.get(PROFILE_TEMPLATE.get(agent.profile, ""), "") else "")
+                + (_booking_rules(agent, cfg, channel) or (TEMPLATES.get(PROFILE_TEMPLATE.get(agent.profile, ""), "") + "\n" if TEMPLATES.get(PROFILE_TEMPLATE.get(agent.profile, ""), "") else ""))
                 + ("ACTIONS you may request in \"do\" (a list of {\"type\": ..., fields}; leave it empty when nothing needs doing):\n" + "\n".join(ACTION_HELP[a] for a in usable_actions(agent, cfg, channel) if a in ACTION_HELP) + "\n" + "Actions run after your reply and may be held for approval: never say you have done one, say what will happen (for example \"the host will confirm your table\").\n" if any(a in ACTION_HELP for a in usable_actions(agent, cfg, channel)) else "")
                 + "\nCONVERSATION SO FAR (the customer's phone numbers, emails and card-like numbers are hidden from you):\n" + R.redact("\n".join(f"{'Customer' if r == 'c' else 'You'}: {t}" for r, t in s["turns"][-8:]) + f"\nCustomer: {text}\n", None))
         t0 = time.time(); raw, _u = R._chat(agent.cfg["reasoner"], SYSTEM, user, 220); out["ai_ms"] = int((time.time() - t0) * 1000)
@@ -174,6 +199,15 @@ def turn(agent, key, channel, text):
             it = lib[int(ln[1:]) - 1]; line_id, say = it["id"], it["text"]
         todo = _actions(agent, j.get("do"), cfg, channel) if act != "handoff" else []
         why = _checked(agent, say, text)
+        booked = None
+        if not why and any(x["type"] == "book" for x in todo):                  # the AI asked to book: the booking book answers now, so the caller hears the real result on the same call
+            item = next(x for x in todo if x["type"] == "book"); todo = [x for x in todo if x["type"] != "book"]
+            booked = bookings.attempt(agent, item, _phone(agent, key), "text" if channel == "sms" else "call")
+            agent.state.log(workflow="bookings", action="book", status="confirmed" if booked["ok"] else (booked.get("reason") or "not_booked"), dry_run=agent.dry, party=item.get("party"), area=item.get("area"), start=item.get("start"))
+            if booked.get("say"):
+                say, line_id = booked["say"], ""
+            if booked["ok"]:
+                b = booked["booking"]; todo.append({"type": "notify", "text": f"New booking {b['code']}: table for {b['party']} {b['area']} at {bookings.say_time(agent, b['start'])}, {b['name']}." + (f" Notes: {b['notes']}." if b["notes"] else "")})
         if why or act == "handoff":
             agent.state.log(workflow="converse", status="handoff", dry_run=False, why=why or "the AI chose a person", raw=str(raw)[:300], docs=len(srcs), stop=(_u or {}).get("stop"), blocks=(_u or {}).get("blocks"))        # what the AI actually said, for tuning
         if why:

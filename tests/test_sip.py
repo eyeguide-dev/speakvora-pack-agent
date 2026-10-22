@@ -429,6 +429,13 @@ class Listening(unittest.TestCase):
             lis.feed(b"\xff" * 160)
         self.assertTrue(lis.done.is_set()); self.assertGreaterEqual(len(lis.audio()), 160 * 20)
 
+    def test_a_phone_system_that_stops_sending_audio_during_silence_still_ends_the_turn(self):
+        lis = SIPMOD.Listener(0, silence=0.4)
+        for f in _loud(20):
+            lis.feed(f)
+        self.assertTrue(lis.started.is_set()); self.assertFalse(lis.idle(lis.last_feed + 0.3))                  # a short gap is not the end
+        self.assertTrue(lis.idle(lis.last_feed + 0.7)); self.assertTrue(lis.done.is_set())                    # no packets for longer than the pause: the caller finished
+
     def test_a_click_is_not_speech(self):
         lis = SIPMOD.Listener(0)
         for f in _loud(2) + [b"\xff" * 160] * 10 + _loud(2):

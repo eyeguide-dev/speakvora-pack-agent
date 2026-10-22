@@ -100,6 +100,13 @@ def make_handler(agent):
                 return self._loc("GET")
             if p == "/health":
                 return self._send(200, {"ok": True, "home": hashlib.sha256(os.path.abspath(agent.state.dir).encode()).hexdigest()[:12], "dry_run": agent.dry, "pack": agent.pack.meta.get("pack"), "workflows": len(agent.workflows), "missing_slots": agent.missing_slots, "missing_required_lines": agent.missing_required, "killed": agent.safe.killed(), "queued": len(agent.state.outbox()), "jobs": agent.state.job_counts()})
+            if p.startswith("/bookings/") and p.endswith(".ics"):               # the booking book as a calendar feed: public, but only with the long secret in the address
+                from . import bookings
+                if self._limited():
+                    return self._send(429, {"error": "slow_down"})
+                if not hmac.compare_digest(p[len("/bookings/"):-4].encode(), bookings.feed_token(agent).encode()):
+                    return self._send(404, {"error": "not_found"})
+                return self._send(200, bookings.ics(agent), "text/calendar; charset=utf-8")
             if p.startswith("/track/"):                                        # the customer's order page: public, holds only the step, protected by a long random code
                 from . import tracker
                 if self._limited():

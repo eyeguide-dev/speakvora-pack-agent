@@ -122,11 +122,18 @@ class Listener:
     def __init__(self, codec, silence=1.2, max_s=15.0):
         self.codec, self.silence, self.max_frames = codec, float(silence), int(max_s * 50)
         self.buf = b""; self.pre = []; self.frames = []; self.floor = 150.0; self.loud = 0; self.quiet = 0
-        self.started = threading.Event(); self.done = threading.Event(); self.lock = threading.Lock()
+        self.started = threading.Event(); self.done = threading.Event(); self.lock = threading.Lock(); self.last_feed = time.time()
+
+    def idle(self, now=None):
+        """Some phone systems stop sending audio packets while the caller is silent. After speech, no packets for longer than the pause means the caller finished."""
+        if self.started.is_set() and not self.done.is_set() and (now or time.time()) - self.last_feed > self.silence + 0.2:
+            self.done.set()
+        return self.done.is_set()
 
     def feed(self, payload):
         if self.done.is_set():
             return
+        self.last_feed = time.time()
         with self.lock:
             self.buf += payload
             while len(self.buf) >= 160 and not self.done.is_set():
@@ -232,7 +239,7 @@ class Call:
         end = time.time() + timeout
         with self.dlock:
             while not self.ended.is_set() and len(self.digits) < n:
-                if lis is not None and lis.done.is_set():
+                if lis is not None and lis.idle():
                     break
                 if time.time() > end and not (lis is not None and lis.started.is_set()):
                     break

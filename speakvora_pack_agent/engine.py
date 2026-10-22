@@ -1464,7 +1464,8 @@ class Agent:
         return f'<Response>{self._filler(key)}<Redirect method="POST">{base}/twilio/call/wait/{pid}</Redirect></Response>'
 
     def call_wait(self, pid, params=None):
-        """The second half of a slow AI turn: the answer if it is ready, otherwise another short filler (up to three), then a person."""
+        """The second half of a slow AI turn: the answer if it is ready, otherwise another short filler (up to the owner's wait limit), then a person."""
+        from . import converse
         self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}
         pending = self.__dict__.setdefault("_pending", {}); got = pending.get(pid)
         if not got:
@@ -1472,7 +1473,7 @@ class Agent:
         pend, _t, p0, tries, ckey = got
         if pend.wait(1.0 if tries == 0 else 2.0) and pend.result:
             pending.pop(pid, None); xml = self._talk_xml(pend.result, p0)
-        elif tries < 2 and not pend.ev.is_set():
+        elif (time.time() - _t) < min(float(converse._cfg(self).get("max_wait_seconds") or 6), 30.0) and not pend.ev.is_set():          # keep the caller company with short fillers up to the owner's limit (default about six seconds), then a person
             got[3] += 1; base = self.cfg.get("public_base_url", "")
             return f'<Response>{self._filler(ckey)}<Redirect method="POST">{base}/twilio/call/wait/{pid}</Redirect></Response>'
         else:

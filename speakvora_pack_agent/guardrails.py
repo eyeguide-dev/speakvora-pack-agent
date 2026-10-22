@@ -10,11 +10,11 @@ HARD = [
     "A caller who asks for a person is connected to your staff phone right away; two unanswered questions in a row do the same.",
     "Consent, STOP, quiet hours, per-person limits and the pause switch are checked on every message and call, exactly as for every other send.",
 ]
-CEILING = {"max_turns": 40, "max_call_minutes": 20, "max_ai_replies_per_hour": 200, "phrase_chars_per_month": 20000, "talk_chars_per_month": 200000}
+CEILING = {"max_turns": 40, "max_call_minutes": 20, "max_wait_seconds": 30, "max_ai_replies_per_hour": 200, "phrase_chars_per_month": 20000, "talk_chars_per_month": 200000}
 FLOOR = {"learn_after": (2, 20)}
-DEFAULTS = {"sms_replies": False, "voice_calls": False, "max_turns": 12, "max_call_minutes": 6, "max_ai_replies_per_hour": 30, "allowed_actions": [], "blocked_topics": ["medical advice", "legal advice", "emergencies"],
+DEFAULTS = {"sms_replies": False, "voice_calls": False, "max_turns": 12, "max_call_minutes": 6, "max_wait_seconds": 6, "max_ai_replies_per_hour": 30, "allowed_actions": [], "blocked_topics": ["medical advice", "legal advice", "emergencies"],
             "handoff_words": ["person", "human", "agent", "operator", "manager", "representative", "someone"], "after_hours": "message", "auto_learn_phrases": False, "learn_after": 3, "phrase_chars_per_month": 3000, "talk_chars_per_month": 20000, "keep_details_days": 7}
-ACTIONS = {"notify": "Tell my team in Slack or Teams", "sms": "Send a confirmation text", "calendar_create": "Add a booking to my calendar"}      # nothing that moves money or changes a customer record
+ACTIONS = {"book": "Book and confirm tables or appointments in my booking book", "notify": "Tell my team in Slack or Teams", "sms": "Send a confirmation text", "calendar_create": "Add a booking to my calendar"}      # nothing that moves money or changes a customer record
 
 
 def view(agent):

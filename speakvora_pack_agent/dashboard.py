@@ -347,6 +347,40 @@ def handle(agent, method, path, headers, raw):
             KN.dismiss_gap(agent, str(json.loads(raw or b"{}").get("k", ""))); out = KN.view(agent)
         elif p == "/dash/api/knowledge/try" and method == "POST":
             out = CVN.try_it(agent, json.loads(raw or b"{}").get("question"))
+        elif p == "/dash/api/scan" and method == "GET":
+            from . import scan as SC
+            out = SC.view(agent)
+        elif p.startswith("/dash/api/scan/") and method == "POST":
+            from . import scan as SC
+            b = json.loads(raw or b"{}"); act = p[len("/dash/api/scan/"):]
+            if act in ("search", "read", "phrases", "phrases/add") and b.get("ok") is not True:
+                raise ValueError("Nothing happens until you say OK.")                      # every step that reads the web, sends text to your AI or spends your allowance asks first
+            if act == "search":
+                SC.search(agent)
+            elif act == "site":
+                SC.set_site(agent, b.get("url"))
+            elif act == "read":
+                SC.read_site(agent, max(5, min(int(b.get("max_pages") or 40), 60)))
+            elif act == "apply":
+                SC.apply(agent, b.get("facts") or [], bool(b.get("profile", True)), bool(b.get("menu", True)), bool(b.get("faqs", True)))
+            elif act == "phrases":
+                SC.suggest_phrases(agent)
+            elif act == "phrases/add":
+                SC.add_phrases(agent, b.get("lines") or [])
+            elif act == "reset":
+                SC.reset(agent)
+            else:
+                return 404, b'{"error":"not_found"}', "application/json", hdr
+            out = SC.view(agent)
+        elif p == "/dash/api/bookings" and method == "GET":
+            from . import bookings as BK
+            out = BK.view(agent)
+        elif p == "/dash/api/bookings/save" and method == "POST":
+            from . import bookings as BK
+            out = BK.save(agent, json.loads(raw or b"{}"))
+        elif p == "/dash/api/bookings/cancel" and method == "POST":
+            from . import bookings as BK
+            out = {"cancelled": BK.cancel(agent, str(json.loads(raw or b"{}").get("code", ""))), **BK.view(agent)}
         elif p == "/dash/api/simulate" and method == "GET":
             out = SIM.view(agent)
         elif p == "/dash/api/simulate" and method == "POST":
