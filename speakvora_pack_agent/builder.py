@@ -8,10 +8,19 @@ MAX_WORKFLOWS, MAX_STEPS, MAX_TEXT = 30, 5, 500
 EVENTS = {
     "order.received": "A new order arrives", "order.preparing": "An order is being prepared", "order.ready": "An order is ready", "order.delayed": "An order is delayed", "order.picked_up": "An order is picked up",
     "order.out_for_delivery": "An order is out for delivery", "order.delivered": "An order is delivered", "order.cancelled": "An order is cancelled", "table.ready": "A table is ready",
-    "reservation.created": "A reservation is made", "reservation.no_show": "A guest does not show up", "visit.completed": "A visit is finished", "appointment.created": "Someone books an appointment",
-    "appointment.cancelled": "Someone cancels", "payment.failed": "A payment fails", "payment.received": "A payment comes in", "payment.refunded": "A payment is refunded", "payment.due": "A payment is coming up",
-    "pipeline.failed": "A build fails", "pipeline.succeeded": "A build passes", "incident.triggered": "An incident is triggered", "incident.resolved": "An incident is resolved", "release.published": "A release is published"}
-TRIGGERS = {"sms_keywords": "SMS Person", "event": "App Event", "before_booking": "Booking", "daily": "Daily"}
+    "reservation.created": "A reservation is made", "reservation.no_show": "A guest does not show up", "visit.completed": "A visit is finished", "visit.next_due": "A customer's next visit is due",
+    "appointment.created": "A customer books an appointment", "appointment.changed": "A customer changes an appointment", "appointment.cancelled": "A customer cancels an appointment",
+    "appointment.no_show": "A customer misses an appointment", "appointment.ready": "An appointment is ready to start",
+    "payment.failed": "A payment fails", "payment.received": "A payment comes in", "payment.refunded": "A payment is refunded", "payment.due": "A payment is coming due",
+    "account.funded": "Money is added to an account", "account.low_balance": "An account balance runs low",
+    "job.scheduled": "A job is scheduled", "job.on_the_way": "A technician is on the way", "job.in_progress": "A job is under way", "job.completed": "A job is finished", "job.followup_due": "A job follow-up is due",
+    "quote.followup_due": "A quote follow-up is due", "callback.scheduled": "A callback is scheduled",
+    "repair.received": "An item arrives for repair", "repair.in_progress": "A repair is under way", "repair.ready": "A repair is ready", "repair.picked_up": "A repaired item is picked up",
+    "ticket.created": "A support ticket is opened", "ticket.in_progress": "A ticket is being worked on", "ticket.updated": "A ticket is updated", "ticket.resolved": "A ticket is resolved", "customer.escalated": "A customer asks for a manager",
+    "pipeline.failed": "A build fails", "pipeline.succeeded": "A build passes", "deploy.succeeded": "A deployment succeeds", "deploy.failed": "A deployment fails",
+    "incident.triggered": "An incident is triggered", "incident.resolved": "An incident is resolved", "release.published": "A release is published", "pull_request.ready": "A pull request is ready for review", "issue.opened": "A new issue is opened",
+    "security.alert": "A security alert is raised", "facility.lockdown": "A facility lockdown starts"}
+TRIGGERS = {"sms_keywords": "A customer messages you", "event": "Something happens in your business", "before_booking": "A booking is coming up", "daily": "Every day at a set time"}
 STEPS = {"reply": "Reply to their text", "sms": "Text the customer", "notify": "Tell my team (Slack or Teams)", "email": "Email someone"}
 BEFORE = {15: "15 minutes", 60: "1 hour", 120: "2 hours", 240: "4 hours", 1440: "1 day", 2880: "2 days"}
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -174,6 +183,16 @@ def then_text(spec):
     return "; ".join(STEPS[s["type"]].lower() + (" in " + s["channel"] if s["type"] == "notify" and s.get("channel") else "") for s in spec["steps"])
 
 
+def _events_view(agent, known):
+    """Every event with a plain name, those your agent already reacts to first, and the ones that are coming soon last."""
+    from . import eventflows
+    have = {(w.get("on") or {}).get("event") for w in getattr(agent, "workflows", []) if (w.get("on") or {}).get("event")}
+    soon = set(eventflows.SOON)
+    from . import simulate
+    allev = eventflows.covered(simulate.eventflows_file(agent))
+    return sorted(({"id": k, "label": v, "handled": k in have, "off": k not in have and k in allev, "soon": k in soon} for k, v in known.items()), key=lambda e: (e["soon"], not e["handled"], e["label"]))
+
+
 def view(agent):
     from . import connect as SU
     d = load(agent)
@@ -185,7 +204,7 @@ def view(agent):
     for e, l in EVENTS.items():
         known.setdefault(e, l)
     return {"workflows": [{"id": w["id"], "name": w["spec"]["name"], "when": when_text(w["spec"]), "then": then_text(w["spec"]), "enabled": bool(w["spec"].get("enabled", True)), "spec": w["spec"], "updated": w.get("updated", 0)} for w in d["workflows"]],
-            "triggers": TRIGGERS, "steps": STEPS, "events": [{"id": k, "label": v} for k, v in sorted(known.items(), key=lambda x: x[1])], "before": [{"minutes": k, "label": v} for k, v in BEFORE.items()],
+            "triggers": TRIGGERS, "steps": STEPS, "events": _events_view(agent, known), "before": [{"minutes": k, "label": v} for k, v in BEFORE.items()],
             "vars": {k: [{"name": n, "help": VAR_HELP[n]} for n in v] for k, v in VARS.items()}, "days": DAYS, "limit": MAX_WORKFLOWS,
             "connected": {"team": bool(agent.slack.configured or getattr(agent.teams, "configured", False)), "sms": bool(agent.twilio.configured), "email": bool(agent.mail.configured), "calendar": bool(agent.gcal.configured or agent.outlook.configured)}}
 

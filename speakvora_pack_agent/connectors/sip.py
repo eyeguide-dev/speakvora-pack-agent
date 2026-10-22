@@ -133,14 +133,14 @@ class Listener:
                 fr, self.buf = self.buf[:160], self.buf[160:]; self._frame(fr)
 
     def _frame(self, fr):
-        tab = _ULAW if self.codec == 0 else _ALAW; e = sum(abs(tab[b]) for b in fr) / len(fr); thr = max(450.0, self.floor * 4)
+        tab = _ULAW if self.codec == 0 else _ALAW; e = sum(abs(tab[b]) for b in fr) / len(fr); thr = max(300.0, self.floor * 3.5)
         if not self.started.is_set():
-            self.pre.append(fr); del self.pre[:-12]
+            self.pre.append(fr); del self.pre[:-30]                                        # keep the last 0.6 s: the soft first sound of a word ("Can", "to") is below the loudness threshold
             if e < thr:
                 self.floor = 0.95 * self.floor + 0.05 * e; self.loud = 0
             else:
                 self.loud += 1
-                if self.loud >= 4:
+                if self.loud >= 3:
                     self.started.set(); self.frames = list(self.pre); self.pre = []
             return
         self.frames.append(fr); self.quiet = 0 if e >= thr else self.quiet + 1

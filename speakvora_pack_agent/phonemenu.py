@@ -1,4 +1,4 @@
-"""The phone menu you build in the dashboard ("press 1 for hours, 2 to book, 3 for Luli, 0 for a person").
+"""The phone menu you build in the dashboard ("press 1 for hours, 2 for services, 3 for inventory, 0 for a person").
 Saved in agent-state/phone_menu.json (so a bundle update never overwrites it). When it is switched on, the agent's call menu uses these options instead of the bundle's standard four, through exactly the same call logic and safety checks:
 a caller can always press or say their way to a person, nothing is said that you did not write, a transfer only goes to a number you typed, and practice mode still stops real transfers and messages.
 Each option does one thing: tell the opening hours, say a message you write, take a callback request (your team is told), connect the caller to your staff phone, or connect them to another number you choose (a person or a department)."""
@@ -9,7 +9,7 @@ SECRET = re.compile(r"\b(?:\d[ -]?){13,19}\b|\b\d{3}-\d{2}-\d{4}\b|\b(?:password
 STOP = {"for", "to", "the", "a", "an", "of", "and", "or", "my", "our", "your", "about", "with", "me", "us", "please", "speak", "talk", "press", "hear", "get", "know", "check", "on", "is", "in", "at", "it"}
 WORDS = {"hours": ("hours", "open", "close", "closing", "address", "where", "location", "directions"), "callback": ("book", "booking", "appointment", "schedule", "reschedule", "cancel", "quote", "estimate", "callback"),
          "status": ("status", "order", "ready", "late", "update", "progress", "arrive"), "person": ("person", "human", "manager", "operator", "someone", "representative")}
-MAX_OPTIONS = 9
+MAX_OPTIONS = 10                                                                  # keys 0 to 9
 
 
 class MenuError(ValueError):
@@ -165,5 +165,6 @@ def view(agent):
     business = "" if "YOUR-" in business else business
     cur = {"enabled": bool(d.get("enabled")), "greeting": d.get("greeting") or "Thanks for calling {{business}}.", "options": d.get("options") or [
         {"digit": "1", "say": "for opening hours", "do": "hours"}, {"digit": "2", "say": "to book or change a booking", "do": "callback"}, {"digit": "3", "say": "for a status update", "do": "status"}, {"digit": "0", "say": "to speak to a person", "do": "person"}]}
-    return {**cur, "business": business or "us", "saved": bool(d), "spoken": spoken(cur, business), "actions": ACTIONS, "max": MAX_OPTIONS,
+    starter = [{"digit": "1", "say": "for opening hours", "do": "hours"}, {"digit": "2", "say": "for our services", "do": "callback"}, {"digit": "3", "say": "for inventory", "do": "callback"}, {"digit": "0", "say": "to speak to a person", "do": "person"}]
+    return {**cur, "starter": starter, "business": business or "us", "saved": bool(d), "spoken": spoken(cur, business), "actions": ACTIONS, "max": MAX_OPTIONS,
             "staff_phone_set": bool(str(((agent.cfg.get("facts") or {}).get("oncall_phone")) or "").strip()) and "YOUR-" not in str((agent.cfg.get("facts") or {}).get("oncall_phone", ""))}

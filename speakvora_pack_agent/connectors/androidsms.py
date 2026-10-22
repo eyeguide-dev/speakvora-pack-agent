@@ -38,7 +38,7 @@ class AndroidSms:
         if dev:
             body["deviceId"] = dev
         if idem:
-            body["id"] = str(idem)[:36]
+            body["id"] = str(__import__("uuid").uuid5(__import__("uuid").NAMESPACE_URL, str(idem)))      # a UUID from the whole key: cutting a long event id to 36 characters made two different texts look like the same one
         st, r = http.request("POST", self.base + "/message", self._h(), body=body)
         if st not in (200, 201, 202):
             raise http.HttpError(st, r)

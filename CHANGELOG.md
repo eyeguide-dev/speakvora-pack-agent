@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.33.0
+A new look and a complete set of automations. The tabs are now a floating bar at the bottom on every screen size (Home, Automations, Connect, Library, Settings) and the page uses the full window on a computer, so it looks like a finished app rather than a phone screen stretched out.
+Every event your app can send now has a ready-made automation: 50 of 51, each tested one by one, with the facility lockdown listed last as "coming soon" because emergency events are never automated without a verified life-safety system. Customer events text the customer; team events (a build fails, an incident, a security alert) tell your team on Slack or Teams. Your own workflow for an event replaces the ready-made one, and your switches are kept. Events now have plain names ("A customer misses an appointment" instead of appointment.no_show), the workflow triggers are named in plain words, and an automation that exists but is switched off says so.
+Phone menu: the editor starts from hours, services, inventory and a person, any key 0 to 9 can do anything (press 5 for a department, for example), and every key is tested through the same signed requests Twilio sends.
+Fixed: Android texts for events with long ids (Stripe, Shopify) no longer collide and get refused (found by sending every automation for real through an Android phone); the speech detector no longer drops the first words of a sentence; the Full Guide pages ship inside every bundle.
+Checked for this release: 473 automated tests; all 440 ready-made workflows across the 19 industries run clean (both with order pages on and off); real Slack posts for every team event read back in Slack; 39 real texts delivered through an Android phone; real calls through a real phone system with a real Speakvora speech transcription.
+
 ## 0.32.1
 Fixed: the Full Guide pages (and their screenshots) were missing from the bundle files, so the Full Guide button on each connection and on the Automations tab would not open from inside a bundle. They are now packed with the agent. No other change.
 

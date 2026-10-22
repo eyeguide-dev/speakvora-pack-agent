@@ -1,4 +1,4 @@
-import unittest
+import json, unittest
 from test_pack_agent import Rig
 from speakvora_pack_agent import phonemenu as PM
 
@@ -24,8 +24,7 @@ class Validate(unittest.TestCase):
     def test_plain_errors(self):
         bad = [([o("1", "for hours", "hours"), o("1", "for more", "hours")], "twice"), ([o("a", "for hours", "hours")], "key from 0 to 9"), ([o("1", "", "hours")], "Say what key 1"),
                ([o("1", "for x", "message")], "message callers hear"), ([o("1", "for Luli", "transfer", "9")], "full phone number"), ([o("1", "for hours", "nonsense")], "Choose what key 1"),
-               ([o("1", "for hours", "hours"), o("0", "for hours too", "hours")], "Key 0 is kept"), ([o("1", "card 4111 1111 1111 1111", "hours")], "card numbers"), ([], "at least one"),
-               ([o(str(i), f"for item {i}", "hours") for i in range(1, 10)] + [o("0", "to speak to a person", "person")], "more than 9")]
+               ([o("1", "for hours", "hours"), o("0", "for hours too", "hours")], "Key 0 is kept"), ([o("1", "card 4111 1111 1111 1111", "hours")], "card numbers"), ([], "at least one")]
         for options, frag in bad:
             with self.assertRaises(PM.MenuError) as cm:
                 PM.validate({"options": options})
@@ -108,7 +107,60 @@ class NoVoice(unittest.TestCase):
         r.agent._tl.sip_tts = True; self.assertIn("Luli", r.agent.handle_call({"From": "+16465550101"}, "start"))
 
 
+from test_pack_agent import Web
+
+
+class AnyKeyAnyDepartment(unittest.TestCase):
+    """The call-center scenario: a menu you set up in the dashboard with keys such as press 5 for Z, tested through the same signed requests Twilio sends."""
+    DEPTS = [o("1", "for opening hours", "hours"), o("5", "for the Z department", "transfer", "646 555 0105"), o("6", "for the Billing department", "transfer", "646 555 0106"), o("7", "for Shipping", "transfer", "646 555 0107"),
+             o("8", "to leave a message for sales", "message", text="Sales will call you back today."), o("0", "to speak to a person", "person")]
+
+    tearDown, post, twilio = Web.tearDown, Web.post, Web.twilio
+
+    def setUp(self):
+        Web.setUp(self); self.r.agent.cfg.setdefault("facts", {})["oncall_phone"] = "+16465550123"; self.r.agent.cfg["twilio"]["speech_input"] = True
+
+    def save_over_http(self, options):
+        import urllib.request
+        tok = __import__("speakvora_pack_agent.dashboard", fromlist=["x"]).token(self.r.agent)
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/dash/api/phonemenu", data=json.dumps({"enabled": True, "greeting": "Thanks for calling {{business}}.", "options": options}).encode(), method="POST", headers={"x-dashboard-token": tok, "content-type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as x:
+            return json.loads(x.read())
+
+    def test_press_5_for_z_and_every_other_key_does_what_was_set(self):
+        v = self.save_over_http(self.DEPTS); self.assertIn("5 for the Z department", v["spoken"])
+        code, xml = self.twilio("/twilio/call", {"From": "+16465550101"}); self.assertEqual(code, 200); self.assertIn("for the Z department", xml); self.assertIn("for the Billing department", xml)
+        for key, number in (("5", "+16465550105"), ("6", "+16465550106"), ("7", "+16465550107")):
+            code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "Digits": key}); self.assertEqual(code, 200); self.assertIn(f"<Number>{number}</Number>", xml, key)
+        code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "Digits": "8"}); self.assertIn("Sales will call you back today.", xml); self.assertNotIn("<Dial", xml)
+        code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "Digits": "0"}); self.assertIn("<Number>+16465550123</Number>", xml)
+        code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "Digits": "2"}); self.assertIn("did not catch that", xml); self.assertIn("for the Z department", xml)     # a key you did not set repeats YOUR menu
+
+    def test_saying_the_department_name_works_and_a_person_always_wins(self):
+        self.save_over_http(self.DEPTS)
+        code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "SpeechResult": "the Z department please"}); self.assertIn("<Number>+16465550105</Number>", xml)
+        code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "SpeechResult": "shipping"}); self.assertIn("<Number>+16465550107</Number>", xml)
+        code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "SpeechResult": "I want a human"}); self.assertIn("<Number>+16465550123</Number>", xml)
+
+    def test_a_menu_of_any_size_up_to_ten_keys_saves_and_rings_the_right_number(self):
+        opts = [o(str(k), f"for department {k}", "transfer", f"646 555 01{k:02d}") for k in range(1, 10)] + [o("0", "to speak to a person", "person")]
+        self.save_over_http(opts)
+        for k in range(1, 10):
+            code, xml = self.twilio("/twilio/call/menu", {"From": "+16465550101", "Digits": str(k)}); self.assertIn(f"<Number>+16465550{100 + k}</Number>", xml, k)
+
+    def test_the_dashboard_refuses_a_menu_it_cannot_run_and_says_why(self):
+        import urllib.error
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.save_over_http([o("5", "for Z", "transfer", "12345678901234567890"), o("0", "person", "person")])
+        self.assertEqual(cm.exception.code, 400)
+
+
 class Api(unittest.TestCase):
+    def test_the_editor_starts_from_hours_services_inventory_and_a_person(self):
+        r = Rig(extra={"facts": {"oncall_phone": "+16465550123"}}); self.addCleanup(r.close); v = PM.view(r.agent)
+        self.assertEqual([(o["digit"], o["say"]) for o in v["starter"]], [("1", "for opening hours"), ("2", "for our services"), ("3", "for inventory"), ("0", "to speak to a person")])
+        PM.save(r.agent, {"options": v["starter"]})                                              # the starter menu is valid as it stands
+
     def test_view_has_defaults_and_save_roundtrips(self):
         r = Rig(extra={"facts": {"oncall_phone": "+16465550123"}}); self.addCleanup(r.close)
         v = PM.view(r.agent); self.assertFalse(v["saved"]); self.assertEqual([x["digit"] for x in v["options"]], ["1", "2", "3", "0"]); self.assertTrue(v["staff_phone_set"])

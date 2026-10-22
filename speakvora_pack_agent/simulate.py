@@ -25,6 +25,14 @@ def _sources(agent):
     return {"text": True, "ai": converse.enabled(agent, "sms"), "live": not agent.dry}
 
 
+def eventflows_file(agent):
+    import json as _j
+    try:
+        return _j.load(open(agent.cfg["workflows"], encoding="utf-8"))
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
 def view(agent):
     from . import converse
     ev = sorted({(w.get("on") or {}).get("event") for w in agent.workflows if (w.get("on") or {}).get("event") and w.get("enabled", True)})
@@ -38,7 +46,13 @@ def view(agent):
         if w.get("custom") and w.get("enabled", True):
             custom += [k for k in (agent._triggers((w.get("on") or {}).get("sms")) or []) if k not in custom][:2]
     ask = ["What are your hours?", "Where are you located?", "I want to talk to a person"] + custom[:3]
-    return {"events": [{"id": e, "label": BE.get(e, e)} for e in ev], "ideas": ask[:6], "ai": converse.enabled(agent, "sms"), "live": not agent.dry}
+    from . import eventflows
+    names = {**BE}
+    for e in ev:
+        names.setdefault(e, e.replace(".", " ").replace("_", " ").capitalize())
+    allev = eventflows.covered(eventflows_file(agent))
+    events = sorted(({"id": e, "label": l, "handled": e in ev, "off": e not in ev and e in allev, "soon": e in eventflows.SOON} for e, l in names.items()), key=lambda x: (x["soon"], not x["handled"], x["label"]))
+    return {"events": events, "ideas": ask[:6], "ai": converse.enabled(agent, "sms"), "live": not agent.dry}
 
 
 def _tail(agent, start):
@@ -117,7 +131,7 @@ def event(agent, name):
         agent.dry = True
         try:
             agent._m().clear()
-            payload = {"event": name, "id": "sim-" + str(int(time.time() * 1000)), **json.loads(json.dumps(SAMPLE))}
+            payload = {"event": name, "id": "sim-" + str(int(time.time() * 1000)), **json.loads(json.dumps(SAMPLE)), "start_epoch": int(time.time()) + 86400, "start_text": "tomorrow at 7:00 PM", "party": 2, "minutes": 60, "appointment": {"id": "sim-appt"}}
             r = agent.handle_event(payload)
         finally:
             agent.dry = was

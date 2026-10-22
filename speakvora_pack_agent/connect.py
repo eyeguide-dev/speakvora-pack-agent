@@ -752,8 +752,11 @@ def workflows(agent):
     for w in _workflow_file(agent).get("workflows", []):
         needs = sorted({NEEDS[k] for k in _kinds(w) if k in NEEDS}); on = w.get("on") or {}
         trig = next((TRIGGER_WORDS[k] for k in TRIGGER_WORDS if k in on), "")
-        out.append({"name": w["name"], "title": re.sub(r"\s+", " ", w["name"].replace("_", " ")).capitalize(), "what": recipes.NICE.get(w["name"], ""), "when": trig, "enabled": w.get("enabled", True), "also": w.get("also_send_to") or [], "needs": needs,
+        out.append({"name": w["name"], "title": w.get("title") or re.sub(r"\s+", " ", w["name"].replace("_", " ")).capitalize(), "what": w.get("what") or recipes.NICE.get(w["name"], ""), "when": trig, "enabled": w.get("enabled", True), "also": w.get("also_send_to") or [], "needs": needs,
                     "missing": [n for n in needs if not (connected(agent, "texts") if n == "twilio" and "call" not in _kinds(w) else connected(agent, n))]})      # texts alone can go through your phone, Telegram or WhatsApp; calls still need Twilio
+    from . import eventflows, builder as _bd
+    for ev, why in eventflows.SOON.items():                                                  # listed last, with no switch: coming soon
+        out.append({"name": "soon_" + ev.replace(".", "_"), "title": _bd.EVENTS.get(ev, ev), "what": why, "when": "when your app sends this event", "enabled": False, "also": [], "needs": [], "missing": [], "soon": True})
     return out
 
 

@@ -72,13 +72,16 @@ class Agent:
         self.twilio.status_url = base + "/twilio/status" if base.startswith("https://") and "YOUR-" not in base else ""     # Twilio tells us later whether a text or call really arrived
 
     def _load_workflows(self):
+        from . import builder, eventflows
+        if self.cfg.get("workflows"):
+            eventflows.ensure(self)                                                     # every event your app can send gets a ready-made automation (once)
         wf = json.load(open(self.cfg["workflows"], encoding="utf-8")) if self.cfg.get("workflows") else {}
-        from . import builder
         try:
             mine = builder.compiled(self)                                               # workflows made in the dashboard (agent-state/custom_workflows.json): their words come first
         except Exception as e:  # noqa: BLE001 - a damaged custom file never stops the ready-made workflows
             mine = []; self.state.log(workflow="builder", status="error", dry_run=False, error=str(e)[:120]) if hasattr(self, "state") else None
-        self.workflows = mine + [w for w in wf.get("workflows", []) if w.get("enabled", True)]
+        own = {(w.get("on") or {}).get("event") for w in mine if (w.get("on") or {}).get("event")}
+        self.workflows = mine + [w for w in wf.get("workflows", []) if w.get("enabled", True) and not (w.get("general") and (w.get("on") or {}).get("event") in own)]      # your own workflow for an event replaces the ready-made one
         return wf
 
     def sip_sync(self):

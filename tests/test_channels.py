@@ -210,3 +210,18 @@ class Channels(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AndroidIdempotency(unittest.TestCase):
+    def test_two_texts_for_one_long_event_id_get_different_message_ids(self):
+        from speakvora_pack_agent.connectors import androidsms as AS
+        seen = []
+        orig = AS.http.request
+        AS.http.request = lambda m, u, h=None, body=None, **k: (seen.append(body["id"]), (202, {"id": body["id"]}))[1]
+        try:
+            a = AS.AndroidSms({"username": "u", "password": "p", "device_id": "d"})
+            key = "event:evt_1NxLongStripeLikeEventIdentifier0001:"
+            a.send("+16465550101", "one", idem=key + "payment_failed_notice"); a.send("+16465550101", "two", idem=key + "payment_received_notice"); a.send("+16465550101", "one", idem=key + "payment_failed_notice")
+        finally:
+            AS.http.request = orig
+        self.assertEqual(len(set(seen[:2])), 2); self.assertEqual(seen[0], seen[2]); self.assertTrue(all(len(x) == 36 for x in seen))      # the same text keeps the same id, so a retry is not sent twice

@@ -1,6 +1,6 @@
 # Automations: phone menu, workflows and testing
 
-Everything your agent does by itself lives in one place: the **Automations** tab. Here you build your phone menu ("press 1 for hours, 2 to book, 3 for Luli, 0 for a person"), make your own "when this happens, do this" automations, and test all of it by pretending to be a customer. Time: about 15 minutes. Cost: nothing extra.
+Everything your agent does by itself lives in one place: the **Automations** tab. Here you build your phone menu ("press 1 for hours, 2 to book, 3 for billing, 4 for shipping, 0 for a person"), make your own "when this happens, do this" automations, and test all of it by pretending to be a customer. Time: about 15 minutes. Cost: nothing extra.
 
 ## Before you start
 - The agent is running and you can see the dashboard. Everything below happens in practice mode: nothing is sent, nobody is called.
@@ -23,11 +23,11 @@ Everything your agent does by itself lives in one place: the **Automations** tab
 2. **Greeting**: what callers hear first. You can write {{business}} and it becomes your business name.
 3. **Keys**: each row is one key.
    - The first box is the key (0 to 9).
-   - The text box finishes the sentence "Press 3 ...", for example `for opening hours`, `to book`, `for Luli`.
+   - The text box finishes the sentence "Press 3 ...", for example `for opening hours`, `to book`, `for billing`.
    - The last box is what the key does: tell your opening hours, say a message you write, take a callback request (your team is told), connect your staff phone, or connect a number you choose.
 4. For a person or a department, choose **Connect them to a number I choose** and type the full phone number, with area code. It can be a person's mobile or a hunt group at your phone company.
-![The phone menu editor with key 3 set to Luli](auto-menu-editor.jpg)
-5. Press **Add a key** for more options (up to 9 keys plus 0). Press **Remove** to take one away.
+![The phone menu editor with key 3 set to billing](auto-menu-editor.jpg)
+5. Press **Add a key** for more options (any of the keys 0 to 9, ten in all). Press **Remove** to take one away.
 6. Check **What callers hear** at the bottom of the same screen (in the picture above). It is the exact sentence, with your business name filled in.
 7. Press **Save and switch on**. The card now shows your keys and the tile says **Custom**.
 ![The saved phone menu](auto-menu-saved.jpg)
@@ -43,12 +43,12 @@ Until you do this, callers hear your words in your phone provider's voice (or th
 ## Step 5. Test the new menu
 1. Back in **Test my agent**, press **Call in**: you hear your new greeting.
 2. Press each key and read what happens. Press 3 shows the number it would connect.
-3. Type "can I talk to Luli" in the say box: spoken names from your menu work too.
+3. Type "I need billing" in the say box: spoken names from your menu work too.
 ![Pretending to call: pressing 3 connects the number you chose](auto-test-call.jpg)
 
 ## Step 6. Make your own automation
 1. In **Your automations** press **New workflow**.
-2. Choose **When this happens** (a customer texts a word, something happens in your app, a booking is coming up, or a time of day), then **Do this** (reply, text the customer, tell your team on Slack or Teams, or email someone).
+2. Choose **When this happens** (a customer messages you a word by text, WhatsApp or Telegram, something happens in your business, a booking is coming up, or a time of day), then **Do this** (reply, text the customer, tell your team on Slack or Teams, or email someone).
 3. Type your message. You can use details such as {{business}} or {{customer.name}}; the box tells you which ones fit.
 4. Press **Save**. It is switched on. Use the switch in the list to turn it off later.
 ![The workflow builder](auto-workflow.jpg)
