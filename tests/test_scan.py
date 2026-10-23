@@ -1,4 +1,4 @@
-import json, time, unittest
+import json, os, time, unittest
 from test_pack_agent import Rig
 from speakvora_pack_agent import scan as SC, dashboard as DB, reasoner as R, knowledge as KN, brain
 
@@ -84,6 +84,14 @@ class Steps(unittest.TestCase):
         d = SC.anticipate(a)
         self.assertEqual(d["phrases"], ["We are open 11am to 10pm every day of the week.", "One moment while I check that for you."])
         self.assertTrue(d["auto_ready"]); self.assertEqual(d["anticipated"]["questions"], ["What time do you open?"]); self.assertFalse(d.get("voiced"))
+
+
+class Wording(unittest.TestCase):
+    def test_recording_text_never_says_the_free_allowance_pays_for_new_lines(self):
+        from speakvora_pack_agent import ui
+        self.assertNotIn("free allowance first", ui.JS); self.assertIn("do not renew", ui.JS)
+        guide = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "speakvora_pack_agent", "data", "guides", "ai.md"), encoding="utf-8").read()
+        self.assertNotIn("free allowance first", guide); self.assertIn("do not renew", guide)
 
 
 class Confirming(unittest.TestCase):
