@@ -369,6 +369,21 @@ ANTICIPATE_SYSTEM = ("You prepare a small business's phone and text assistant BE
 
 
 STOPW = set("the and for with from open close closed every each day days week daily today tonight only just now here there please will have has are our you your this that dollars dollar price prices cost costs person people per about around hours hour".split())
+NUMBER_WORDS = set("two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty hundred thousand".split())
+COMMON = set("""about above after again against allow always another answer anything because before being below between booking bookings bring business check checking could customer customers details email follow found getting great happy having help helping here
+information inside later looking might minute minutes moment number order orders other outside patience please present provide question questions reservation reservations restaurant right should something sorry still table tables team thank thanks their there these thing think those through today
+tonight update various wanted wants welcome which while would write your yours
+located location preference prefer seating options option takeout request requests cancel change changes accessibility accessible vegetarian message messages party someone somebody taking confirm confirmed confirms
+person people reserve reserved details detail callback follow follows ahead right away flag noted note notes passing paying payment payments delivery menu items item special specials contact moment waiting
+available availability happy glad certain sorry unable """.split())
+
+
+def unverified(line, src):
+    """Words in a phrase that are not in anything the business gave (and are not everyday receptionist words): the owner should check these before the line is recorded."""
+    have = set(re.findall(r"[a-z]{5,}", src))
+    return sorted({w for w in re.findall(r"[a-z]{5,}", line.lower()) if w not in have and w not in COMMON and w not in STOPW})[:4]
+
+
 ABSOLUTE = r"\b(free|always|never|guaranteed|complimentary|no charge)\b"
 
 
@@ -377,6 +392,9 @@ def grounded(line, src_lines):
     'dinner is $20'), and every absolute (free, always, never, guaranteed) is in the source too. Still not proof of truth: the owner reviews before anything is recorded."""
     low = line.lower()
     words = {w for w in re.findall(r"[a-z]{4,}", low) if w not in STOPW}
+    spelled = [w for w in re.findall(r"[a-z]+", low) if w in NUMBER_WORDS]
+    if spelled and not all(any(w in sl for sl in src_lines) for w in spelled):
+        return False                                                    # "twelve tables" is a number too
     for n in [n.strip(".,:") for n in re.findall(r"\d[\d.,:]*", line)]:
         if not any(n in sl and (not words or words & set(re.findall(r"[a-z]{4,}", sl))) for sl in src_lines):
             return False
@@ -398,10 +416,10 @@ def _context(agent):
         out.append("Things the assistant can do for customers: " + ", ".join(wf))
     except Exception:
         pass
-    for s in KN._idx(agent).get("sources", [])[:4]:
-        t = KN.source_text(agent, s) if hasattr(KN, "source_text") else ""
-        if t:
-            out.append(t[:1500])
+    try:
+        out.append("Notes the owner added (menu, prices, policies):\n" + KN.text_all(agent, 5000))
+    except Exception:
+        pass
     return "\n".join(x for x in out if x)
 
 
@@ -416,12 +434,15 @@ def anticipate(agent):
     d["auto_busy"] = True; save(agent, d)
     try:
         ctx = _context(agent)
-        raw, _u = R._chat(agent.cfg["reasoner"], ANTICIPATE_SYSTEM, R.redact(ctx[:9000], None), 2200)
+        raw, _u = R._chat(agent.cfg["reasoner"], ANTICIPATE_SYSTEM, R.redact(ctx[:9000], None), 3600)
         m = re.search(r"\{.*\}", raw or "", re.S)
         try:
             j = json.loads(m.group(0)) if m else {}
         except ValueError:
             j = {}
+        if not j.get("lines") and raw:                                  # a long answer can be cut off: keep the complete lines that arrived
+            part = re.search(r'"lines"\s*:\s*\[(.*)', raw, re.S)
+            j = {"lines": re.findall(r'"((?:[^"\\]|\\.){20,190})"', part.group(1)) if part else [], "questions": j.get("questions", [])}
         have = {learned.norm(i["text"]) for i in learned.load(agent).get("items", [])}
         src = ctx.lower(); src_lines = [x for x in re.split(r"[\n.;]", src) if x.strip()]; good = []
         for l in j.get("lines", []):
@@ -432,6 +453,7 @@ def anticipate(agent):
                 good.append(l)
         d = load(agent)
         d["phrases"] = good[:30]; d["phrase_chars"] = sum(len(x) for x in d["phrases"]); d["phrase_cost_usd"] = round(d["phrase_chars"] * 3 / 1e6, 4)
+        d["flags"] = {l: unverified(l, src) for l in d["phrases"] if unverified(l, src)}
         d["anticipated"] = {"at": int(time.time()), "questions": [str(q)[:140] for q in j.get("questions", [])][:25], "count": len(d["phrases"])}
         d["auto_ready"] = bool(good); _log(d, f"Thought ahead about customer questions: {len(good)} phrase ideas ready." if good else "Thought ahead, but there was not enough business information yet for safe phrases.")
         save(agent, d)
@@ -484,7 +506,7 @@ def view(agent):
     d = load(agent)
     return {"step": d.get("step", "idle"), "known": known(agent), "known_site": known_site(agent), "site": d.get("site", ""), "candidates": d.get("candidates", []), "pages": d.get("pages", []), "extracted": d.get("extracted", {}),
             "fact_suggestions": d.get("fact_suggestions", []), "phrases": d.get("phrases", []), "phrase_chars": d.get("phrase_chars", 0), "error": d.get("error", ""), "log": d.get("log", [])[-8:], "ai_ready": ai_ready(agent),
-            "checks": d.get("checks", []), "daily": (d.get("daily") or {"on": False}), "updates": d.get("updates"), "stale": d.get("stale", []), "phrase_cost_usd": d.get("phrase_cost_usd", 0), "auto_ready": bool(d.get("auto_ready")), "auto_busy": bool(d.get("auto_busy")), "anticipated": d.get("anticipated"), "provider": str((agent.cfg.get("reasoner") or {}).get("provider") or "your AI provider")}
+            "checks": d.get("checks", []), "daily": (d.get("daily") or {"on": False}), "updates": d.get("updates"), "stale": d.get("stale", []), "phrase_cost_usd": d.get("phrase_cost_usd", 0), "budget": __import__("speakvora_pack_agent.learned", fromlist=["budget"]).budget(agent), "auto_ready": bool(d.get("auto_ready")), "flags": d.get("flags") or {}, "auto_busy": bool(d.get("auto_busy")), "anticipated": d.get("anticipated"), "provider": str((agent.cfg.get("reasoner") or {}).get("provider") or "your AI provider")}
 
 
 # ---- 7. checking what the AI now says (the owner confirms the data) ----------------------------------------------------------------------------------------------------------------------------

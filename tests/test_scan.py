@@ -77,6 +77,22 @@ class Steps(unittest.TestCase):
         SC.set_site(a, "https://bella.example/"); SC._run(a, "https://bella.example/", 10, fetch, 0); SC.apply(a, facts=[], profile=True, menu=True)
         d = SC.suggest_phrases(a); self.assertEqual(d["phrases"], ["Welcome to Bella Trattoria, how can I help you today?", "Dogs are welcome on our heated patio."])
 
+    def test_made_up_details_are_flagged_and_spelled_out_numbers_must_be_grounded(self):
+        src = "dogs are welcome on the heated outside patio. we take reservations for parties up to 8 people."
+        lines = [l for l in src.split(".") if l.strip()]
+        self.assertTrue(SC.grounded("Dogs are welcome on the heated patio.", lines))
+        self.assertFalse(SC.grounded("The patio has twelve tables.", lines))
+        self.assertIn("leash", SC.unverified("Dogs are welcome on a leash.", src))
+        self.assertEqual(SC.unverified("Dogs are welcome on the heated patio.", src), [])
+
+    def test_thinking_ahead_sees_the_notes_the_owner_added(self):
+        r = rig(); self.addCleanup(r.close); a = r.agent
+        KN.add_text(a, "Menu", "Weekday lunch special: any pasta and a drink for 15 dollars, Tuesday to Friday.", "note")
+        seen = []
+        R._chat = lambda cfg, system, user, mt=None: (seen.append(user) or json.dumps({"questions": [], "lines": ["Our weekday lunch special is any pasta and a drink for 15 dollars."]}), {})
+        d = SC.anticipate(a)
+        self.assertIn("lunch special", seen[0]); self.assertEqual(len(d["phrases"]), 1)
+
     def test_thinking_ahead_prepares_ideas_from_what_is_known_without_recording_and_rejects_invented_prices(self):
         r = rig(); self.addCleanup(r.close); a = r.agent
         a.cfg["facts"] = {"hours": "Open 11am to 10pm every day", "info": "Lunch is 20 dollars. Dinner is 35 dollars."}

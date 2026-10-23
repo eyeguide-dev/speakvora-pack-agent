@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.35.3
+**Thinking ahead is better grounded.** When your AI prepares phrases for your customers it now also reads the notes you added (menu, prices, policies). Any line with a detail that is not in your information (for example "on a leash" when you never said so) is marked "Check this one" and unticked until you decide. Numbers written as words ("twelve tables") are checked like digits. The review screen shows how many characters of new lines your monthly limit still allows, and says so when a set is bigger than that.
+**Fixed.** A long answer from your AI that was cut off no longer loses all the phrases that did arrive.
+
 ## 0.35.2
 **Clearer about what recording costs.** Recording the phrases your AI prepares uses new text, which needs a card or credit on your Speakvora account (library price, $3 per million characters, a few cents for a full set, once per line; the recording then stays on your computer). The 100,000 free characters each account gets once are for stored library phrases and do not renew. The agent's screens and guide now say exactly this.
 **Safer suggestions.** When your AI thinks ahead about your customers, it may only promise actions your agent can really do (otherwise it offers to pass the customer to a person).
