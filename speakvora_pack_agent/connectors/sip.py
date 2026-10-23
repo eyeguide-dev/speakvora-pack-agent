@@ -170,7 +170,7 @@ class Call:
         self.ended = threading.Event(); self.acked = threading.Event(); self.digits = []; self.dlock = threading.Condition()
         self.rtp = None; self.remote_rtp = None; self.codec = 0; self.te_pt = None; self.seq = random.randint(0, 60000); self.ts = random.randint(0, 2**31); self.ssrc = random.getrandbits(32)
         self.last_te_ts = None; self.stop_play = threading.Event()
-        self.listener = None; self.speech_count = 0; self.started = time.time(); self.rx_audio = 0; self.tx = 0; self.digit_count = 0; self.transferred = False; self.problem = ""
+        self.listener = None; self.bg = None; self.bg_on = False; self.speech_count = 0; self.started = time.time(); self.rx_audio = 0; self.tx = 0; self.digit_count = 0; self.transferred = False; self.problem = ""
 
     # -- media
     def open_media(self, offer):
@@ -210,12 +210,23 @@ class Call:
             if pt == self.codec:
                 self.rx_audio += 1
                 lis = self.listener
+                if lis is None and self.bg_on:                       # between questions (the system is talking a filler or thinking): keep what the caller says, so talking over it is never lost
+                    if self.bg is None:
+                        self.bg = Listener(self.codec)
+                    lis = self.bg
                 if lis is not None:
                     lis.feed(pkt[12:])
             if self.te_pt is not None and pt == self.te_pt and len(pkt) >= 16:
                 ev, endbit = pkt[12], pkt[13] & 0x80; ts = struct.unpack("!I", pkt[4:8])[0]
                 if ts != self.last_te_ts and ev <= 15 and (endbit or True):
                     self.last_te_ts = ts; self.push_digit("0123456789*#ABCD"[ev])
+
+    def take_bg(self):
+        """What the caller said (or is still saying) since the last question, if anything: it becomes the answer to the next Gather at once, and the system stops talking."""
+        b, self.bg = self.bg, (Listener(self.codec) if self.bg_on else None)
+        if b is not None and b.started.is_set() and (not b.done.is_set() or time.time() - b.last_feed < 10):
+            return b
+        return None
 
     def remote_rtp_latched(self, src):
         if src[0] != self.remote_rtp[0]:                           # symmetric RTP: only the address the call negotiated may send us audio
@@ -705,6 +716,8 @@ class Flow:
             elif el.tag == "Gather":
                 n = int(el.get("numDigits") or 1); self.c.digits.clear(); self.c.stop_play.clear()
                 lis = Listener(self.c.codec, silence=1.2 if str(el.get("speechTimeout") or "auto") == "auto" else float(el.get("speechTimeout"))) if "speech" in (el.get("input") or "") and self.sip.speech_ok(self.a) else None
+                if lis is not None:
+                    self.c.bg_on = True; lis = self.c.take_bg() or lis                # the caller already talked over the last filler or answer: use that
                 self.c.listener = lis
                 try:
                     for sub in el:

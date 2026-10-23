@@ -436,6 +436,17 @@ class Listening(unittest.TestCase):
         self.assertTrue(lis.started.is_set()); self.assertFalse(lis.idle(lis.last_feed + 0.3))                  # a short gap is not the end
         self.assertTrue(lis.idle(lis.last_feed + 0.7)); self.assertTrue(lis.done.is_set())                    # no packets for longer than the pause: the caller finished
 
+    def test_what_the_caller_says_over_a_filler_is_kept_and_used_as_the_next_answer(self):
+        c = SIPMOD.Call.__new__(SIPMOD.Call); c.codec = 0; c.bg = None; c.bg_on = True; c.listener = None
+        self.assertIsNone(c.take_bg())                                                       # nothing said: nothing to use
+        c.bg = SIPMOD.Listener(0, silence=0.4)
+        for f in _loud(20):
+            c.bg.feed(f)                                                                      # the caller spoke while the system played "one moment"
+        for _ in range(25):
+            c.bg.feed(b"\xff" * 160)
+        got = c.take_bg(); self.assertIsNotNone(got); self.assertTrue(got.done.is_set()); self.assertGreaterEqual(len(got.audio()), 160 * 20)
+        self.assertIsNone(c.take_bg())                                                       # used once, then a fresh listener starts
+
     def test_a_click_is_not_speech(self):
         lis = SIPMOD.Listener(0)
         for f in _loud(2) + [b"\xff" * 160] * 10 + _loud(2):

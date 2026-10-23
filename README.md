@@ -4,7 +4,7 @@ A small agent that turns an offline voice pack into automated work: confirm book
 
 It runs on **your own server**, next to your app, with **your own accounts**. Standard-library Python only. No per-message fee from us and nothing to install in your chat or calendar. Optional extras use your Speakvora account and are off until you switch them on: hosted order tracking pages, voicing new phrases, and asking for missing lines. Start with [docs/overview.md](docs/overview.md).
 
-> Speakvora sells offline voice packs (audio you ship once). Every full pack in the 12 pack languages includes this agent (current release 0.14.x), so a purchase is audio plus agent for one price. The agent is free software (MIT) and works with any set of audio files laid out like a pack; the pack audio is licensed separately.
+> Speakvora sells offline voice packs (audio you ship once). Every full pack in the 12 pack languages includes this agent (see the latest release on the Releases page), so a purchase is audio plus agent for one price. The agent is free software (MIT) and works with any set of audio files laid out like a pack; the pack audio is licensed separately.
 
 ## See it first
 **Live demo in your browser, nothing to install:** https://speakvora.com/#demo . A made-up clinic's app on one side and the dashboard this agent ships with on the other. Tap an action, switch the internet off, tap again, and watch sends wait in a queue and go out in order when the connection returns.
@@ -52,7 +52,7 @@ Texts, calls and WhatsApp through Twilio, or any provider's web API (`sms_provid
 
 **Optional reasoning with your own AI key.** For requests the rules cannot handle ("review these conversations and decide who needs a refund"), a workflow can add a `reason` step that asks a model you choose: any OpenAI-compatible endpoint (a local one such as Ollama keeps it fully offline) or Anthropic. Only the inputs the workflow chooses are sent, with emails, phone numbers and card numbers redacted. The model only proposes; proposals wait in the dashboard with the reasoning and what was sent, and run as normal journaled sends only after a person approves. You pay your own provider; we charge nothing. See [docs/reasoning.md](docs/reasoning.md) and [examples/refund-review](examples/refund-review).
 
-## What is new (0.6 to 0.14)
+## What is new (see CHANGELOG.md for every release)
 * A smarter AI: it learns your business (you review it), works inside limits you set, and cannot refund, charge or delete. A caller can always reach a person.
 * Add your own phrases in the dashboard, let your AI suggest more, and let repeated AI lines become instant library lines.
 * A phone menu people can speak to, with emergencies and secrets handled, for every industry; service-business follow-ups with tasks for your team.

@@ -18,8 +18,9 @@ SYSTEM = ("You organise what a small business's own website says into ONE JSON o
           '"categories": [{"name": "menu section, product group or service group", "items": [{"name": "", "price": "exactly as written or empty", "description": "short"}]}], '
           '"policies": ["rules customers should know, only if stated"], "faqs": [{"q": "question a customer would ask", "a": "answer taken ONLY from the pages"}], "unknowns": ["things customers likely ask that the pages do not answer"]}. '
           "Use only what is on the pages. Never invent a price, hour, address or policy: leave it empty or list it under unknowns. Keep prices exactly as written. No emails, no phone numbers, nothing about customers.")
-PHRASE_SYSTEM = ("You write short phrases a business says to customers, from its profile. Reply with ONE JSON object only: {\"lines\": [\"...\"]}. Up to 30 lines, each 20 to 160 characters, plain spoken sentences a receptionist would say "
-                 "(greetings, what you offer, hours, where to find you, how booking or ordering works, policies, thanks, hand-offs), using ONLY facts in the profile. No names of people, no email addresses, no web links, no card or account numbers.")
+PHRASE_SYSTEM = ("You write short phrases a business says to customers, from its profile and price list. Reply with ONE JSON object only: {\"lines\": [\"...\"]}. Up to 50 lines, each 20 to 170 characters, plain spoken sentences a receptionist "
+                 "would say. Make them specific to THIS business: name its real products, dishes or services and say their prices exactly as written, describe current offers and specials, give the hours and address, say how booking or ordering works, "
+                 "its policies, thanks and hand-offs. One fact per phrase, so each can be played on its own. Use ONLY facts that are in the profile and price list; never invent a price, offer or name. No names of people, no email addresses, no web links, no card or account numbers.")
 _lock = threading.Lock()
 
 
@@ -309,7 +310,7 @@ def menu_text(ext):
     return "\n".join(lines)
 
 
-def apply(agent, facts=(), profile=True, menu=True, faqs=True):
+def apply(agent, facts=(), profile=True, menu=True, faqs=True, daily=False):
     """Step 5: what the owner ticked is saved. Facts fill the business details; the profile is approved for the AI; the menu and prices and the website text become things the AI may answer from."""
     from . import brain, connect as SU
     d = load(agent)
@@ -328,7 +329,7 @@ def apply(agent, facts=(), profile=True, menu=True, faqs=True):
     if d.get("text"):
         host = urllib.parse.urlparse(d.get("site", "")).hostname or "website"
         KN.add_text(agent, host + " (whole site)", d["text"], "site", d.get("site", "")); done.append("website text")
-    d.update(step="approved", error=""); d["consent"]["approved"] = int(time.time()); d.pop("text", None); _log(d, "Saved: " + "; ".join(done)); save(agent, d)
+    d.update(step="approved", error=""); d["consent"]["approved"] = int(time.time()); d.pop("text", None); d["daily"] = {"on": bool(daily), "last": time.time()}; _log(d, "Saved: " + "; ".join(done) + (". I will check your website every day." if daily else ".")); save(agent, d)
     agent.state.log(workflow="scan", action="apply", status="ok", dry_run=False, saved=len(done))
     return d
 
@@ -354,8 +355,104 @@ def suggest_phrases(agent):
         l = re.sub(r"\s+", " ", str(l)).strip()
         if 20 <= len(l) <= 190 and not learned.USER_BAD.search(l) and learned.norm(l) not in have and l not in out:
             out.append(l)
-    d["phrases"] = out[:30]; d["step"] = "phrases" if out else d.get("step", "approved"); d["phrase_chars"] = sum(len(x) for x in d["phrases"]); _log(d, f"{len(d['phrases'])} phrase ideas ready."); save(agent, d)
+    src_lines = [x for x in re.split(r"[\n.;]", (prof + "\n" + menu_text(ext)).lower()) if x.strip()]
+    good = [l for l in out if grounded(l, src_lines)]                      # a price, time or number in a phrase must sit in the same line of what the business approved as the thing it is about
+    d["phrases"] = good[:50]; d["step"] = "phrases" if good else d.get("step", "approved"); d["phrase_chars"] = sum(len(x) for x in d["phrases"]); d["phrase_cost_usd"] = round(d["phrase_chars"] * 3 / 1e6, 4); _log(d, f"{len(d['phrases'])} phrase ideas ready."); save(agent, d)
     return d
+
+
+ANTICIPATE_SYSTEM = ("You prepare a small business's phone and text assistant BEFORE customers ask. From the business facts below, think of the questions real customers of this kind of business ask most "
+                     "(hours, where, prices, what is offered, booking or ordering, policies, how long, payment, parking, accessibility, hand-offs). Reply with ONE JSON object only: "
+                     '{"questions": ["up to 25 likely customer questions"], "lines": ["up to 25 phrases"]}. Mix for 25: about 15 short fact answers, 5 acknowledgements of a request (booking, order, issue), 3 clarifying prompts and 2 hand-offs to a person; leave greetings and thanks out, the bundle already has them. Each line is 20 to 170 characters, one plain spoken sentence a receptionist would say, answering one question or handling one moment '
+                     "(greeting, one moment, thanks, taking a booking, handing to a person). Use ONLY facts that appear below: real names, real prices exactly as written, real hours. Where the business has not said, write a safe line that "
+                     "promises nothing, such as offering to check and get back to them, and put that question in no numbers. Never invent a price, offer, name or time. No people's names, emails, links, card or account numbers.")
+
+
+STOPW = set("the and for with from open close closed every each day days week daily today tonight only just now here there please will have has are our you your this that dollars dollar price prices cost costs person people per about around hours hour".split())
+ABSOLUTE = r"\b(free|always|never|guaranteed|complimentary|no charge)\b"
+
+
+def grounded(line, src_lines):
+    """A phrase is kept only if every number in it sits in ONE line of the business's own text together with a content word the phrase is about (so '$20 lunch' and '$35 dinner' in the source cannot become
+    'dinner is $20'), and every absolute (free, always, never, guaranteed) is in the source too. Still not proof of truth: the owner reviews before anything is recorded."""
+    low = line.lower()
+    words = {w for w in re.findall(r"[a-z]{4,}", low) if w not in STOPW}
+    for n in [n.strip(".,:") for n in re.findall(r"\d[\d.,:]*", line)]:
+        if not any(n in sl and (not words or words & set(re.findall(r"[a-z]{4,}", sl))) for sl in src_lines):
+            return False
+    return all(any(w in sl for sl in src_lines) for w in re.findall(ABSOLUTE, low))
+
+
+def _context(agent):
+    """Everything the agent already holds about the business, as plain text for the owner's own AI (redacted first)."""
+    from . import brain
+    out = [f"{i['label']}: {i['value']}" for i in known(agent) if i["label"] != "Already read"]
+    prof = brain.for_prompt(agent)
+    if prof:
+        out.append(prof)
+    d = load(agent); ext = d.get("extracted") or {}
+    if ext:
+        out.append(menu_text(ext)[:4000])
+    try:
+        wf = sorted({str((w.get("on") or {}).get("event") or w.get("name")) for w in agent.workflows if w.get("enabled", True)})[:30]
+        out.append("Things the assistant can do for customers: " + ", ".join(wf))
+    except Exception:
+        pass
+    for s in KN._idx(agent).get("sources", [])[:4]:
+        t = KN.source_text(agent, s) if hasattr(KN, "source_text") else ""
+        if t:
+            out.append(t[:1500])
+    return "\n".join(x for x in out if x)
+
+
+def anticipate(agent):
+    """The moment the owner's AI works: think ahead about what customers will ask and prepare phrase ideas from what is already known. Nothing is voiced and nothing leaves the owner's AI provider; recording needs the owner's OK."""
+    from . import learned
+    if not ai_ready(agent):
+        raise ValueError("Connect your AI first (Connect, Your AI).")
+    d = load(agent)
+    if d.get("auto_busy"):
+        return d
+    d["auto_busy"] = True; save(agent, d)
+    try:
+        ctx = _context(agent)
+        raw, _u = R._chat(agent.cfg["reasoner"], ANTICIPATE_SYSTEM, R.redact(ctx[:9000], None), 2200)
+        m = re.search(r"\{.*\}", raw or "", re.S)
+        try:
+            j = json.loads(m.group(0)) if m else {}
+        except ValueError:
+            j = {}
+        have = {learned.norm(i["text"]) for i in learned.load(agent).get("items", [])}
+        src = ctx.lower(); src_lines = [x for x in re.split(r"[\n.;]", src) if x.strip()]; good = []
+        for l in j.get("lines", []):
+            l = re.sub(r"\s+", " ", str(l)).strip()
+            if not (20 <= len(l) <= 190) or learned.USER_BAD.search(l) or learned.norm(l) in have or l in good:
+                continue
+            if grounded(l, src_lines):                                      # every number must sit in the same line of the business's own text as the item it is about
+                good.append(l)
+        d = load(agent)
+        d["phrases"] = good[:30]; d["phrase_chars"] = sum(len(x) for x in d["phrases"]); d["phrase_cost_usd"] = round(d["phrase_chars"] * 3 / 1e6, 4)
+        d["anticipated"] = {"at": int(time.time()), "questions": [str(q)[:140] for q in j.get("questions", [])][:25], "count": len(d["phrases"])}
+        d["auto_ready"] = bool(good); _log(d, f"Thought ahead about customer questions: {len(good)} phrase ideas ready." if good else "Thought ahead, but there was not enough business information yet for safe phrases.")
+        save(agent, d)
+        agent.state.log(workflow="scan", action="anticipate", status="ok", dry_run=False, ideas=len(good))
+    finally:
+        d = load(agent); d.pop("auto_busy", None); save(agent, d)
+    return load(agent)
+
+
+def start_anticipating(agent, force=False):
+    """Only after the owner says OK (their business details go to their own AI provider): runs in the background so the dashboard never waits."""
+    d = load(agent)
+    if d.get("auto_busy") or (d.get("anticipated") and not force):
+        return False
+    def go():
+        try:
+            anticipate(agent)
+        except Exception as e:
+            dd = load(agent); dd.pop("auto_busy", None); _log(dd, "Could not think ahead: " + str(e)[:120]); save(agent, dd)
+    threading.Thread(target=go, daemon=True).start()
+    return True
 
 
 def add_phrases(agent, lines):
@@ -364,8 +461,14 @@ def add_phrases(agent, lines):
     chosen = [str(x) for x in (lines or []) if str(x).strip()]
     if not chosen:
         raise ValueError("Choose at least one phrase.")
-    res = learned.add_lines(agent, "\n".join(chosen[:30])); d = load(agent)
-    d["phrases"] = [p for p in d.get("phrases", []) if p not in chosen]; d["step"] = "done" if not d["phrases"] else d.get("step"); d["consent"]["voiced"] = int(time.time()); _log(d, f"Added {len(res['added'])} phrases to the library."); save(agent, d)
+    res = {"added": [], "skipped": []}
+    for i in range(0, min(len(chosen), 60), 30):                              # the library takes up to 30 lines at a time
+        part = learned.add_lines(agent, "\n".join(chosen[i:i + 30])); res["added"] += part["added"]; res["skipped"] += part["skipped"]
+        if any("budget" in str(x.get("reason", "")) for x in part["skipped"]):
+            break
+    d = load(agent); said = {a["text"] for a in res["added"]}
+    d["voiced"] = (d.get("voiced") or []) + [{"text": t, "at": int(time.time())} for t in chosen if t in said]
+    d["phrases"] = [p for p in d.get("phrases", []) if p not in set(chosen)]; d["auto_ready"] = bool(d["phrases"] and d.get("auto_ready")); d["step"] = "done" if not d["phrases"] and d.get("step") == "phrases" else d.get("step"); d["consent"]["voiced"] = int(time.time()); _log(d, f"Added {len(res['added'])} phrases to the library."); save(agent, d)
     return {"result": res, "state": load(agent)}
 
 
@@ -381,4 +484,163 @@ def view(agent):
     d = load(agent)
     return {"step": d.get("step", "idle"), "known": known(agent), "known_site": known_site(agent), "site": d.get("site", ""), "candidates": d.get("candidates", []), "pages": d.get("pages", []), "extracted": d.get("extracted", {}),
             "fact_suggestions": d.get("fact_suggestions", []), "phrases": d.get("phrases", []), "phrase_chars": d.get("phrase_chars", 0), "error": d.get("error", ""), "log": d.get("log", [])[-8:], "ai_ready": ai_ready(agent),
-            "provider": str((agent.cfg.get("reasoner") or {}).get("provider") or "your AI provider")}
+            "checks": d.get("checks", []), "daily": (d.get("daily") or {"on": False}), "updates": d.get("updates"), "stale": d.get("stale", []), "phrase_cost_usd": d.get("phrase_cost_usd", 0), "auto_ready": bool(d.get("auto_ready")), "auto_busy": bool(d.get("auto_busy")), "anticipated": d.get("anticipated"), "provider": str((agent.cfg.get("reasoner") or {}).get("provider") or "your AI provider")}
+
+
+# ---- 7. checking what the AI now says (the owner confirms the data) ----------------------------------------------------------------------------------------------------------------------------
+def make_checks(agent):
+    """Questions a customer would ask, taken from what was just learned. The owner asks the AI each one, sees the answer and its sources, and says whether it is right; a wrong answer is fixed in the owner's own words."""
+    d = load(agent); ext = d.get("extracted") or {}; qs = ["What are your hours?", "Where are you located?"]
+    for c in (ext.get("categories") or [])[:6]:
+        for it in c["items"][:1]:
+            if it.get("price"):
+                qs.append(f"How much is the {it['name']}?")
+    qs += [f["q"] for f in (ext.get("faqs") or [])[:4]]
+    qs += [u for u in (ext.get("unknowns") or [])[:2]]
+    seen, out = set(), []
+    for q in qs:
+        k = re.sub(r"\W", "", q.lower())
+        if k not in seen and q.strip():
+            seen.add(k); out.append({"q": q.strip()[:200], "answer": "", "sources": [], "status": "new"})
+    d["checks"] = out[:10]; _log(d, f"{len(d['checks'])} questions ready to check."); save(agent, d)
+    return d
+
+
+def check_ask(agent, i):
+    from . import converse
+    d = load(agent); ch = d.get("checks") or []
+    if not (0 <= int(i) < len(ch)):
+        raise ValueError("No such question.")
+    r = converse.try_it(agent, ch[int(i)]["q"])
+    ch[int(i)].update(answer=r["answer"], sources=[str(s)[:80] for s in (r.get("sources") or [])][:4], handoff=bool(r.get("handoff")), status="asked"); save(agent, d)
+    return d
+
+
+def check_mark(agent, i, ok, fix=""):
+    d = load(agent); ch = d.get("checks") or []
+    if not (0 <= int(i) < len(ch)):
+        raise ValueError("No such question.")
+    c = ch[int(i)]
+    if ok:
+        c["status"] = "right"
+    else:
+        fix = " ".join(str(fix or "").split())[:500]
+        if len(fix) < 3:
+            raise ValueError("Type the right answer, in your own words.")
+        KN.add_qa(agent, c["q"], fix); c.update(status="fixed", answer=fix)
+    _log(d, ("Confirmed: " if ok else "Corrected: ") + c["q"][:80]); save(agent, d)
+    return d
+
+
+# ---- every day: has the website changed? ------------------------------------------------------------------------------------------------------------------------------------------------------
+def set_daily(agent, on):
+    d = load(agent); dl = d.get("daily") or {"on": False, "last": 0}; dl["on"] = bool(on); d["daily"] = dl; _log(d, "Daily website check " + ("on" if on else "off")); save(agent, d); return d
+
+
+def _items(ext):
+    out = {}
+    for c in (ext.get("categories") or []):
+        for it in c["items"]:
+            out[it["name"].strip().lower()] = {"name": it["name"], "price": it.get("price", ""), "category": c["name"]}
+    return out
+
+
+def _norm(s):
+    return re.sub(r"\W", "", str(s or "").lower())
+
+
+def diff(old, new):
+    """What changed between what the owner approved and what the website says now: prices, new and removed items, hours, address, policies."""
+    a, b = _items(old), _items(new); out = []
+    for k, it in b.items():
+        if k not in a:
+            out.append({"kind": "new", "item": it["name"], "price": it["price"], "text": f"New: {it['name']}" + (f" ({it['price']})" if it["price"] else "")})
+        elif it["price"] and a[k]["price"] and _norm(it["price"]) != _norm(a[k]["price"]):
+            out.append({"kind": "price", "item": it["name"], "old": a[k]["price"], "new": it["price"], "text": f"Price change: {it['name']} was {a[k]['price']}, now {it['price']}"})
+    out += [{"kind": "removed", "item": it["name"], "text": f"No longer listed: {it['name']}"} for k, it in a.items() if k not in b]
+    for key, label in (("hours", "Opening hours"), ("address", "Address")):
+        o, n = (old.get("business") or {}).get(key), (new.get("business") or {}).get(key)
+        if o and n and _norm(o) != _norm(n):
+            out.append({"kind": key, "old": o, "new": n, "text": f"{label} changed: was {o}, now {n}"})
+    op = {_norm(x) for x in old.get("policies") or []}
+    out += [{"kind": "policy", "text": "New rule: " + x} for x in (new.get("policies") or []) if _norm(x) not in op]
+    return out[:60]
+
+
+def daily_tick(agent, fetch=None):
+    """Called every minute by the agent; acts at most once a day, and only if the owner switched the daily check on and approved a site."""
+    d = load(agent); dl = d.get("daily") or {}
+    if not dl.get("on") or d.get("step") not in ("approved", "phrases", "done") or not d.get("site") or not ai_ready(agent) or time.time() - float(dl.get("last") or 0) < 86400:
+        return False
+    dl["last"] = time.time(); d["daily"] = dl; save(agent, d)
+    threading.Thread(target=daily_run, args=(agent, fetch), daemon=True).start(); return True
+
+
+def daily_run(agent, fetch=None):
+    d = load(agent)
+    try:
+        pages = crawl(agent, d["site"], 40, fetch, 0.6 if fetch is None else 0)
+        if not pages:
+            raise ValueError("the website could not be read today")
+        new = extract(agent, pages); changes = diff(d.get("extracted") or {}, new)
+        d = load(agent)
+        if changes:
+            d["updates"] = {"found": int(time.time()), "changes": changes, "extracted": new, "text": _joined(pages)[:300000], "fact_suggestions": fact_suggestions(agent, new)}; _log(d, f"Your website changed: {len(changes)} changes waiting for your OK.")
+        else:
+            _log(d, "Checked your website: nothing changed.")
+        d["daily"]["checked"] = int(time.time()); save(agent, d)
+        agent.state.log(workflow="scan", action="daily", status="changes" if changes else "same", dry_run=False, changes=len(changes))
+    except Exception as e:  # noqa: BLE001
+        d = load(agent); _log(d, "Daily check could not finish: " + str(e)[:120]); save(agent, d)
+    return load(agent)
+
+
+def apply_updates(agent, facts=()):
+    """The owner said yes to the changes: the price list and site text are replaced, hours and address updated if ticked, the profile refreshed, lines that quote an old price are listed to remove, and new phrase ideas are made for what is new."""
+    from . import brain, connect as SU, learned
+    d = load(agent); up = d.get("updates")
+    if not up:
+        raise ValueError("There is nothing new to review.")
+    old, new = d.get("extracted") or {}, up["extracted"]; done = []
+    for s in list(KN._idx(agent).get("sources", [])):
+        if (s.get("title") or "") == "Menu and prices from your website" or str(s.get("title") or "").endswith("(whole site)"):
+            KN.remove(agent, s["id"])
+    if new.get("categories"):
+        KN.add_text(agent, "Menu and prices from your website", menu_text(new), "note", d.get("site", "")); done.append("price list")
+    if up.get("text"):
+        KN.add_text(agent, (urllib.parse.urlparse(d.get("site", "")).hostname or "website") + " (whole site)", up["text"], "site", d.get("site", "")); done.append("website text")
+    vals = {s["key"]: s["value"] for s in up.get("fact_suggestions", []) if s["key"] in facts}
+    if vals:
+        SU.save(agent, "business", vals); done.append("details: " + ", ".join(sorted(vals)))
+    prof = {"summary": new.get("summary", ""), "tone": new.get("tone", ""), "hours": (new.get("business") or {}).get("hours", ""), "services": [c["name"] + ": " + ", ".join(i["name"] for i in c["items"][:8]) for c in new.get("categories", [])][:25],
+            "policies": new.get("policies", []), "faqs": new.get("faqs", []), "unknowns": new.get("unknowns", [])}
+    brain.edit(agent, prof); brain.approve(agent); done.append("profile")
+    stale = []
+    names = {c["item"].lower() for c in up["changes"] if c["kind"] in ("price", "removed")}
+    lib = {learned.norm(i["text"]): i["id"] for i in learned.load(agent).get("items", [])}
+    for v in d.get("voiced") or []:
+        if any(n in v["text"].lower() for n in names) and learned.norm(v["text"]) in lib:
+            stale.append({"text": v["text"], "id": lib[learned.norm(v["text"])]})
+    d.update(extracted=new, updates=None, stale=stale); _log(d, "Updated: " + "; ".join(done) + (f". {len(stale)} recorded lines quote an old price." if stale else ".")); save(agent, d)
+    try:
+        suggest_phrases(agent)
+    except Exception:  # noqa: BLE001 - new phrase ideas are optional
+        pass
+    return load(agent)
+
+
+def dismiss_updates(agent):
+    d = load(agent); d["updates"] = None; _log(d, "Kept what you approved before."); save(agent, d); return d
+
+
+def remove_stale(agent, ids):
+    """The owner chose to remove recorded lines that quote an old price."""
+    from . import learned
+    d = load(agent); gone = 0
+    for s in d.get("stale") or []:
+        if s["id"] in (ids or []):
+            try:
+                learned.remove(agent, s["id"]); gone += 1
+            except Exception:  # noqa: BLE001
+                pass
+    d["stale"] = [s for s in d.get("stale") or [] if s["id"] not in (ids or [])]; _log(d, f"Removed {gone} outdated lines."); save(agent, d); return d

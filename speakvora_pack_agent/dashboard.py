@@ -353,20 +353,36 @@ def handle(agent, method, path, headers, raw):
         elif p.startswith("/dash/api/scan/") and method == "POST":
             from . import scan as SC
             b = json.loads(raw or b"{}"); act = p[len("/dash/api/scan/"):]
-            if act in ("search", "read", "phrases", "phrases/add") and b.get("ok") is not True:
+            if act in ("search", "read", "phrases", "phrases/add", "check/ask", "anticipate") and b.get("ok") is not True:
                 raise ValueError("Nothing happens until you say OK.")                      # every step that reads the web, sends text to your AI or spends your allowance asks first
-            if act == "search":
+            if act == "anticipate":
+                SC.start_anticipating(agent, force=True)
+            elif act == "search":
                 SC.search(agent)
             elif act == "site":
                 SC.set_site(agent, b.get("url"))
             elif act == "read":
                 SC.read_site(agent, max(5, min(int(b.get("max_pages") or 40), 60)))
             elif act == "apply":
-                SC.apply(agent, b.get("facts") or [], bool(b.get("profile", True)), bool(b.get("menu", True)), bool(b.get("faqs", True)))
+                SC.apply(agent, b.get("facts") or [], bool(b.get("profile", True)), bool(b.get("menu", True)), bool(b.get("faqs", True)), bool(b.get("daily")))
             elif act == "phrases":
                 SC.suggest_phrases(agent)
             elif act == "phrases/add":
                 SC.add_phrases(agent, b.get("lines") or [])
+            elif act == "checks":
+                SC.make_checks(agent)
+            elif act == "daily":
+                SC.set_daily(agent, bool(b.get("on")))
+            elif act == "updates/apply":
+                SC.apply_updates(agent, b.get("facts") or [])
+            elif act == "updates/dismiss":
+                SC.dismiss_updates(agent)
+            elif act == "stale/remove":
+                SC.remove_stale(agent, b.get("ids") or [])
+            elif act == "check/ask":
+                SC.check_ask(agent, b.get("i"))
+            elif act == "check/mark":
+                SC.check_mark(agent, b.get("i"), bool(b.get("ok")), b.get("fix") or "")
             elif act == "reset":
                 SC.reset(agent)
             else:

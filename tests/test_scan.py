@@ -77,6 +77,71 @@ class Steps(unittest.TestCase):
         SC.set_site(a, "https://bella.example/"); SC._run(a, "https://bella.example/", 10, fetch, 0); SC.apply(a, facts=[], profile=True, menu=True)
         d = SC.suggest_phrases(a); self.assertEqual(d["phrases"], ["Welcome to Bella Trattoria, how can I help you today?", "Dogs are welcome on our heated patio."])
 
+    def test_thinking_ahead_prepares_ideas_from_what_is_known_without_recording_and_rejects_invented_prices(self):
+        r = rig(); self.addCleanup(r.close); a = r.agent
+        a.cfg["facts"] = {"hours": "Open 11am to 10pm every day", "info": "Lunch is 20 dollars. Dinner is 35 dollars."}
+        R._chat = lambda cfg, system, user, mt=None: (json.dumps({"questions": ["What time do you open?"], "lines": ["We are open 11am to 10pm every day of the week.", "Our pasta special is only 9.99 dollars today.", "Dinner is 20 dollars per person here.", "One moment while I check that for you."]}), {})
+        d = SC.anticipate(a)
+        self.assertEqual(d["phrases"], ["We are open 11am to 10pm every day of the week.", "One moment while I check that for you."])
+        self.assertTrue(d["auto_ready"]); self.assertEqual(d["anticipated"]["questions"], ["What time do you open?"]); self.assertFalse(d.get("voiced"))
+
+
+class Confirming(unittest.TestCase):
+    def test_the_owner_checks_what_the_ai_says_and_a_wrong_answer_is_fixed_in_their_words(self):
+        r = rig(); self.addCleanup(r.close); a = r.agent
+        old = (SC._get, R._chat); self.addCleanup(lambda: (setattr(SC, "_get", old[0]), setattr(R, "_chat", old[1])))
+        SC._get = lambda url, data=None, **k: fetch(url); R._chat = lambda cfg, system, user, mt=None: (json.dumps(AI), {})
+        SC.set_site(a, "https://bella.example/"); SC._run(a, "https://bella.example/", 10, fetch, 0); SC.apply(a, facts=[], profile=True, menu=True)
+        d = SC.make_checks(a); qs = [c["q"] for c in d["checks"]]
+        self.assertIn("What are your hours?", qs); self.assertTrue([q for q in qs if q.startswith("How much is the")]); self.assertIn("Are dogs allowed?", qs)
+        R._chat = lambda cfg, system, user, mt=None: (json.dumps({"say": "We are open every day until midnight.", "action": "continue", "do": []}), {})
+        d = SC.check_ask(a, 0); self.assertEqual(d["checks"][0]["status"], "asked"); self.assertIn("midnight", d["checks"][0]["answer"])
+        with self.assertRaises(ValueError): SC.check_mark(a, 0, False, "")
+        d = SC.check_mark(a, 0, False, "We are open Tuesday to Sunday, 5 to 10 PM."); self.assertEqual(d["checks"][0]["status"], "fixed")
+        self.assertEqual(KN.qa_match(a, "What are your hours?")[0], "We are open Tuesday to Sunday, 5 to 10 PM.")
+        self.assertEqual(SC.check_mark(a, 1, True)["checks"][1]["status"], "right")
+
+
+class EveryDay(unittest.TestCase):
+    def setUp(self):
+        self.old = (SC._get, R._chat); SC._get = lambda url, data=None, **k: fetch(url)
+        self.addCleanup(lambda: (setattr(SC, "_get", self.old[0]), setattr(R, "_chat", self.old[1])))
+
+    def approved(self, **kw):
+        r = rig(**kw); self.addCleanup(r.close); a = r.agent
+        R._chat = lambda cfg, system, user, mt=None: (json.dumps(AI), {})
+        SC.set_site(a, "https://bella.example/"); SC._run(a, "https://bella.example/", 10, fetch, 0); SC.apply(a, facts=[], profile=True, menu=True, daily=True)
+        return a
+
+    def test_the_diff_finds_price_new_removed_and_hours_changes(self):
+        new = json.loads(json.dumps(AI)); new["categories"][0]["items"][0]["price"] = "20"; new["categories"][0]["items"].append({"name": "Lasagna", "price": "21"}); new["categories"][0]["items"].pop(1); new["business"]["hours"] = "Monday to Sunday, 5 to 11 PM"
+        kinds = {(c["kind"], c.get("item")) for c in SC.diff(AI, new)}
+        self.assertEqual(kinds, {("price", "Spaghetti carbonara"), ("new", "Lasagna"), ("removed", "Penne arrabbiata"), ("hours", None)}); self.assertEqual(SC.diff(AI, AI), [])
+
+    def test_it_checks_once_a_day_only_if_switched_on_and_changes_wait_for_the_owner(self):
+        a = self.approved(); changed = json.loads(json.dumps(AI)); changed["categories"][0]["items"][0]["price"] = "20"
+        d = SC.load(a); d["daily"]["last"] = time.time() - 90000; SC.save(a, d)
+        R._chat = lambda cfg, system, user, mt=None: (json.dumps(changed), {})
+        SC.daily_run(a, fetch); d = SC.load(a)
+        self.assertEqual(d["updates"]["changes"][0]["kind"], "price"); self.assertIn("18", KN.text_all(a)); self.assertNotIn("carbonara, 20", KN.text_all(a))          # found, but nothing changed yet
+        d = SC.load(a); d["daily"]["last"] = time.time(); SC.save(a, d); self.assertFalse(SC.daily_tick(a))                      # just checked: not again today
+        SC.set_daily(a, False); d = SC.load(a); d["daily"]["last"] = 0; SC.save(a, d); self.assertFalse(SC.daily_tick(a))             # switched off: never
+
+    def test_saying_yes_updates_the_price_list_and_lists_the_old_price_lines_to_remove(self):
+        a = self.approved(); changed = json.loads(json.dumps(AI)); changed["categories"][0]["items"][0]["price"] = "20"
+        d = SC.load(a); d["voiced"] = [{"text": "Our spaghetti carbonara is 18 dollars.", "at": 1}, {"text": "Dogs are welcome on the patio.", "at": 1}]; SC.save(a, d)
+        from speakvora_pack_agent import learned
+        ld = learned.load(a); ld["items"].append({"id": "learned:abc", "text": "Our spaghetti carbonara is 18 dollars.", "file": "/nonexistent", "added": 1, "auto": False, "source": "typed"}); learned.save(a, ld)
+        d = SC.load(a); d["updates"] = {"found": 1, "changes": SC.diff(AI, changed), "extracted": changed, "text": "", "fact_suggestions": []}; SC.save(a, d)
+        R._chat = lambda cfg, system, user, mt=None: (json.dumps({"lines": ["Our spaghetti carbonara is 20 dollars."]}), {})
+        d = SC.apply_updates(a); self.assertIn("carbonara, 20", KN.text_all(a)); self.assertEqual([x["text"] for x in d["stale"]], ["Our spaghetti carbonara is 18 dollars."]); self.assertIsNone(d["updates"])
+        d = SC.remove_stale(a, ["learned:abc"]); self.assertEqual(d["stale"], []); self.assertFalse([i for i in learned.load(a)["items"] if i["id"] == "learned:abc"])
+
+    def test_phrases_are_made_from_the_businesss_own_products_and_an_invented_price_is_dropped(self):
+        a = self.approved()
+        R._chat = lambda cfg, system, user, mt=None: (json.dumps({"lines": ["Our spaghetti carbonara is 18 dollars and made fresh.", "Our tiramisu is 99 dollars tonight only.", "We are open Tuesday to Sunday from 5 to 10 PM."]}), {})
+        d = SC.suggest_phrases(a); self.assertEqual(d["phrases"], ["Our spaghetti carbonara is 18 dollars and made fresh.", "We are open Tuesday to Sunday from 5 to 10 PM."]); self.assertGreater(d["phrase_cost_usd"], 0)
+
 
 class Asking(unittest.TestCase):
     def call(self, a, path, body=None):
@@ -84,7 +149,7 @@ class Asking(unittest.TestCase):
 
     def test_every_step_that_reads_the_web_or_spends_something_asks_first(self):
         r = rig(); self.addCleanup(r.close); a = r.agent
-        for path in ("/dash/api/scan/search", "/dash/api/scan/read", "/dash/api/scan/phrases", "/dash/api/scan/phrases/add"):
+        for path in ("/dash/api/scan/search", "/dash/api/scan/read", "/dash/api/scan/phrases", "/dash/api/scan/phrases/add", "/dash/api/scan/check/ask"):
             code, out = self.call(a, path, {}); self.assertEqual(code, 400, path); self.assertIn("until you say OK", out["message"])
         self.assertEqual(self.call(a, "/dash/api/scan")[0], 200)
 

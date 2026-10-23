@@ -970,6 +970,11 @@ class Agent:
                 tracker.push_business(self)                                      # a business detail changed here: update every page
         except Exception:  # noqa: BLE001
             pass
+        try:
+            from . import scan
+            scan.daily_tick(self)                                                 # once a day: has the website the owner approved changed? (only if they switched it on; changes wait for their OK)
+        except Exception:  # noqa: BLE001
+            pass
         privacy.scrub(self)                                                      # customer details are cleaned from finished jobs and old log lines after the days you chose
         learned.auto(self)                                                       # repeated AI lines become library lines, inside the monthly budget, if switched on
         sharing.auto(self)                                                       # missing phrases go to Speakvora once a day, if the person agreed
