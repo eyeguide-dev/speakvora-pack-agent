@@ -775,6 +775,15 @@ def test(agent, card, opts=None):
             text = R.ping(agent.cfg.get("reasoner") or {})
             from . import brain
             learning = brain.start_learning(agent)                      # the AI works: start learning the business right away (in the background, for the owner to review)
+            from . import access as _ax
+            if _ax.view(agent)["by"] != "owner":                         # and decide, for this kind of business, how callers who are deaf or find speaking hard are helped (the owner can change it)
+                def _choose():
+                    try:
+                        _ax.suggest(agent)
+                    except Exception as e:  # noqa: BLE001
+                        agent.state.log(workflow="accessibility", action="ai_choice", status="error", dry_run=False, error=str(e)[:120])
+                import threading as _th
+                _t = _th.Timer(4.0, _choose); _t.daemon = True; _t.start()                      # a moment after the test settles, so the choice never races the test itself
             return _passed(agent, card, f"The AI answered: \"{text.strip()[:60]}\". Reasoning is ready; it only proposes, and you approve." + (" It is now learning your business: review what it learned in Library." if learning else ""))
         if card == "business":
             return {"ok": True, "message": "Looks complete." if connected(agent, "business") else "Add your business name."}

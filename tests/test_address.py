@@ -180,3 +180,50 @@ class DashboardApi(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrivateDashboard(unittest.TestCase):
+    """The permanent address never shows the dashboard to the internet. A second dashboard-only door (its own port on this computer, which only Tailscale Serve points at) opens it for the owner's own Tailscale devices, only when switched on; the access token is still required; eight wrong tokens lock the sender out."""
+    def start(self, address):
+        import random
+        from speakvora_pack_agent import server as SV
+        SV.bad_by.clear()
+        r = Rig(); self.addCleanup(r.close); r.agent.cfg["address"] = address; r.agent.cfg["listen"]["port"] = random.randint(20000, 30000)
+        srv = SV.serve(r.agent, "127.0.0.1", 0); threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (srv.shutdown(), SV.ensure_private(r.agent, stop=True)))
+        return r, srv.server_address[1], SV.private_port(r.agent)
+
+    def get(self, port, path, headers=None):
+        import http.client
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=10); c.request("GET", path, headers=headers or {}); x = c.getresponse(); b = x.read(); return x.status, b
+
+    SERVE = {"Host": "mac.tail1234.ts.net:8443", "X-Forwarded-For": "100.64.0.7", "Tailscale-User-Login": "owner@example.com"}
+
+    def test_off_by_default_there_is_no_private_door(self):
+        r, pub, priv = self.start({"provider": "tailscale"})
+        with self.assertRaises(OSError): self.get(priv, "/dashboard", self.SERVE)
+
+    def test_the_public_door_never_opens_the_dashboard_whatever_headers_a_stranger_sends(self):
+        r, pub, priv = self.start({"provider": "tailscale", "private_dashboard": True})
+        self.assertEqual(self.get(pub, "/dashboard", self.SERVE)[0], 403)                                                           # a faked Host and login header on the public door
+        self.assertEqual(self.get(pub, "/dashboard", {**self.SERVE, "Host": "mac.tail1234.ts.net"})[0], 403)
+        self.assertEqual(self.get(pub, "/dash/api/summary", {"X-Forwarded-For": "203.0.113.9"})[0], 403)
+
+    def test_the_private_door_needs_a_tailscale_login_and_still_the_token_and_serves_nothing_else(self):
+        r, pub, priv = self.start({"provider": "tailscale", "private_dashboard": True})
+        self.assertEqual(self.get(priv, "/dashboard", self.SERVE)[0], 200)
+        no_login = dict(self.SERVE); del no_login["Tailscale-User-Login"]
+        self.assertEqual(self.get(priv, "/dashboard", no_login)[0], 403)
+        self.assertEqual(self.get(priv, "/dash/api/summary", self.SERVE)[0], 401)                                                  # still needs the access token
+        self.assertEqual(self.get(priv, "/health", self.SERVE)[0], 404); self.assertEqual(self.get(priv, "/event", self.SERVE)[0], 404)
+
+    def test_only_listed_tailscale_logins_when_a_list_is_set(self):
+        r, pub, priv = self.start({"provider": "tailscale", "private_dashboard": True, "allowed_logins": ["boss@example.com"]})
+        self.assertEqual(self.get(priv, "/dashboard", self.SERVE)[0], 403)
+        self.assertEqual(self.get(priv, "/dashboard", {**self.SERVE, "Tailscale-User-Login": "Boss@Example.com"})[0], 200)
+
+    def test_wrong_tokens_lock_the_sender_out(self):
+        r, pub, priv = self.start({"provider": "tailscale", "private_dashboard": True})
+        codes = [self.get(priv, "/dash/api/summary", {**self.SERVE, "x-dashboard-token": "wrong" + str(i)})[0] for i in range(10)]
+        self.assertEqual(codes[:8], [401] * 8); self.assertEqual(codes[8:], [429, 429])
+        self.assertEqual(self.get(priv, "/dash/api/summary", {**self.SERVE, "x-dashboard-token": "wrong", "X-Forwarded-For": "100.64.0.9"})[0], 401)   # another sender is not locked

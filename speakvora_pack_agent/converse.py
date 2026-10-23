@@ -66,6 +66,8 @@ def _library(agent, text, history):
         if not t or len(t) > 220:
             continue
         s = len(words & set(re.findall(r"[a-z']{3,}", t.lower())))
+        if s and str(it.get("id", "")).startswith("learned:"):
+            s += 3                                                          # lines the owner recorded for their own business come first: they are exactly what the business wants said, and they play instantly
         if s:
             scored.append((s, it))
     scored.sort(key=lambda x: -x[0]); return [it for _s, it in scored[:10]]
@@ -174,6 +176,10 @@ def turn(agent, key, channel, text):
     s = _session(agent, key, channel); cfg = _cfg(agent)
     out = {"say": "", "line": "", "action": "continue", "why": ""}
     try:
+        from . import escalation
+        esc = escalation.check(agent, key, text, "sms" if channel == "sms" else "call")                  # support, customer service, a person, or a frustrated caller: a person now, no AI needed
+        if esc:
+            return {**out, "action": "handoff", "why": esc["why"], "say": esc["say"], "escalation": True}
         if G.wants_human(agent, text):
             return {**out, "action": "handoff", "why": "asked for a person"}
         if s["n"] >= cfg["max_turns"] or (channel == "call" and time.time() - s["t0"] > cfg["max_call_minutes"] * 60):

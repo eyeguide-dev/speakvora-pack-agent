@@ -64,7 +64,14 @@ Never put Access in front of the `hooks` address: Twilio cannot log in.
 2. In the agent open **Connect, Permanent address**, choose **Tailscale** and press **Check**. It shows your fixed name, something like `agent-mac.tail1234.ts.net`.
 3. Press **Turn on Funnel**. If Tailscale says Funnel is not enabled, open its admin page (login.tailscale.com), turn on **HTTPS certificates** and **Funnel**, then press **Turn on Funnel** again.
 4. When the checklist is green press **Use this address everywhere**.
-The dashboard stays on your computer with this option.
+The public address only receives messages; the dashboard is never shown on it.
+
+### Open your dashboard on your own phone or laptop (private)
+1. Install Tailscale on that phone or laptop and sign in with the **same Tailscale account**.
+2. In the agent, on the same screen, press **Open my dashboard on my devices**. The agent shows `https://your-name.ts.net:8443/dashboard`.
+3. Press **Copy link with my token**, send it to your own device once, and open it there. Bookmark it.
+Only devices signed in to your Tailscale can reach that address; nobody else on the internet can. It still needs your access token, and eight wrong tokens in ten minutes lock the sender out. The agent must still be running on your computer, so keep the computer on.
+Turn it off any time with **Turn off** on the same screen.
 
 ## Option 3: My own server
 If you already run a web server, point a name at this computer and forward it to `http://127.0.0.1:8787`. With Caddy that is two lines: `hooks.yourbusiness.com { reverse_proxy 127.0.0.1:8787 }`. In the agent choose **My own server**, type the name and press **Check**. The server must pass the real request through and use https.

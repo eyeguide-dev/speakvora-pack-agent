@@ -31,7 +31,7 @@ Time: about 10 minutes. Cost: free (Jira and Confluence free plans work for up t
 ![The bugs the agent created appear on your Jira board](atlassian-1-jira-board.jpg)
 
 ## Step 4. Choose what happens automatically
-Open the **Automations** tab. Connecting Jira switches these on:
+Open the **Your agent** tab. Connecting Jira switches these on:
 
 | When | What the agent does |
 |---|---|

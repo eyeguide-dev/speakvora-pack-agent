@@ -52,7 +52,7 @@ We tested the connection against Asterisk, the open-source phone system behind F
 - If your phone system sends key presses as SIP INFO messages instead of the normal in-call tones, the agent understands both.
 
 ## Make the menu your own
-The menu callers hear on this connection is the same one you edit in the **Automations** tab: change the keys, add "3 for billing" with its extension, and test it by pretending to call. See the Automations guide (the Full Guide button at the top of that tab).
+The menu callers hear on this connection is the same one you edit in the **Your agent** tab: change the keys, add "3 for billing" with its extension, and test it by pretending to call. See the Automations guide (the Full Guide button at the top of that tab).
 
 ## Callers can speak
 With a Speakvora key saved (Connect, Speakvora agent), callers can say what they need instead of pressing keys: "what are your hours", "I want to book", "let me talk to a person". The agent listens until the caller pauses, sends only that short piece of audio to Speakvora to turn it into text (about $0.0015 a minute, not stored), and then answers exactly as it does for a key press. The keypad always works, and asking for a person always transfers. Turn it off with **Let callers speak** under Advanced in step 3. English only for now. We tested the listening and the hand-off to the menu with a recorded stand-in for the speech service; the live transcription is checked when you place a first test call.

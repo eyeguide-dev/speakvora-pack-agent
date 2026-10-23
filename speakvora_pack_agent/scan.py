@@ -401,6 +401,11 @@ def grounded(line, src_lines):
     return all(any(w in sl for sl in src_lines) for w in re.findall(ABSOLUTE, low))
 
 
+def speakable(line):
+    """Times are written so the voice says them in full: '11 AM' becomes '11 a.m.' (a voice can read 'AM' as the word 'am' and drop it)."""
+    return re.sub(r"\b(\d{1,2}(?::\d{2})?)\s*([AaPp])\.?[Mm]\.?(?=\W|$)", lambda m: f"{m.group(1)} {m.group(2).lower()}.m.", line)
+
+
 def _context(agent):
     """Everything the agent already holds about the business, as plain text for the owner's own AI (redacted first)."""
     from . import brain
@@ -446,7 +451,7 @@ def anticipate(agent):
         have = {learned.norm(i["text"]) for i in learned.load(agent).get("items", [])}
         src = ctx.lower(); src_lines = [x for x in re.split(r"[\n.;]", src) if x.strip()]; good = []
         for l in j.get("lines", []):
-            l = re.sub(r"\s+", " ", str(l)).strip()
+            l = speakable(re.sub(r"\s+", " ", str(l)).strip())
             if not (20 <= len(l) <= 190) or learned.USER_BAD.search(l) or learned.norm(l) in have or l in good:
                 continue
             if grounded(l, src_lines):                                      # every number must sit in the same line of the business's own text as the item it is about

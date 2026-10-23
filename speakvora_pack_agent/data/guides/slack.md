@@ -36,7 +36,7 @@ A separate channel for each kind of news keeps your team from missing things. We
 ![The app has joined the channel](slack-3-bot-joined.jpg)
 
 5. Tell the agent which team goes where. In the agent folder's `agent.json`, under `slack`, add for example `"channels": {"#host": "#reservations", "#kitchen": "#orders", "#manager": "#urgent", "#billing": "#payments"}` and restart the agent. Workflows that tell "#host" now post in #reservations. (Channels need the bot token, not only a webhook.)
-6. Send a test event from the dashboard (Automations, Test). The message appears in the right channel.
+6. Send a test event from the dashboard (Your agent, Agent preview, App event). The message appears in the right channel.
 
 ![A reservation message arrives in #reservations](slack-4-message-arrives.jpg)
 

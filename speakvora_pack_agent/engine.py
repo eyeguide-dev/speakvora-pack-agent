@@ -29,6 +29,15 @@ KEEP_WHILE_BLOCKED = ("quiet_hours", "hourly_limit", "recipient_daily_limit")   
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
+def escalation_has_other_intent(said):
+    """True when a hard-of-hearing caller also asked for something (hours, booking...), so the agent answers that, louder, instead of only apologising."""
+    from . import access as _a
+    rest = " " + _a._norm(said) + " "
+    for p in _a.HARD_OF_HEARING + ["sorry", "i", "am", "very", "well", "you", "could", "can", "please", "a", "bit", "little", "my", "is", "was", "the", "hard", "of", "hearing", "hear", "that", "again", "speak", "up", "louder", "slower", "yes", "no", "hello", "hi"]:
+        rest = rest.replace(" " + _a._norm(p).strip() + " ", " ")
+    return len(rest.split()) >= 2
+
+
 class Agent:
     def __init__(self, cfg, now=time.time):
         self.cfg, self.now = cfg, now
@@ -1109,7 +1118,7 @@ class Agent:
             if person:
                 ctx = self.ctx(sms={"from": who, "body": body}, customer={"phone": who, "sms_consent": True}); out = {"reply": "", "play": []}
                 self.run_actions(person["name"], person.get("do", []), ctx, out); reply = out["reply"]
-            reply = (converse.disclosure(self) if first else "") + (r["say"] if (r["say"] and not r.get("why")) else (reply or converse.HANDOFF_TEXT))        # the AI's own "I don't have that information, let me get someone" when it chose a person; the safe fixed wording when a check or limit did
+            reply = (converse.disclosure(self) if first else "") + (r["say"] if (r["say"] and (not r.get("why") or r.get("escalation"))) else (reply or converse.HANDOFF_TEXT))        # the AI's own "I don't have that information, let me get someone" when it chose a person; the safe fixed wording when a check or limit did
         elif r["say"]:
             m["outcome"] = "answered"; reply = (converse.disclosure(self) if first else "") + r["say"]; self._do_ai_actions(who, r.get("do"), "text")
             if r["action"] == "end":
@@ -1238,9 +1247,63 @@ class Agent:
         v = (self.cfg.get("twilio") or {}).get("speech_enhanced")
         return bool(v) if v is not None else self.profile in ("clinic", "pharmacy", "dispensary")
 
+    def _miss_line(self):
+        """What the caller hears when nothing they said matched. Someone who is struggling to be heard (a stutter, slow speech) is never told off: they are given time and a text is offered."""
+        if getattr(getattr(self, "_tl", None), "patient", False):
+            return self._instant_say("No problem, take your time. If it is easier, say text me, or press star, and I will text you.")
+        return self._vp("call_not_understood", "Sorry, I did not catch that.")
+
+    def _instant_say(self, text):
+        """One sentence the caller hears right now: the bundle voice when that exact sentence is already voiced, otherwise the phone provider's voice (no waiting)."""
+        from xml.sax.saxutils import escape
+        try:
+            url = self.audio.cached_dynamic(text, True)
+        except Exception:  # noqa: BLE001
+            url = ""
+        return f"<Play>{escape(url)}</Play>" if url else f"<Say>{escape(text)}</Say>"
+
+    def _escalate_call(self, params, menu, esc, said):
+        """Connect the caller to a person now: "Ok, I'll be connecting you to our support department now." then the staff phone (or the department's own number from your phone menu)."""
+        m = self._m(); m["outcome"] = "handoff"; m["handoff"] = True; m["wf"] = m.get("wf") or "escalation"
+        self.state.log(workflow="escalation", action="connect", status="done", dry_run=self.dry, why=esc["why"], dept=esc.get("dept") or "")
+        d = self._speech_choice(menu, said); opts = menu.get("options") or {}
+        digit = d if d and d in opts else "0"
+        p2 = {k: v for k, v in params.items() if k not in ("SpeechResult", "Digits")}
+        inner = self._handle_call(p2, "menu", digit)
+        i = inner.find("<Dial")
+        if i >= 0:
+            return "<Response>" + self._instant_say(esc["say"]) + inner[i:]
+        return inner                                                                    # nobody to connect (no staff phone): the menu's own honest message and call-back line
+
+    def _text_instead(self, params, menu, acc):
+        """A caller who is deaf, cannot speak easily, or uses a relay service: say so kindly, text them, tell the team when this business wants that, and carry on in writing."""
+        from . import access
+        who = S.norm_phone(params.get("From", "")); m = self._m(); m["outcome"] = "text_instead"; m["wf"] = "accessibility"
+        access.mark(self, params.get("CallSid") or params.get("From", ""), patient=True)
+        b = str(self.cfg.get("business") or "").strip(); body = (f"Hi, this is {b}'s automated assistant. " if b and "YOUR-" not in b else "Hi, this is our automated assistant. ") + "You asked to continue by text. Reply here with what you need and we will help you."
+        ok = False
+        from . import connect as _cn
+        can_text = self.dry or any(c.get("ready") for c in _cn.capabilities(self) if c.get("id") == "texts_out")          # never promise a text that cannot be sent
+        if who and can_text:
+            try:
+                self.run_actions("accessibility", [{"action": "sms", "to": who, "text": body, "raw": True}], self.ctx(customer={"phone": who, "sms_consent": True}), {"reply": "", "play": []}); ok = True
+            except Exception as e:  # noqa: BLE001
+                self.state.log(workflow="accessibility", action="text_instead", status="error", dry_run=self.dry, error=str(e)[:120])
+        self.state.log(workflow="accessibility", action="text_instead", status="queued" if ok else "failed", dry_run=self.dry, preset=access.preset(self))
+        if ok and access.settings(self)["alert_team"]:
+            try:
+                self._do_ai_actions(who, [{"type": "notify", "text": f"A caller asked to continue by text because they are deaf or find speaking hard. They have been texted. Please watch for their reply."}], "call")
+            except Exception:  # noqa: BLE001
+                pass
+        if not ok:
+            return self._escalate_call(params, menu, {"why": "asked for text", "dept": "", "say": "Ok, I'll be connecting you to a team member now. Take your time."}, "")
+        return "<Response>" + self._instant_say(acc["say"]) + "<Hangup/></Response>"
+
     def _speech_timeout(self):
         """How long Twilio waits in silence before it takes what was said: 'auto', or seconds. Health bundles wait 2 seconds so a caller who pauses mid-sentence ("I have ... chest pain") is not cut off; set twilio.speech_timeout to change."""
         v = (self.cfg.get("twilio") or {}).get("speech_timeout")
+        if not v and (((self.cfg.get("guardrails") or {}).get("patient")) or getattr(getattr(self, "_tl", None), "patient", False)):
+            return "4"                                                                  # patient mode: a caller who speaks slowly or with difficulty is not cut off
         return str(v) if v else ("2" if self.profile in ("clinic", "pharmacy", "dispensary") else "auto")
 
     def _speech_on(self):
@@ -1280,12 +1343,20 @@ class Agent:
 
     def handle_call(self, params, step="start", digits=""):
         """An inbound call from Twilio -> TwiML (see _handle_call). Also writes the conversation record shown in the dashboard's Calls and texts."""
-        self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}
+        self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}; self._tl.patient = False; self._tl.loud = False
+        from . import access
+        _f = access.flags(self, params); self._tl.patient = _f["patient"]; self._tl.loud = _f["loud"]
         xml = self._handle_call(params, step, digits)
+        _f = access.flags(self, params)
+        if _f["loud"]:
+            xml = access.loudify(self, xml)
         try:
             from . import conversations as CV
             m = self._m(); who = S.norm_phone(params.get("From", "")); key = "call:" + (params.get("CallSid") or who)
             caller = ("Pressed " + str(digits).strip()) if str(digits or "").strip() else str(params.get("SpeechResult") or "")
+            und = m.get("understood")
+            if und and not str(digits or "").strip() and und.strip().lower() != re.sub(r"\s+", " ", caller).strip().lower():
+                caller = caller + "  (understood as: " + und + ")"
             CV.record(self, key, "call", who, caller if step != "start" else "", CV._spoken(self, xml), outcome=m.get("outcome") or ("answered" if step != "start" and m.get("digits") else ("unanswered" if step in ("menu2", "menu3") else None)),
                       intent=CV.INTENTS.get(str(m.get("digits") or "")) if m.get("digits") else None, handoff=bool(m.get("handoff")), private=bool(m.get("private")), withhold=bool(m.get("withhold")))
         except Exception:  # noqa: BLE001
@@ -1320,6 +1391,20 @@ class Agent:
             pre = [self._line_part(x) for x in self._required("menu")]
             return twiml_menu(urls, f"{base}/twilio/call/menu", say, pre=pre, speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu", hint_say=hint)
         said = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", str(params.get("SpeechResult", "")).lower())).strip()                  # "No, thanks." becomes "no thanks"
+        if said or step != "start":
+            from . import access
+            said0 = said
+            said, note, changed = access.prepare(self, params, said)
+            if changed and said:
+                self._m()["understood"] = said
+            if access.flags(self, params)["loud"] and (self.__dict__.get("_acc") or {}).get(params.get("CallSid") or params.get("From", ""), {}).get("loud_now") and not escalation_has_other_intent(said):
+                p2 = {k: v for k, v in params.items() if k not in ("SpeechResult", "Digits")}
+                again = self._handle_call(p2, "start") if True else ""
+                return again.replace("<Response>", "<Response>" + self._instant_say("Of course. I'll speak louder and slower. I can also text you if that is easier. Just say text me, or press star."), 1)
+            if note == "hold":                                                   # still speaking, or stopped mid-sentence: give them time, then join the parts
+                self._tl.patient = True
+                return "<Response>" + self._instant_say("Take your time. I'm listening.") + self._gather_open("", base, 12) + self._vp("call_goodbye", "Thanks for calling. Goodbye.") + "<Hangup/></Response>"
+            self._tl.patient = access.flags(self, params)["patient"]; self._tl.loud = access.flags(self, params)["loud"]
         if said and os.environ.get("SV_DEBUG_SPEECH"):
             self.state.log(workflow=wf["name"], action="call_speech", status="heard", dry_run=False, step=step, heard=said[:80])         # test aid only: what the caller said, never on by default
         from . import controls
@@ -1333,13 +1418,27 @@ class Agent:
         if guard == "secret":                                                      # passwords, codes and card numbers are never taken on this line
             self.record(wf["name"], "secret_refused", "said")
             return twiml_menu([], f"{base}/twilio/call/menu2", "", inner=self._vp("call_secret_refused", "Please do not say passwords, codes or card numbers on this call. I cannot take them. Press zero or say person for a team member, or press one for hours."), speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
+        if said and not (digits or "").strip():                                     # a caller who asks for support, customer service or a person, or sounds frustrated, is connected at once; one who cannot hear or speak easily gets the conversation by text
+            from . import escalation
+            ckey = "call:" + (params.get("CallSid") or S.norm_phone(params.get("From", "")))
+            acc = escalation.accessibility(self, said)
+            if acc:
+                return self._text_instead(params, menu, acc)
+            esc = escalation.check(self, ckey, said, "call")
+            if esc:
+                return self._escalate_call(params, menu, esc, said)
         if re.search(r"\b(stop calling|do not call|don't call|dont call|remove my number|take me off|take my number off|unsubscribe)\b", said):      # a spoken opt-out is applied at once, with no staff approval (the same as replying STOP)
             who = S.norm_phone(params.get("From", "")); self.state.opt_out(who); self.record(wf["name"], "opt_out", "voice")
             return "<Response>" + self._vp("opt_out_ack", "You have been unsubscribed and will not receive more messages or calls from us.") + "<Hangup/></Response>"
         bye = bool(re.search(r"\b(bye|goodbye|nope|nah|nothing|no thank you|no thanks|that's all|that is all|that's it|that is it|all done|all set|i'm good|im good|i am good)\b", said)) or said == "no"
         if step == "menu" and not (digits or "").strip() and re.fullmatch(r"(yes|yeah|yep|yup|sure|please|ok|okay|yes please|i do|i have)", said or "x") and self._speech_on():      # "yes" to "anything else?": give the options again
             return twiml_menu([], f"{base}/twilio/call/menu", "", inner=self._ask_line(menu), speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
+        if (digits or "").strip() == "*" and "*" not in (menu.get("options") or {}):
+            return self._text_instead(params, menu, {"say": "Ok. I'll text you now so we can continue by text. Please reply to that message."})
         digits = (digits or "").strip() or self._speech_choice(menu, said)
+        from . import access as _ac
+        if (not digits or digits not in (menu.get("options") or {})) and not self._ai_calls() and _ac.settings(self)["person_after"] == 1 and _ac.flags(self, params)["patient"] and "0" in (menu.get("options") or {}):
+            digits = "0"                                                                   # a business that puts a person first: a caller who is struggling to be understood is connected after one miss
         if digits not in ("", "0") and self._ai_calls() and len(said.split()) >= 6:        # a detailed request goes to your AI; a short one ("hours", "book a table") still gets the instant recorded answer
             digits = ""
         if bye and not digits and step in ("menu", "menu2"):
@@ -1350,7 +1449,7 @@ class Agent:
             if step in ("menu2", "menu3") and "0" in (menu.get("options") or {}):         # a second miss: do not leave the caller stuck, connect them to a person
                 digits = "0"
             else:
-                return twiml_menu([], f"{base}/twilio/call/menu2", "Sorry, I did not catch that. " + ((menu.get("speech_ask") or self.SPEECH_ASK) if self._speech_on() else T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack)), inner=(self._vp("call_not_understood", "Sorry, I did not catch that.") + self._ask_line(menu)) if self._speech_on() else None, speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
+                return twiml_menu([], f"{base}/twilio/call/menu2", "Sorry, I did not catch that. " + ((menu.get("speech_ask") or self.SPEECH_ASK) if self._speech_on() else T.render(menu.get("fallback_say", "Press 1 for hours, 0 for a person."), ctx, self.pack)), inner=(self._miss_line() + self._ask_line(menu)) if self._speech_on() else None, speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu3")
         opt = (menu.get("options") or {}).get(digits)
         self._m()["digits"] = digits
         xfer = [a for a in opt if isinstance(a, dict) and a.get("action") == "transfer"]
@@ -1397,7 +1496,7 @@ class Agent:
     def _gather_open(self, inner, base, timeout=8):
         """An open microphone: the caller may speak at any time (even over the assistant) or press a key."""
         from xml.sax.saxutils import quoteattr
-        return (f'<Gather input="dtmf speech" speechTimeout="{self._speech_timeout()}" speechModel="phone_call"' + (' enhanced="true"' if self._speech_enhanced() else '') + f' bargeIn="true" numDigits="1" action={quoteattr(base + "/twilio/call/menu")} method="POST" timeout="{timeout}">{inner}</Gather>')
+        return (f'<Gather input="dtmf speech" speechTimeout="{self._speech_timeout()}" speechModel="phone_call"' + (' enhanced="true"' if self._speech_enhanced() else '') + f' bargeIn="true" numDigits="1" action={quoteattr(base + "/twilio/call/menu")} method="POST" timeout="{max(timeout, 12) if getattr(getattr(self, "_tl", None), "patient", False) else timeout}">{inner}</Gather>')
 
     def _ai_voice(self, text, wait_ok=True, keep=False):
         """TwiML for one AI-written sentence in the bundle's own voice when it can be voiced in time, otherwise the phone provider's voice. Costs the owner's Speakvora characters (capped each month)."""
@@ -1483,6 +1582,9 @@ class Agent:
             return f'<Response>{self._filler(ckey)}<Redirect method="POST">{base}/twilio/call/wait/{pid}</Redirect></Response>'
         else:
             pending.pop(pid, None); xml = self._talk_xml({"say": "", "line": "", "action": "handoff", "why": "AI too slow"}, p0)
+        from . import access as _acc
+        if _acc.flags(self, p0)["loud"]:
+            xml = _acc.loudify(self, xml)
         try:
             from . import conversations as CV
             m = self._m(); who = S.norm_phone(p0.get("From", ""))
@@ -1509,7 +1611,7 @@ class Agent:
         base = self.cfg.get("public_base_url", ""); m = self._m(); m["wf"] = "call_ai"
         if r["action"] == "handoff":                                                       # a person: the menu's own zero option (staff transfer or call-back line)
             m["outcome"] = "handoff"; m["handoff"] = True
-            lead = r.get("xml") or (self._ai_voice(r["say"]) if r["say"] else "")
+            lead = r.get("xml") or ((self._instant_say(r["say"]) if r.get("escalation") else self._ai_voice(r["say"])) if r["say"] else "")
             inner = self._handle_call(params, "menu", "0")
             if "<Dial" in inner:
                 return inner.replace("<Response>", "<Response>" + lead, 1)

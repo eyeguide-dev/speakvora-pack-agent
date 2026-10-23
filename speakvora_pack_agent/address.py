@@ -239,6 +239,33 @@ def tailscale_funnel(port, binary=None):
     return False, "Tailscale said: " + text[:200]
 
 
+PRIVATE_PORT = 8443
+
+
+def tailscale_private_dashboard(port, on=True, binary=None):
+    """Tailscale Serve (not Funnel): the dashboard answers at https://<your name>.ts.net:8443 only for devices signed in to your own Tailscale. Returns (ok, plain message)."""
+    b = binary or tailscale_bin()
+    if not b:
+        return False, "Tailscale is not installed on this computer."
+    cmd = [b, "serve", "--bg", f"--https={PRIVATE_PORT}", f"http://127.0.0.1:{port + 1000}"] if on else [b, "serve", f"--https={PRIVATE_PORT}", "off"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=40)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"Tailscale did not answer: {type(e).__name__}."
+    text = (out.stdout + out.stderr).strip()
+    if out.returncode == 0:
+        return True, "Your dashboard now opens on your own devices." if on else "The private dashboard address is off."
+    return False, "Tailscale said: " + text[:200]
+
+
+def private_login_ok(agent, h):
+    """The private door is a separate listener that only Tailscale Serve forwards to. A request on it must carry the Tailscale login Serve adds, and (when the owner set a list) be one of those logins. The access token is still required on every call."""
+    a = settings(agent)
+    login = h.get("tailscale-user-login", "").strip().lower()
+    allowed = [str(x).lower() for x in (a.get("allowed_logins") or [])]
+    return bool(a.get("private_dashboard")) and bool(login) and (not allowed or login in allowed)
+
+
 # ---- what the dashboard shows and saves ---------------------------------------------------------------------------------------------------------------
 def _real(v):
     return bool(v) and "YOUR-" not in str(v) and not str(v).startswith("env:")
@@ -260,7 +287,8 @@ def view(agent):
     return {"provider": p, "hostname": a.get("hostname", ""), "dashboard_hostname": a.get("dashboard_hostname", ""), "remote_dashboard": bool(a.get("remote_dashboard")), "require_access": a.get("require_access", True) is not False,
             "token_set": _real(a.get("token")), "port": agent.cfg["listen"]["port"], "helper": {"found": bool(b), "install": install_commands()}, "tunnel": agent.tunnel.status() if hasattr(agent, "tunnel") else {},
             "tailscale": {"installed": bool(tailscale_bin()), "name": tailscale_name() if p == "tailscale" else ""}, "public_base_url": base if _real(base) else "", "wanted_base_url": want, "in_use": bool(want) and base == want,
-            "dashboard_url": ("https://" + a["dashboard_hostname"] + "/dashboard") if a.get("dashboard_hostname") and a.get("remote_dashboard") else ""}
+            "dashboard_url": ("https://" + a["dashboard_hostname"] + "/dashboard") if a.get("dashboard_hostname") and a.get("remote_dashboard") else "",
+            "private_dashboard": bool(a.get("private_dashboard")) and p == "tailscale", "private_url": ("https://" + tailscale_name() + ":" + str(PRIVATE_PORT) + "/dashboard") if a.get("private_dashboard") and p == "tailscale" and tailscale_name() else ""}
 
 
 def save(agent, values):
@@ -279,6 +307,8 @@ def save(agent, values):
             raise AddressError("The dashboard needs its own address, different from the webhook address, so that Cloudflare Access can protect only the dashboard.")
     if "remote_dashboard" in v:
         a["remote_dashboard"] = bool(v["remote_dashboard"]) and str(v["remote_dashboard"]).lower() not in ("false", "0", "off", "no")
+    if "private_dashboard" in v:
+        a["private_dashboard"] = bool(v["private_dashboard"]) and str(v["private_dashboard"]).lower() not in ("false", "0", "off", "no")
     if "require_access" in v:
         a["require_access"] = str(v["require_access"]).lower() not in ("false", "0", "off", "no")
     if a.get("remote_dashboard") and not a.get("dashboard_hostname"):

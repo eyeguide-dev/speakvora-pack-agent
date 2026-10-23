@@ -37,7 +37,7 @@ If you close the page before copying, open **Workflows** again, find your workfl
 3. Press **Save**, then **Send a test message**. The result should turn green, and within a few seconds a card appears in your Teams channel that says "Test message from your voice bundle's agent. If you can read this, Teams works."
 
 ## Step 4. Check that real alerts reach it
-1. Open **Automations** and press **Show the ready-made automations**. Anything that says **tells your team** now posts to Teams (and to Slack if you connected it too).
+1. Open **Your agent** and press **Explore ready-made automations**. Anything that says **tells your team** now posts to Teams (and to Slack if you connected it too).
 2. In **Test my agent**, under "Or something happens in your business", choose for example "A customer asks for a manager" and press **Try it**. The test shows what would be posted. Nothing is sent while the agent is in practice mode.
 3. When you press **Go live**, those messages start arriving in your channel. You can also trigger one on purpose: have your app send the event, or use the Test panel on a live agent.
 

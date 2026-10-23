@@ -1,16 +1,16 @@
-# Automations: phone menu, workflows and testing
+# Your agent: phone menu, automations, bookings and testing
 
-Everything your agent does by itself lives in one place: the **Automations** tab. Here you build your phone menu ("press 1 for hours, 2 to book, 3 for billing, 4 for shipping, 0 for a person"), make your own "when this happens, do this" automations, and test all of it by pretending to be a customer. Time: about 15 minutes. Cost: nothing extra.
+Everything your agent does by itself lives in one place: the **Your agent** tab. Here you build your phone menu ("press 1 for hours, 2 to book, 3 for billing, 4 for shipping, 0 for a person"), make your own "when this happens, do this" automations, and test all of it by pretending to be a customer. Time: about 15 minutes. Cost: nothing extra.
 
 ## Before you start
 - The agent is running and you can see the dashboard. Everything below happens in practice mode: nothing is sent, nobody is called.
 - Settings, Your business details has your business name, opening hours and your **on-call phone** (the person key 0 connects to). Key 0 cannot connect anyone until that number is set.
 - For a menu that customers can also *speak* to, connect your Speakvora key (Connect, Speakvora agent). Without it, callers use the keypad only.
 
-## Step 1. Open the Automations tab
-1. Press **Automations** in the top bar (on a phone it is the second icon at the bottom, next to Connect).
+## Step 1. Open the Your agent tab
+1. Press **Your agent** in the bar (on a phone it is the second icon at the bottom, next to Connect).
 2. The three tiles at the top show how many automations are on, whether your phone menu is the standard one or your own, and whether sending is practice or live.
-![The Automations tab on a computer](auto-overview.jpg)
+![The Your agent tab on a computer](auto-overview.jpg)
 3. Below them: **Phone menu** and **Test my agent** side by side, then **Your automations** and **Saved choices**.
 
 ## Step 2. Test what you have first
@@ -55,13 +55,13 @@ Until you do this, callers hear your words in your phone provider's voice (or th
 5. The ready-made automations for your industry are under **Show the ready-made automations**. Switch on the ones you want. A yellow "Needs" line says which app to connect first (Connect tab).
 
 ## Step 7. Go live
-1. When everything above looks right, press **Go live** (on the Automations tab, or Settings).
+1. When everything above looks right, press **Go live** (on the Your agent tab, or Settings).
 2. The agent checks that your business details, a connected service and your automations have what they need. Fix anything it lists, then switch on sending.
 3. Practice mode stays one switch away: Settings, Go live, **Back to practice mode**.
 
 ## On a phone
 The same tab works on a phone: the tiles shrink, the cards stack, and the editor opens as a sheet from the bottom.
-![The Automations tab on a phone](auto-mobile.jpg)
+![The Your agent tab on a phone](auto-mobile.jpg)
 
 ## Good to know
 - Your phone menu works the same on every way callers can reach the agent: Twilio numbers and an existing office phone system.
@@ -75,7 +75,7 @@ The same tab works on a phone: the tiles shrink, the cards stack, and the editor
 
 ## Bookings: let your AI book and confirm on the phone
 Turn this on and your AI can book a table (or an appointment) and confirm it while the caller is still on the line, instead of only passing a request to your team.
-1. Open **Automations, Bookings** and press **Set my rules and switch on**.
+1. Open **Your agent**, find **Bookings** and press **Set up bookings**.
 2. Choose the days you take bookings, when seating opens and the last seating, how long a booking lasts, the largest party the AI may book, and your seating areas with how many seats each has (for example inside 40, outside 24).
 3. Press **Save and switch on**. The AI is now allowed to book (Settings, Built-in safeguards shows it as "Book and confirm tables or appointments").
 

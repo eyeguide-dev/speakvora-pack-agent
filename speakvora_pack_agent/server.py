@@ -8,7 +8,22 @@ from . import dashboard, locations as LC, sources
 from .connectors import signing
 
 
-def make_handler(agent):
+bad_by = {}
+
+
+def _locked(who):
+    """Eight wrong access tokens from one remote address in ten minutes lock that address out for the rest of the ten minutes."""
+    return len([t for t in bad_by.get(who, []) if time.time() - t < 600]) >= 8
+
+
+def _fail(who):
+    now = time.time(); bad_by[who] = [t for t in bad_by.get(who, []) if now - t < 600] + [now]
+    if len(bad_by) > 2000:
+        bad_by.clear()
+
+
+def make_handler(agent, private=False):
+    """private=True is the second, dashboard-only door that Tailscale Serve (never Funnel) points at: it listens on its own port on this computer, so which door a request used cannot be faked by a header."""
     cfg = agent.cfg
 
     hits_by = {}
@@ -45,6 +60,9 @@ def make_handler(agent):
                     return False
                 allowed = [str(x).lower() for x in (ad.get("allowed_emails") or [])]
                 return not allowed or who in allowed
+            if private:                                                                   # the private door: only through Tailscale Serve, with a signed-in Tailscale user (and the optional list of logins)
+                from . import address as _AD
+                return _AD.private_login_ok(agent, h)
             if any(k in h for k in ("x-forwarded-for", "x-forwarded-host", "forwarded", "x-real-ip", "cf-connecting-ip", "cf-ray", "x-forwarded-proto")):
                 return False
             host = h.get("host", "").rsplit(":", 1)[0].strip("[]").lower() if not h.get("host", "").startswith("[") else h.get("host", "").split("]")[0].strip("[").lower()
@@ -86,7 +104,13 @@ def make_handler(agent):
             origin = self.headers.get("Origin")
             if method == "POST" and origin and urlparse(origin).netloc != self.headers.get("Host", ""):      # a page on another site cannot drive the dashboard
                 return self._send(403, {"error": "bad_origin"})
+            h_ = {k.lower(): v for k, v in self.headers.items()}
+            who = (h_.get("x-forwarded-for", "").split(",")[0].strip() or self.client_address[0]) if "x-forwarded-for" in h_ else ""
+            if who and _locked(who):
+                return self._send(429, {"error": "too_many_wrong_tokens", "message": "Too many wrong access tokens. Try again in 10 minutes."})
             code, body, ctype, hdr = dashboard.handle(agent, method, self.path, dict(self.headers), raw)
+            if who and code == 401:
+                _fail(who)
             self.send_response(code); self.send_header("content-type", ctype); self.send_header("content-length", str(len(body)))
             for k, v in hdr.items():
                 self.send_header(k, v)
@@ -94,6 +118,8 @@ def make_handler(agent):
 
         def do_GET(self):
             p = self.path.split("?")[0]
+            if private and not (p == "/dashboard" or p.startswith("/dash/api/") or p.startswith("/loc/")):
+                return self._send(404, {"error": "not_found"})
             if p == "/dashboard" or p.startswith("/dash/api/"):
                 return self._dash("GET")
             if p.startswith("/loc/"):
@@ -138,6 +164,8 @@ def make_handler(agent):
             self._send(404, {"error": "not_found"})
 
         def do_POST(self):
+            if private and not (self.path.split("?")[0].startswith("/dash/api/") or self.path.split("?")[0].startswith("/loc/")):
+                return self._send(404, {"error": "not_found"})
             if self.path.split("?")[0].startswith("/dash/api/"):
                 return self._dash("POST")
             if self.path.split("?")[0].startswith("/loc/"):
@@ -227,6 +255,7 @@ def serve(agent, host=None, port=None, tick_seconds=60):
     host, port = host or agent.cfg["listen"]["host"], agent.cfg["listen"]["port"] if port is None else port
     srv = ThreadingHTTPServer((host, port), make_handler(agent))
     stop = threading.Event()
+    ensure_private(agent, host)
 
     def loop():
         try:
@@ -243,5 +272,27 @@ def serve(agent, host=None, port=None, tick_seconds=60):
     srv.stopper = stop
     agent._serving = True; agent.sip_sync(); agent.telegram_sync(); agent.address_sync()
     _shutdown = srv.shutdown
-    srv.shutdown = lambda: (agent.sip_stop(), getattr(getattr(agent, 'tunnel', None), 'stop', lambda: None)(), _shutdown())
+    srv.shutdown = lambda: (ensure_private(agent, host, stop=True), agent.sip_stop(), getattr(getattr(agent, 'tunnel', None), 'stop', lambda: None)(), _shutdown())
+    return srv
+
+
+def private_port(agent):
+    return agent.cfg["listen"]["port"] + 1000
+
+
+def ensure_private(agent, host=None, stop=False):
+    """Starts (or stops) the private dashboard door, a second listener on this computer that only Tailscale Serve points at. It runs only while the owner has switched the private dashboard on."""
+    from . import address as _AD
+    cur = getattr(agent, "_private_srv", None)
+    if stop or not (_AD.settings(agent).get("private_dashboard") and (_AD.settings(agent).get("provider") or "") == "tailscale"):
+        if cur:
+            threading.Thread(target=cur.shutdown, daemon=True).start(); cur.server_close(); agent._private_srv = None
+        return None
+    if cur:
+        return cur
+    try:
+        srv = ThreadingHTTPServer((host or agent.cfg["listen"]["host"], private_port(agent)), make_handler(agent, private=True))
+    except OSError as e:
+        agent.state.log(workflow="server", status="error", path="private-dashboard", error=str(e)[:160]); return None
+    threading.Thread(target=srv.serve_forever, daemon=True).start(); agent._private_srv = srv
     return srv

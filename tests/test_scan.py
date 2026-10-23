@@ -85,6 +85,10 @@ class Steps(unittest.TestCase):
         self.assertIn("leash", SC.unverified("Dogs are welcome on a leash.", src))
         self.assertEqual(SC.unverified("Dogs are welcome on the heated patio.", src), [])
 
+    def test_times_are_written_so_the_voice_says_them_in_full(self):
+        self.assertEqual(SC.speakable("Lunch is 11 AM to 3 PM, dinner 5:30pm."), "Lunch is 11 a.m. to 3 p.m., dinner 5:30 p.m.")
+        self.assertEqual(SC.speakable("We have a team."), "We have a team.")
+
     def test_thinking_ahead_sees_the_notes_the_owner_added(self):
         r = rig(); self.addCleanup(r.close); a = r.agent
         KN.add_text(a, "Menu", "Weekday lunch special: any pasta and a drink for 15 dollars, Tuesday to Friday.", "note")
@@ -98,7 +102,7 @@ class Steps(unittest.TestCase):
         a.cfg["facts"] = {"hours": "Open 11am to 10pm every day", "info": "Lunch is 20 dollars. Dinner is 35 dollars."}
         R._chat = lambda cfg, system, user, mt=None: (json.dumps({"questions": ["What time do you open?"], "lines": ["We are open 11am to 10pm every day of the week.", "Our pasta special is only 9.99 dollars today.", "Dinner is 20 dollars per person here.", "One moment while I check that for you."]}), {})
         d = SC.anticipate(a)
-        self.assertEqual(d["phrases"], ["We are open 11am to 10pm every day of the week.", "One moment while I check that for you."])
+        self.assertEqual(d["phrases"], ["We are open 11 a.m. to 10 p.m. every day of the week.", "One moment while I check that for you."])
         self.assertTrue(d["auto_ready"]); self.assertEqual(d["anticipated"]["questions"], ["What time do you open?"]); self.assertFalse(d.get("voiced"))
 
 
@@ -176,6 +180,13 @@ class Asking(unittest.TestCase):
         for path in ("/dash/api/scan/search", "/dash/api/scan/read", "/dash/api/scan/phrases", "/dash/api/scan/phrases/add", "/dash/api/scan/check/ask"):
             code, out = self.call(a, path, {}); self.assertEqual(code, 400, path); self.assertIn("until you say OK", out["message"])
         self.assertEqual(self.call(a, "/dash/api/scan")[0], 200)
+
+    def test_recording_answers_with_what_was_added_so_the_sheet_never_shows_an_error(self):
+        from speakvora_pack_agent import learned
+        r = rig(); self.addCleanup(r.close); a = r.agent
+        old = learned.add_lines; learned.add_lines = lambda agent, text: {"added": [{"id": "learned:x", "text": t} for t in text.splitlines()], "skipped": []}; self.addCleanup(lambda: setattr(learned, "add_lines", old))
+        code, out = self.call(a, "/dash/api/scan/phrases/add", {"ok": True, "lines": ["We are open Tuesday to Sunday."]})
+        self.assertEqual(code, 200); self.assertEqual(len(out["result"]["added"]), 1); self.assertEqual(out["result"]["skipped"], [])
 
 
 if __name__ == "__main__":

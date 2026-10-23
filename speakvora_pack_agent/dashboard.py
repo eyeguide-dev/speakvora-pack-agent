@@ -368,7 +368,7 @@ def handle(agent, method, path, headers, raw):
             elif act == "phrases":
                 SC.suggest_phrases(agent)
             elif act == "phrases/add":
-                SC.add_phrases(agent, b.get("lines") or [])
+                added = SC.add_phrases(agent, b.get("lines") or [])["result"]
             elif act == "checks":
                 SC.make_checks(agent)
             elif act == "daily":
@@ -388,6 +388,8 @@ def handle(agent, method, path, headers, raw):
             else:
                 return 404, b'{"error":"not_found"}', "application/json", hdr
             out = SC.view(agent)
+            if act == "phrases/add":
+                out["result"] = added                                          # what was recorded and what was skipped (and why), so the sheet can say so
         elif p == "/dash/api/bookings" and method == "GET":
             from . import bookings as BK
             out = BK.view(agent)
@@ -428,6 +430,20 @@ def handle(agent, method, path, headers, raw):
             AD.install_cloudflared(agent); AD.sync(agent); out = AD.view(agent)
         elif p == "/dash/api/address/funnel" and method == "POST":
             ok, msg = AD.tailscale_funnel(agent.cfg["listen"]["port"]); out = {"ok": ok, "message": msg, **AD.check(agent)}
+        elif p == "/dash/api/accessibility" and method == "GET":
+            from . import access as AX
+            out = AX.view(agent)
+        elif p == "/dash/api/accessibility" and method == "POST":
+            from . import access as AX
+            b = json.loads(raw or b"{}")
+            out = AX.suggest(agent) if b.get("ask_ai") else AX.save(agent, b.get("preset"))
+        elif p == "/dash/api/address/private-dashboard" and method == "POST":
+            on = bool(json.loads(raw or b"{}").get("on")); ok, msg = AD.tailscale_private_dashboard(agent.cfg["listen"]["port"], on)
+            if ok:
+                AD.save(agent, {"private_dashboard": on})
+                from . import server as SRV
+                SRV.ensure_private(agent)
+            out = {"ok": ok, "message": msg, **AD.view(agent)}
         elif p == "/dash/api/address/use" and method == "POST":
             out = AD.use_everywhere(agent, bool(json.loads(raw or b"{}").get("force")))
         elif p == "/dash/api/address/remove" and method == "POST":
