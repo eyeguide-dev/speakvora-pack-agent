@@ -52,7 +52,11 @@ Until you do this, callers hear your words in your phone provider's voice (or th
 3. Type your message. You can use details such as {{business}} or {{customer.name}}; the box tells you which ones fit.
 4. Press **Save**. It is switched on. Use the switch in the list to turn it off later.
 ![The workflow builder](auto-workflow.jpg)
-5. The ready-made automations for your industry are under **Show the ready-made automations**. Switch on the ones you want. A yellow "Needs" line says which app to connect first (Connect tab).
+5. The ready-made automations for your industry are under **Explore the ready-made automations**. The list shows ten at a time; scroll inside it for more, and use **Needs your OK**, **On** and **Off** to filter. Each name says plainly what it does, for example "Reminds customers before their booking".
+6. Press one to open it. Read what it says, change the wording or when it runs, and press **Approve and turn on**. Until you approve it, nothing is sent. A yellow "Needs" line says which app to connect first (Connect tab).
+7. **Reminds customers before their booking** lets you tick how long before: two days, the day before, the morning of, or four, two or one hour before. The agent picks the line that fits each time.
+8. **Answers texts when you are closed** needs your opening days and times (in the same window). Until you set them it stays quiet.
+9. Shops, restaurants, salons, laundries and car businesses also see **Announce a sale**: it watches the pages you list, writes a draft, and sends it only after you approve it, only to people who agreed to sale texts. It never appears for health, pharmacy, legal, finance, public-service or school businesses.
 
 ## Step 7. Go live
 1. When everything above looks right, press **Go live** (on the Your agent tab, or Settings).

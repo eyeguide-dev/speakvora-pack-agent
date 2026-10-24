@@ -41,7 +41,7 @@ Your phrases, organized: how many are **saved** and how many are **to review**.
 * **Pause all sending**: stops every send until you resume. Nothing is lost.
 
 ## Sharing missing phrases with Speakvora
-When a workflow needs a spoken line your bundle does not have, the agent can tell Speakvora so the line gets written, checked, recorded and added to the next version of every bundle for that industry and language (included in your 12-month licence). It is **off until you switch it on**. What is sent: the moment the line is for, an example sentence, your industry, language and bundle name. Never customer names, numbers or messages.
+When a workflow needs a spoken line your bundle does not have, the agent can tell Speakvora so the line gets written, checked, recorded and added to the next version of every bundle for that industry and language (included in the first 12 months of updates and support that come with the agent bundle; afterwards renewing is an optional $99 a year per location, and what you already have keeps working). It is **off until you switch it on**. What is sent: the moment the line is for, an example sentence, your industry, language and bundle name. Never customer names, numbers or messages.
 
 ## Safety
 The page is served with a strict content policy and refuses requests from other websites and from anything that arrives through a tunnel or proxy. By default the agent listens on 127.0.0.1 only. See [security.md](security.md).

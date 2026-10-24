@@ -831,13 +831,18 @@ def _kinds(w, skip_optional=False):
 
 
 def workflows(agent):
-    from . import recipes
-    out = []
+    from . import recipes, wfedit
+    out = []; ed = wfedit.load(agent)
     for w in _workflow_file(agent).get("workflows", []):
         needs = sorted({NEEDS[k] for k in _kinds(w, True) if k in NEEDS}); on = w.get("on") or {}
+        if (on.get("sms") or {}).get("when_closed") and not wfedit.hours(agent):
+            needs = sorted(set(needs) | {"hours"})
         trig = next((TRIGGER_WORDS[k] for k in TRIGGER_WORDS if k in on), "")
-        out.append({"name": w["name"], "title": w.get("title") or re.sub(r"\s+", " ", w["name"].replace("_", " ")).capitalize(), "what": w.get("what") or recipes.NICE.get(w["name"], ""), "when": trig, "enabled": w.get("enabled", True), "also": w.get("also_send_to") or [], "needs": needs,
-                    "missing": [n for n in needs if not (connected(agent, "texts") if n == "twilio" and "call" not in _kinds(w) else connected(agent, n))]})      # texts alone can go through your phone, Telegram or WhatsApp; calls still need Twilio
+        title, what = recipes.plain(w["name"]) if not w.get("title") else (w["title"], w.get("what") or recipes.NICE.get(w["name"], ""))
+        e = ed.get(w["name"]) or {}; st = wfedit.state_of(w, e)
+        out.append({"name": w["name"], "title": title, "what": what, "when": trig, "enabled": st == "on", "state": st, "kit": bool(w.get("kit")), "sale": bool(w.get("sale")), "edited": bool(e.get("texts") or e.get("keywords") or e.get("reminder") or e.get("daily_at") or e.get("lead")),
+                    "also": w.get("also_send_to") or [], "needs": needs,
+                    "missing": [n for n in needs if n == "hours" or not (connected(agent, "texts") if n == "twilio" and "call" not in _kinds(w) else connected(agent, n))]})      # texts alone can go through your phone, Telegram or WhatsApp; calls still need Twilio
     from . import eventflows, builder as _bd
     for ev, why in eventflows.SOON.items():                                                  # listed last, with no switch: coming soon
         out.append({"name": "soon_" + ev.replace(".", "_"), "title": _bd.EVENTS.get(ev, ev), "what": why, "when": "when your app sends this event", "enabled": False, "also": [], "needs": [], "missing": [], "soon": True})
@@ -848,6 +853,10 @@ def set_workflow(agent, name, enabled):
     wf = _workflow_file(agent); hit = False
     for w in wf.get("workflows", []):
         if w["name"] == name:
+            if enabled and w.get("kit"):
+                from . import wfedit
+                if not wfedit.approved(agent, name):
+                    raise SetupError("Open it, read the wording and press “Approve and turn on” first.")
             w["enabled"] = bool(enabled); hit = True
     if not hit:
         raise SetupError("No such workflow.")

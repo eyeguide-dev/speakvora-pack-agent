@@ -1,5 +1,5 @@
 """Ready-made workflows for every industry profile, built from the slots that profile has. `init` writes these next to the pack so an unzipped bundle runs after you fill in your hours and connect your services."""
-import json, os
+import json, os, re
 
 from . import slots as SL
 
@@ -11,7 +11,32 @@ def _sms(to, text):
 
 
 def workflows_for(profile, lang="en"):
-    return localize(_workflows_for(profile), lang)
+    return localize(_with_kit(_workflows_for(profile), profile), lang)
+
+
+def _with_kit(doc, profile):
+    """Adds the industry's ready-made kit (kits.py) and gives every workflow a plain title and description. Kit workflows start switched off until the owner opens and approves them."""
+    from . import kits
+    ws = doc["workflows"]
+    ws[:] = [w for w in ws if w["name"] not in ("reservation_reminder_24h", "reservation_reminder_2h")]          # the smart reminder replaces the fixed day-before and two-hours-before pair
+    have_names = {w["name"] for w in ws}
+    have_events = {(w.get("on") or {}).get("event") for w in ws if (w.get("on") or {}).get("event")}
+    for k in kits.kit_workflows(profile):
+        ev = (k.get("on") or {}).get("event")
+        if k["name"] in have_names or (ev and ev in have_events):
+            continue
+        ws.append(k); have_names.add(k["name"])
+    for w in ws:
+        if not w.get("title"):
+            w["title"], w["what"] = plain(w["name"])
+    return doc
+
+
+def plain(name):
+    t = PLAIN.get(name)
+    if t:
+        return t
+    return re.sub(r"\s+", " ", name.replace("_", " ")).capitalize(), NICE.get(name, "")
 
 
 def localize(doc, lang):
@@ -97,8 +122,6 @@ def _workflows_for(profile):
                   {"action": "notify", "text": "New booking: {{customer.name}}, {{start_text}}. Text: {{last.sms}}."}]},
               {"name": "appointment_changed", "on": {"event": "appointment.changed"}, "do": [{"action": "calendar_reschedule", "ref": "{{appointment.id}}", "start": "{{start_epoch}}", "minutes": "{{minutes}}"}, _sms(None, "{{business}}: {{slot:appointment_changed}} {{start_text}}.")]},
               {"name": "appointment_cancelled", "on": {"event": "appointment.cancelled"}, "do": [{"action": "calendar_cancel", "ref": "{{appointment.id}}"}, _sms(None, "{{business}}: {{slot:appointment_cancelled}}")]},
-              {"name": "appointment_reminder_24h", "on": {"calendar": {"starts_in_minutes": 1440, "window_minutes": 30, "title_contains": "Appointment"}}, "do": [_sms(None, "{{business}}: {{slot:appointment_reminder}} {{start_local}}.")]},
-              {"name": "appointment_reminder_2h", "on": {"calendar": {"starts_in_minutes": 120, "window_minutes": 15, "title_contains": "Appointment"}}, "do": [_sms(None, "{{business}}: {{slot:appointment_reminder_today}} {{start_local}}.")]},
               {"name": "no_show_followup", "on": {"event": "appointment.no_show"}, "do": [_sms(None, "{{business}}: {{slot:no_show_followup}}")]},
               {"name": "sms_reschedule", "on": {"sms": {"topic": "reschedule"}}, "do": [
                   {"action": "reply", "text": "{{slot:reschedule_help}}"}, {"action": "notify", "text": "Booking request by text from {{sms.from}}: {{sms.body}}"}]},
@@ -202,3 +225,77 @@ NICE = {"job_scheduled": "books a visit and texts a link to follow it", "repair_
             "email_ticket": "creates a helpdesk ticket from each customer email and confirms it", "ticket_update": "tells customers when their ticket changes", "customer_escalated": "alerts your team and reassures the customer when a case is escalated",
             "callback_scheduled": "confirms a scheduled callback", "appointment_cancelled": "confirms cancellations", "appointment_changed": "confirms changes", "order_out_for_delivery": "tells customers their delivery is on its way"}
 
+
+
+# Plain names and one-line descriptions for every ready-made workflow, in everyday words ("Reminds customers before their booking"). Shown in the dashboard, the guides and the pack README.
+PLAIN = {
+    "order_received": ("Confirms a new order", "texts the customer that you got their order"),
+    "order_preparing": ("Says an order is being made", "texts the customer that you are working on their order"),
+    "order_ready": ("Tells customers their order is ready", "texts the customer that their order is ready, and how to collect it"),
+    "order_picked_up": ("Thanks customers after they collect", "texts a thank you once an order has been picked up"),
+    "order_delayed": ("Says sorry when an order is late", "texts the customer that their order is late and tells your team"),
+    "order_cancelled": ("Confirms a cancelled order", "texts the customer that their order was cancelled"),
+    "order_out_for_delivery": ("Tells customers their delivery is on its way", "texts the customer that their order is on its way"),
+    "order_delivered": ("Confirms a delivery", "texts the customer that their order arrived"),
+    "table_ready": ("Tells guests their table is ready", "texts the guest and tells your host stand"),
+    "reservation_created": ("Confirms a table booking", "texts the guest, adds it to your calendar and tells your team"),
+    "no_show_followup": ("Follows up kindly after a missed booking", "texts that you missed them and how to book again"),
+    "thanks_review": ("Thanks customers and asks for a review", "texts a thank you after a visit and your review link"),
+    "sms_clinical": ("Passes questions that need a person to your team", "never answers these questions by text: tells the customer a person will help and tells your team"),
+    "sms_info": ("Answers parking and visiting questions", "replies with the information you wrote for visitors"),
+    "sms_hours": ("Answers “what are your hours?” by text", "replies with your opening hours"),
+    "sms_directions": ("Answers “where are you?” by text", "replies with your address"),
+    "sms_reservation": ("Helps guests book by text", "tells guests what to send to book a table"),
+    "sms_order": ("Helps guests with an order by text", "asks for the order number so you can look it up"),
+    "sms_person": ("Passes “I want a person” to your team", "tells the customer a person will help and tells your team on Slack or Teams"),
+    "phone_menu": ("Answers your phone with a menu", "offers hours, booking, a status check or a person when someone calls"),
+    "daily_briefing": ("Sends your team today's bookings each morning", "posts the day's bookings to Slack or Teams"),
+    "slack_say": ("Lets staff text a customer from Slack", "type /say in Slack to send a customer one of your recorded lines"),
+    "appointment_created": ("Confirms a new booking", "texts the customer, adds it to your calendar and tells your team"),
+    "appointment_changed": ("Confirms a changed booking", "texts the new time and updates your calendar"),
+    "appointment_cancelled": ("Confirms a cancelled booking", "texts the customer and clears your calendar"),
+    "sms_reschedule": ("Helps customers change a booking by text", "tells them how to ask for a new time and tells your team"),
+    "ready_for_you": ("Tells customers you are ready for them", "texts the customer to come in now"),
+    "sms_status": ("Answers “where is my order?” by text", "looks up the status in your own records, or passes it to a person"),
+    "email_hours": ("Answers “what are your hours?” emails", "replies by email with your opening hours"),
+    "email_person": ("Passes emails that need a person to your team", "tells your team and tells the sender a person will reply"),
+    "sms_refill": ("Handles refill questions by text", "never names a medicine: tells the customer how to ask for a refill and tells the pharmacy"),
+    "quote_followup": ("Checks in after sending a quote", "texts the customer and gives your team a call-back task"),
+    "job_followup": ("Checks in after a job is finished", "texts the customer to make sure all is well"),
+    "next_visit_due": ("Reminds customers their next visit is due", "texts the customer that it is time to book again"),
+    "job_scheduled": ("Confirms a visit and sends a link to follow it", "texts the day and a link to follow the visit"),
+    "job_on_the_way": ("Tells customers the technician is on the way", "texts the customer when the technician leaves"),
+    "job_in_progress": ("Updates the tracking page when work starts", "updates the customer's tracking page"),
+    "job_completed": ("Checks in when the job is done", "texts the customer that the work is finished"),
+    "repair_received": ("Confirms a vehicle was checked in", "texts the customer a link to follow the repair"),
+    "repair_in_progress": ("Updates the tracking page when the repair starts", "updates the customer's tracking page"),
+    "repair_ready": ("Tells customers their vehicle is ready", "texts the customer that their vehicle is ready"),
+    "repair_picked_up": ("Closes the repair when the vehicle is collected", "updates the customer's tracking page"),
+    "ticket_created": ("Confirms a new support request", "texts the customer a link to follow their request"),
+    "ticket_in_progress": ("Updates the page when a request is being worked on", "updates the customer's tracking page"),
+    "ticket_resolved": ("Tells customers their request is solved", "texts the customer that the request is solved"),
+    "email_ticket": ("Opens a support request from each email", "creates a ticket in your helpdesk and tells the sender"),
+    "ticket_update": ("Tells customers when their request changes", "texts and emails the customer the update"),
+    "customer_escalated": ("Alerts your team when a customer asks for a manager", "reassures the customer and tells your team at once"),
+    "callback_scheduled": ("Confirms a call-back", "texts the customer the time a team member will call"),
+    "account_funded": ("Confirms money was added", "texts that funds were added, with no figures"),
+    "account_low_balance": ("Warns when a balance is low", "texts that a balance is low, with no figures"),
+    "visit_rules": ("Sends the visiting rules", "replies with the visiting rules when someone asks"),
+    "bail_info": ("Points people to bail information", "replies with your bail office contact"),
+    "lockdown": ("Tells families visits and calls are paused", "texts a short pause notice"),
+    "payment_due_notice": ("Reminds customers a payment is due", "texts the required notice and that a payment is due, with no amount"),
+    "payment_failed_notice": ("Tells customers a payment did not go through", "texts that a payment failed, with no amount"),
+    "sms_hardship": ("Helps people who say they cannot pay", "replies kindly with the options you offer and tells your team"),
+    "pipeline_failed": ("Alerts your team when a build fails", "tells your team and the on-call person"),
+    "pipeline_succeeded": ("Tells your team a build passed", "posts to Slack or Teams"),
+    "deploy_succeeded": ("Tells your team a release went out", "posts to Slack or Teams"),
+    "deploy_failed": ("Alerts your team when a release fails", "tells your team and calls the on-call person"),
+    "incident_opened": ("Alerts your team about an incident", "tells your team and calls the on-call person"),
+    "incident_resolved": ("Tells your team an incident is over", "posts to Slack or Teams and texts the on-call person"),
+    "security_alert": ("Alerts your team about a security alert", "tells your team and the on-call person"),
+    "pull_request_ready": ("Tells your team a change is ready to review", "posts to Slack or Teams"),
+    "release_published": ("Tells your team about a new release", "posts to Slack or Teams"),
+    "issue_opened": ("Tells your team about a new issue", "posts to Slack or Teams"),
+    "smart_reminder": ("Reminds customers before their booking", "texts the customer at the times you choose, with a line that fits the timing"),
+}
+NICE.update({k: v[1] for k, v in PLAIN.items()})

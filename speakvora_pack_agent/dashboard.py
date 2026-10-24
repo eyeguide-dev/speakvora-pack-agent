@@ -5,7 +5,7 @@ Every /dash/api call needs the header x-dashboard-token (env SV_DASHBOARD_TOKEN,
 import hmac, json, os, re, secrets, time, urllib.request
 from urllib.parse import parse_qs, urlparse
 
-from . import audit as AU, simulate as SIM, builder as BD, activity as AC, knowledge as KN, converse as CVN, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL, phonemenu as PM, address as AD
+from . import audit as AU, simulate as SIM, builder as BD, activity as AC, knowledge as KN, converse as CVN, brain as BR, chat as CH, conversations as CVS, tracker as TK, controls as CT, learned as LN, connect as SU, guardrails as GR, locations as LC, recipes, sharing, slots as SL, phonemenu as PM, address as AD, wfedit as WE, sales as SA
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ATTENTION = ("needs_approval", "proposed", "needs_review", "failed", "expired", "undelivered")
@@ -420,6 +420,47 @@ def handle(agent, method, path, headers, raw):
             b = json.loads(raw or b"{}"); BD.toggle(agent, str(b.get("id", "")), bool(b.get("on"))); out = BD.view(agent)
         elif p == "/dash/api/workflows/preview" and method == "POST":
             out = BD.preview(agent, json.loads(raw or b"{}").get("spec") or {})
+        elif p == "/dash/api/workflows/page" and method == "GET":
+            qs = parse_qs(u.query); out = WE.page(agent, int((qs.get("offset") or ["0"])[0] or 0), max(1, min(50, int((qs.get("limit") or ["10"])[0] or 10))), (qs.get("state") or [""])[0] or None)
+        elif p == "/dash/api/workflows/detail" and method == "GET":
+            out = WE.detail(agent, (parse_qs(u.query).get("name") or [""])[0])
+        elif p == "/dash/api/workflows/edit" and method == "POST":
+            b = json.loads(raw or b"{}")
+            out = WE.save(agent, str(b.get("name", "")), texts=b.get("texts"), keywords=b.get("keywords"), daily_at=b.get("daily_at"), lead=b.get("lead"), reminder=b.get("reminder"), hours_=b.get("hours"),
+                          title_contains=b.get("title_contains"), approve=b.get("approve"), enable=b.get("enable"))
+        elif p == "/dash/api/workflows/reset" and method == "POST":
+            out = WE.reset(agent, str(json.loads(raw or b"{}").get("name", "")))
+        elif p == "/dash/api/sales" and method == "GET":
+            out = SA.view(agent)
+        elif p == "/dash/api/sales/sources" and method == "POST":
+            b = json.loads(raw or b"{}"); out = SA.set_sources(agent, b.get("urls") or [], str(b.get("feed") or ""), b.get("settings"))
+        elif p == "/dash/api/sales/enable" and method == "POST":
+            out = SA.enable(agent, bool(json.loads(raw or b"{}").get("on")))
+        elif p == "/dash/api/sales/check" and method == "POST":
+            r = SA.watch(agent, force=bool(json.loads(raw or b"{}").get("force"))); out = {**SA.view(agent), "result": r}
+        elif p == "/dash/api/sales/consent" and method == "POST":
+            b = json.loads(raw or b"{}")
+            if b.get("csv"):
+                r = SA.import_csv(agent, str(b["csv"]))
+            elif b.get("remove"):
+                r = {"removed": SA.remove_consent(agent, str(b["remove"]))}
+            else:
+                r = SA.add_consent(agent, b.get("phone"), b.get("source"), b.get("at"), b.get("name", ""))
+            out = {**SA.view(agent), "result": r}
+        elif p == "/dash/api/sales/draft" and method == "POST":
+            b = json.loads(raw or b"{}"); did = str(b.get("id", "")); act = b.get("action")
+            if act == "edit":
+                SA.edit_draft(agent, did, b.get("text")); out = SA.view(agent)
+            elif act == "preview":
+                out = SA.preview(agent, did)
+            elif act == "test":
+                out = SA.test_send(agent, did)
+            elif act == "approve":
+                out = {**SA.view(agent), "result": SA.approve(agent, did, b.get("text"))}
+            elif act == "decline":
+                SA.decline(agent, did); out = SA.view(agent)
+            else:
+                raise ValueError("Unknown action.")
         elif p == "/dash/api/address" and method == "GET":
             out = AD.view(agent)
         elif p == "/dash/api/address/save" and method == "POST":

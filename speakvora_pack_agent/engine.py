@@ -93,7 +93,9 @@ class Agent:
         except Exception as e:  # noqa: BLE001 - a damaged custom file never stops the ready-made workflows
             mine = []; self.state.log(workflow="builder", status="error", dry_run=False, error=str(e)[:120]) if hasattr(self, "state") else None
         own = {(w.get("on") or {}).get("event") for w in mine if (w.get("on") or {}).get("event")}
-        self.workflows = mine + [w for w in wf.get("workflows", []) if w.get("enabled", True) and not (w.get("general") and (w.get("on") or {}).get("event") in own)]      # your own workflow for an event replaces the ready-made one
+        from . import wfedit
+        ready = wfedit.apply(self, [w for w in wf.get("workflows", []) if w.get("enabled", True)])                 # your wording and timing applied; a ready-made kit workflow you have not approved yet is left out
+        self.workflows = mine + [w for w in ready if not (w.get("general") and (w.get("on") or {}).get("event") in own)]      # your own workflow for an event replaces the ready-made one
         return wf
 
     def address_sync(self):
@@ -748,6 +750,10 @@ class Agent:
             return {"status": "ok"}
         if kind == "log":
             self.record(wf, kind, "ok", text=a.get("text", "")); return {"status": "ok"}
+        if kind == "sale_watch":
+            from . import sales
+            r = sales.watch(self)                                                         # looks at the pages you listed; a new sale becomes a DRAFT for you to approve, never a message
+            self.record(wf, kind, "ok", result=r.get("status", ""), draft=r.get("draft") or ""); return {"status": "ok", **{k: r[k] for k in ("draft",) if k in r}}
         if kind == "track":
             if not self._tracking_on():
                 return {"status": "skipped"}                                              # no log noise, no link, and the texts below simply leave the link out
@@ -987,6 +993,11 @@ class Agent:
         privacy.scrub(self)                                                      # customer details are cleaned from finished jobs and old log lines after the days you chose
         learned.auto(self)                                                       # repeated AI lines become library lines, inside the monthly budget, if switched on
         sharing.auto(self)                                                       # missing phrases go to Speakvora once a day, if the person agreed
+        try:
+            from . import sales
+            sales.tick(self)                                                     # an approved sale announcement carries on sending in small batches
+        except Exception as ex:  # noqa: BLE001 - never stops the reminders below
+            self.state.log(workflow="announce_a_sale", status="error", error=str(ex)[:120])
         if self.inbox.configured:
             self.poll_email()
         if not (self.gcal.configured or self.outlook.configured or any((w.get("on") or {}).get("schedule") for w in self.workflows)):
@@ -994,11 +1005,23 @@ class Agent:
         out, now = [], self.now()
         cal_wfs = [w for w in self.workflows if (w.get("on") or {}).get("calendar")]
         if cal_wfs and (self.gcal.configured or self.outlook.configured):
-            horizon = max(int(x) for w in cal_wfs for x in [(w["on"]["calendar"].get("starts_in_minutes", 60))]) + 60
+            horizon = max(int(x) for w in cal_wfs for x in [(2880 if w["on"]["calendar"].get("smart") else w["on"]["calendar"].get("starts_in_minutes", 60))]) + 60
             events = self._events(now - 600, now + horizon * 60)
+            from . import kits, wfedit
+            nowl = dt.datetime.fromtimestamp(now, ZoneInfo(self.cfg["timezone"]))
             for ev in events:
                 for w in cal_wfs:
                     c = w["on"]["calendar"]; mins = (ev["start"] - now) / 60
+                    if c.get("smart"):                                                   # the smart reminder: the owner's chosen times, and the line that fits each one
+                        if c.get("title_contains") and c["title_contains"].lower() not in ev["title"].lower():
+                            continue
+                        k = kits.reminder_plan(wfedit.reminder_setting(self), nowl, dt.datetime.fromtimestamp(ev["start"], ZoneInfo(self.cfg["timezone"])), now, ev["start"], int(c.get("window_minutes", 30)))
+                        if not k:
+                            continue
+                        ctx = self.ctx(event=ev, customer=self.calendar_contact(ev), start_local=i18n.fmt_dt(ev["start"], self.cfg["timezone"], self.lang), reminder={"kind": k, "slot": kits.REMINDER_CHOICES[k][2]})
+                        if self._when_ok(w.get("when"), ctx) and self.state.once(f"cal:{ev['id']}:{w['name']}:{k}"):
+                            out.append({"workflow": w["name"], "event": ev["title"], "reminder": k, "results": self.run_actions(w["name"], w.get("do", []), ctx)})
+                        continue
                     lead, win = int(c.get("starts_in_minutes", 60)), int(c.get("window_minutes", 10))
                     if not (lead - win <= mins <= lead) or (c.get("title_contains") and c["title_contains"].lower() not in ev["title"].lower()):
                         continue
@@ -1053,6 +1076,8 @@ class Agent:
         low = body.lower()
         if low in i18n.opt_out_words(self.lang):
             self.state.opt_out(who); self.state.log(workflow="sms", status="opt_out", to=who)
+            from . import sales
+            sales.revoke(self, who)                                                   # also leaves the sale-text consent list
             try:
                 return self.pack.text("opt_out_ack")
             except PackError:
@@ -1061,6 +1086,10 @@ class Agent:
             self.state.opt_in(who); return "You are subscribed again. Reply STOP to unsubscribe."
         if low == "help":
             return self.cfg.get("help_text") or i18n.glue("help", self.lang)
+        from . import sales
+        said = sales.inbound(self, who, low)                                            # "DEALS": the customer asks to get sale texts (shops only); recorded with when and how they agreed
+        if said:
+            return said
         from . import converse
         ai_first = converse.enabled(self, "sms") and len(low.split()) >= 5                 # a detailed message goes to your AI; one or two words ("hours", "parking") still get the instant keyword answer
         ordered = sorted(self.workflows, key=lambda x: not x.get("priority"))                                    # a priority workflow (a customer reporting a bug) is looked at first
@@ -1074,7 +1103,20 @@ class Agent:
                 if not out["reply"]:
                     return ""
                 reply = self._sms_text(out["reply"], who); self.state.once(f"footer:{who}"); return reply
+        if self.closed_now():                                                          # nobody matched and you are closed: your "while you are closed" answer, if you switched one on
+            for w in ordered:
+                if ((w.get("on") or {}).get("sms") or {}).get("when_closed"):
+                    self._m()["wf"] = w["name"]
+                    ctx = self.ctx(sms={"from": who, "body": body}, customer={"phone": who, "sms_consent": True}); out = {"reply": "", "play": []}
+                    self.run_actions(w["name"], w.get("do", []), ctx, out)
+                    if out["reply"]:
+                        reply = self._sms_text(out["reply"], who); self.state.once(f"footer:{who}"); return reply
         return self._ai_sms(who, body)
+
+    def closed_now(self):
+        """True only when the owner set their opening times and it is outside them (see wfedit.closed_now)."""
+        from . import wfedit
+        return wfedit.closed_now(self, dt.datetime.fromtimestamp(self.now(), ZoneInfo(self.cfg["timezone"])))
 
     def _do_ai_actions(self, who, todo, channel):
         """The actions your AI asked for (and you allowed): each goes through the same checks, quiet hours, limits and 'ask before sending' as any other action. Returns how many were handed on."""

@@ -3,6 +3,8 @@ of the same industry in any language. A slot is filled, in this order, from (1) 
 writes the gap to slot-requests.json (and can send it to Speakvora) and the phrase bot writes, audits and voices the line for every pack of that industry and language, then ships it in the next pack version."""
 import json, os, re
 
+from . import kits
+
 COMMON = {
     "automated_call_notice": ("Said at the start of every outbound call: this call is automated.", "This is an automated call."),
     "call_recorded_notice": ("Tell people the call may be recorded (said first when you record calls).", "This call may be recorded and monitored."),
@@ -144,9 +146,16 @@ def fallback_text(name):
     """The plain English sentence for a slot, from the built-in examples of every industry. Used when a pack does not have the line, so a customer is never left without an answer."""
     if name in COMMON:
         return COMMON[name][1]
+    for fam in (APPT, ORDER):
+        if name in fam:
+            return fam[name][1].replace("{a}", "booking")
     for _word, _fams, extra in PROFILES.values():
         if name in extra:
             return extra[name][1]
+    for prof in kits.KITS:
+        t = kits.slot_table(prof).get(name)
+        if t:
+            return t[1].replace("{a}", PROFILES.get(prof, PROFILES["generic"])[0])
     return ""
 
 
@@ -163,6 +172,8 @@ def registry(profile):
             out[k] = {"intent": v[0], "example": v[1].replace("{a}", word)}
     for k, v in extra.items():
         out[k] = {"intent": v[0], "example": v[1]}
+    for k, v in kits.slot_table(profile).items():                     # the lines the industry's ready-made workflows need (kits.py); a line the profile already had keeps its wording
+        out.setdefault(k, {"intent": v[0], "example": v[1].replace("{a}", word)})
     for r in REQUIRED.get("*", []) + REQUIRED.get(profile, []):
         if r["slot"] in EXTRA_REQUIRED_LINES and r["slot"] not in out:
             out[r["slot"]] = {"intent": EXTRA_REQUIRED_LINES[r["slot"]][0], "example": EXTRA_REQUIRED_LINES[r["slot"]][1]}
@@ -224,6 +235,8 @@ def needed_by(workflows):
                 walk(x)
         elif isinstance(o, str):
             names.update(re.findall(r"\{\{\s*(?:slot|slotvar):([\w]+)\s*\}\}", o))
+            if "{{slotvar:reminder.slot}}" in o:                                   # the smart reminder says a different line for each time you can choose
+                names.update(v[2] for v in kits.REMINDER_CHOICES.values())
     walk(workflows)
     return names
 

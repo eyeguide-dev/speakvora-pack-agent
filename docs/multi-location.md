@@ -20,7 +20,7 @@ If you run more than one branch, a commercial licence for two or more business l
 4. For every other location: start its agent (`./sv-agent run`), copy the address and token it prints, and press **Add a location** here. If that agent runs on another computer, set `"dashboard": {"allow_remote": true}` in its agent.json and keep it on your private network.
 
 ## What the licence code does (and does not do)
-The agent checks the code **offline** with Speakvora's public key; nothing is sent anywhere. It only turns the Locations menu on. Your bundle, its audio and every workflow work without a code. A code covers one bundle, a number of locations and a 12-month term; after the term ends the menu stays for 30 days so you can renew, then it hides until you paste a renewed code. The agent is open source, so this is an honest-use reminder, not copy protection.
+The agent checks the code **offline** with Speakvora's public key; nothing is sent anywhere. It only turns the Locations menu on. Your bundle, its audio and every workflow work without a code. A code covers one bundle, a number of locations and the 12-month updates-and-support term that comes with the agent bundle; after the term ends the menu stays for 30 days so you can renew (an optional flat $99 a year per location), then it hides until you paste a renewed code. Everything else keeps working with no remote shutdown. The agent is open source, so this is an honest-use reminder, not copy protection.
 
 ## Security
 Location access tokens are stored in `agent-state/secrets.json` (readable only by you), never in agent.json. The dashboard and the location pages open only on the computer running the agent (not through a tunnel or proxy).

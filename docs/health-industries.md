@@ -24,3 +24,6 @@ On a text the answer goes straight back as the reply. On a call nothing private 
 
 ## The call-handling controls
 Settings shows the draft control rules for your industry (Clinics and hospitals, Pharmacy or Cannabis dispensary) and marks the ones the agent already enforces in code. Every rule is a draft until you review it.
+
+## Ready-made workflows for your business
+Your bundle also has a full set of ready-made workflows for your kind of business (see `industry-kits.md`): forms and what-to-bring reminders, "something is ready" without any detail, refill and pickup texts, a person for health or medicine questions, and answers while you are closed. They start off, you read and approve each one, and they are written never to promote, never to give advice and never to carry health details. Announce a sale is never offered to these businesses. None of this is a claim of HIPAA or any other certification.

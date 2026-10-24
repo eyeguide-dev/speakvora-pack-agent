@@ -31,9 +31,14 @@ def render(text, ctx, pack=None):
                     return _slots.fallback_text(key[5:])
                 return ""
         if key.startswith("slotvar:") and pack:                       # the slot NAME comes from the context, e.g. a Slack command argument
+            name = str(lookup(ctx, key[8:]) or "")
             try:
-                return pack.text(str(lookup(ctx, key[8:]) or ""))
+                return pack.text(name)
             except Exception:  # noqa: BLE001
+                if name and str((getattr(pack, "meta", None) or {}).get("language", "en")).lower().startswith("en"):
+                    from . import slots as _slots
+                    MISSING.add(name)
+                    return _slots.fallback_text(name)
                 return ""
         if key.startswith("t:"):                                      # a short glue word in the pack's language (see i18n.GLUE)
             from . import i18n

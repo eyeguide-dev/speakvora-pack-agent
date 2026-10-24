@@ -19,9 +19,14 @@
 | `slack_command` | `{"slack_command": "/say"}` | staff use the slash command |
 | `email` | `{"email": {"keywords": ["refund"]}}` | a customer emails your support inbox (needs `inbox` in agent.json) |
 | `schedule` | `{"schedule": {"at": "09:30", "days": ["mon","tue"]}}` | a time of day (your timezone) |
+| `calendar` with `smart` | `{"calendar": {"smart": true, "title_contains": "Appointment"}}` | the **smart reminder**: the times you tick in the dashboard (the day before, the morning of, two hours before...); the line said fits each time (`{{slotvar:reminder.slot}}`) |
+| `sms` with `when_closed` | `{"sms": {"when_closed": true}}` | a text nothing else answered, outside the opening times you set (never when unset) |
 
 ## Actions (`do`)
 `notify` (text: tells your staff on Slack and/or Teams, whichever you connected), `teams` (text), `sms` (to, text, optional `"channel": "whatsapp"`), `call` (to, play: [lines]), `slack` (text, channel, optional audio), `email` (to, subject, text, optional audio), `http` (any API), `calendar_create`, `reply` (answer to the text, call or slash command in progress), `play` (add pack lines to the call), `log`. Add `"if": {"customer.prefers_call": "*"}` to run an action only when a value exists.
+
+## Ready-made kits
+Each industry's ready-made workflows carry `title` and `what` (plain words shown in the dashboard), `kit: true`, `enabled: false` and `approved: false`: a kit workflow runs only after you have opened it and pressed Approve and turn on (see `industry-kits.md`). `priority: true` puts a careful answer (a sensitive question passed to a person) before the general keyword answers. The action `sale_watch` is Announce a sale (see `announce-a-sale.md`).
 
 ## Values
 `{{customer.name}}`, `{{order.number}}`, `{{start_local}}` (calendar), `{{fact:hours}}` (from `facts` in agent.json), `{{slot:order_ready}}` (the text of a pack line), `{{slotvar:command.arg1}}` (a line chosen at run time), `{{last.sms}}` (what really happened to the earlier text: sent, blocked, skipped, error or dry_run). Templates only substitute text; nothing in a payload can run code.
