@@ -8,7 +8,7 @@ MAX_FILE = 3_000_000
 MAX_CHARS = 120_000                      # per source
 MAX_SOURCES = 60
 CHUNK = 650
-STOP = set("a an and are as at be but by can do does for from had has have how i if in is it its me my of on or our so than that the their them then there they this to us was we were what when where which who will with would you your".split())
+STOP = set("up hey hi hello um uh wondering wonder guys quick just really actually maybe question please thanks thank wanted wanna gonna like a an and are as at be but by can do does for from had has have how i if in is it its me my of on or our so than that the their them then there they this to us was we were what when where which who will with would you your".split())
 SECRET = re.compile(r"\b(?:\d[ -]?){13,19}\b|\b\d{3}-\d{2}-\d{4}\b|\b(?:password|passcode|pin|api[_ -]?key|secret|token)\s*[:=]\s*\S+", re.I)
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
@@ -324,12 +324,12 @@ def search(agent, query, k=4):
     n = len(rows); df = {w: sum(1 for r in rows if w in r[3]) for w in q}; avg = sum(len(r[3]) for r in rows) / n
     scored = []
     for title, sid, text, ws in rows:
-        s = 0.0; hit = 0
+        s = 0.0; hit = 0; rare = False
         for w in q:
             tf = ws.count(w)
             if tf:
-                hit += 1; s += math.log(1 + (n + 1) / (df[w] + 0.5)) * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * len(ws) / avg))
-        if hit >= (2 if len(q) >= 3 else 1):
+                hit += 1; rare = rare or (df[w] <= max(3, n // 3) and len(w) >= 4); s += math.log(1 + (n + 1) / (df[w] + 0.5)) * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * len(ws) / avg))
+        if hit >= (2 if len(q) >= 3 else 1) or (hit >= 1 and rare):      # one match is enough when the word is a rare one ("dogs"), so chatty wording ("I was wondering if you guys allow dogs") still finds the answer
             scored.append((s, title, text))
     scored.sort(key=lambda x: -x[0])
     top = scored[0][0] if scored else 0

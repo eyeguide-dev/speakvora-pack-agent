@@ -137,6 +137,32 @@ class Atlassian:
     def comment(self, key, blocks):
         return self._call("POST", f"/rest/api/3/issue/{quote(key)}/comment", {"body": adf(blocks)})[1]
 
+    def done_transition(self, key):
+        """The id of the transition that finishes this ticket (whatever the project calls it: Done, Closed, Resolved...), or ''."""
+        r = self._call("GET", f"/rest/api/3/issue/{quote(key)}/transitions")[1] or {}
+        for t in r.get("transitions", []):
+            if ((t.get("to") or {}).get("statusCategory") or {}).get("key") == "done":
+                return str(t.get("id"))
+        return ""
+
+    def close(self, key):
+        """Moves the ticket to its finished status. Returns the new status name, or '' when it was already finished or cannot be finished from here."""
+        if not self.search(f'key = "{key}" AND statusCategory != Done', 1):
+            return ""
+        tid = self.done_transition(key)
+        if not tid:
+            return ""
+        self._call("POST", f"/rest/api/3/issue/{quote(key)}/transitions", {"transition": {"id": tid}})
+        hit = self.search(f'key = "{key}"', 1)
+        return str((((hit[0] if hit else {}).get("fields") or {}).get("status") or {}).get("name") or "Done")
+
+    def done_among(self, keys):
+        """Which of these ticket keys are finished in Jira (the team closed them there)."""
+        keys = [k for k in keys if re.fullmatch(r"[A-Z][A-Z0-9_]+-\d+", str(k))]
+        if not keys:
+            return []
+        return [h["key"] for h in self.search("key in (" + ",".join(f'"{k}"' for k in keys) + ") AND statusCategory = Done", 50)]
+
     def link_issues(self, bug, story):
         return self._call("POST", "/rest/api/3/issueLink", {"type": {"name": self.story_link_type}, "inwardIssue": {"key": bug}, "outwardIssue": {"key": story}})
 

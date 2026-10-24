@@ -105,7 +105,7 @@ def _label(step):
 def trigger_words(w):
     on = w.get("on") or {}
     if "event" in on:
-        return "when " + builder.EVENTS.get(on["event"], "your app sends “" + on["event"] + "”").lower() if on["event"] in builder.EVENTS else "when your app sends “" + on["event"] + "”"
+        return "when " + builder.ALL_EVENTS.get(on["event"], "your app sends “" + on["event"] + "”").lower() if on["event"] in builder.ALL_EVENTS else "when your app sends “" + on["event"] + "”"
     if "sms" in on:
         if on["sms"].get("when_closed"):
             return "when a customer texts while you are closed"

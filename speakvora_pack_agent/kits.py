@@ -297,13 +297,30 @@ def sale_allowed(profile):
 
 def slot_table(profile):
     """slot -> (intent, English example) for everything this kit says. {a} stays in the text: slots.registry swaps in the booking word."""
-    out = {it[4]: (it[5], it[6]) for it in KITS.get(profile, [])}
+    from . import industry_kits as IK
+    out = {it[4]: (it[5], it[6]) for it in KITS.get(profile, []) if it[4]}
+    for slug in slugs_of(profile):                                       # every bundle of this family: its own workflows' lines and its phone welcome
+        for it in IK.SLUG_KITS.get(slug, []):
+            if it[4]:
+                out.setdefault(it[4], (it[5], it[6]))
+        if slug in IK.WELCOME:
+            out["call_welcome_" + _slug_us(slug)] = ("The first thing a caller hears at this business, before the menu.", IK.WELCOME[slug])
+    out.update(IK.CALL_COMMON)
     if profile in REMINDER_PROFILES:
         for k in ("appointment_reminder_morning", "appointment_reminder_early"):
             out[k] = S_COMMON[k]
     if profile in SALE_PROFILES:
         out.update(S_SALE)
     return out
+
+
+def _slug_us(slug):
+    return slug.replace("-", "_")
+
+
+def slugs_of(profile):
+    from . import industry_kits as IK
+    return [s for s, p in IK.SLUG_PROFILE.items() if p == profile]
 
 
 def _sms(slot):
@@ -313,6 +330,10 @@ def _sms(slot):
 def workflow_for(item, profile):
     name, title, what, trig, slot, _intent, _text, team = item
     do = []
+    if not slot:                                                        # a notice for your team only: the customer gets nothing
+        w = {"on": {"event": trig[1]}}
+        do = [{"action": "notify", "text": _text}]
+        return {"name": name, "title": title, "what": what, "kit": True, "enabled": False, "approved": False, **w, "do": do}
     if trig[0] == "sms":
         w = {"on": {"sms": {"keywords": list(trig[1])}}}
         do = [{"action": "reply", "text": "{{slot:" + slot + "}}"}]
@@ -328,7 +349,7 @@ def workflow_for(item, profile):
     if team:
         do.append({"action": "notify", "text": team})
     out = {"name": name, "title": title, "what": what, "kit": True, "enabled": False, "approved": False, **w, "do": do}
-    if name in SAFETY_FIRST:
+    if name in SAFETY_FIRST or (trig[0] == "sms" and ("to_a_person" in name or "emergency" in name or name.startswith("crisis"))):
         out["priority"] = True                                          # once approved, this careful answer is looked at before the general keyword answers
     return out
 
@@ -357,8 +378,16 @@ def reminder_plan(setting, tz_now_local, ev_start_local, now, ev_start, window=3
     return ""
 
 
-def kit_workflows(profile):
+def kit_workflows(profile, slug=None):
+    """The profile's kit, then the kit of this exact bundle (its slug) on top. Without a slug only the profile kit."""
+    from . import industry_kits as IK
     items = [workflow_for(it, profile) for it in KITS.get(profile, KITS["generic"])]
+    have = {w["name"] for w in items}; evs = {(w.get("on") or {}).get("event") for w in items}
+    for it in (IK.SLUG_KITS.get(slug, []) if slug else []):
+        w = workflow_for(it, profile)
+        if w["name"] in have or ((w.get("on") or {}).get("event") and (w["on"]["event"] in evs)):
+            continue
+        items.append(w); have.add(w["name"])
     if profile in REMINDER_PROFILES:
         items.insert(0, smart_reminder(profile))
     if sale_allowed(profile):
@@ -385,3 +414,6 @@ def violations(profile, text):
         bad += [w for w in HEALTH_DETAIL_WORDS if _has(w.strip(), low)]
     bad += [w for w in PROMISE_WORDS if _has(w, low)]
     return bad
+
+from . import industry_kits as _IK  # noqa: E402
+EVENTS.update(_IK.EV)

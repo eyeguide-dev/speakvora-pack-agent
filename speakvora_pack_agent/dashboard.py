@@ -269,7 +269,7 @@ def handle(agent, method, path, headers, raw):
         elif p == "/dash/api/setup/connection/test" and method == "POST":
             out = SU.test_connection(agent, str(json.loads(raw or b"{}").get("id", "")))
         elif p == "/dash/api/setup/incoming" and method == "POST":
-            out = SU.add_incoming(agent, str(json.loads(raw or b"{}").get("name", "")))
+            b = json.loads(raw or b"{}"); out = SU.add_incoming(agent, str(b.get("name", "")), str(b.get("origin", "")))
         elif p == "/dash/api/setup/incoming/show" and method == "POST":
             out = SU.incoming_token(agent, str(json.loads(raw or b"{}").get("id", "")))
         elif p == "/dash/api/setup/incoming/remove" and method == "POST":

@@ -16,6 +16,7 @@ SYSTEM = ("You are the front-desk voice of a small business, answering one custo
 ACTION_HELP = {"book": "book: book a table or appointment for the customer. Fields: name = the guest's name, party = how many people (a number), start = the local date and time as YYYY-MM-DDTHH:MM, area = where they want to sit (inside or outside), notes = extra needs such as a dog. Use it only when you have all of name, party, start and area. The booking book checks it and confirms or offers other times: never say it is booked yourself. If anything is missing, ask for it (one question at a time) and do not use book yet.",
                "notify": "notify: tell the team something they must act on (a booking request, a callback, a complaint, a quote). text = a short summary with the customer's name, what they want and when.",
                "sms": "sms: text the customer a short confirmation of what was agreed. text = the message.",
+               "report_bug": "report_bug: the customer says something is broken (the website, the app, online ordering or payment, or an error message). text = what happened in the customer's words: what they tried to do and what went wrong. Use it, and tell the customer kindly that the team has been told.",
                "calendar_create": "calendar_create: add a booking to the calendar once the customer has given a day and time. title = a short title, start = the local date and time as YYYY-MM-DDTHH:MM, minutes = length."}
 TEMPLATES = {"service": "This is a service business (appointments, quotes, repairs). When someone wants a booking or a quote, collect their name, what they need and the day or time they prefer, one question at a time, then use notify with a summary. Never promise a price or an arrival time that is not in the approved information.",
              "food": "This is a restaurant. For a reservation collect the name, party size and time, one question at a time, then use notify so the host confirms. Never promise a table.",
@@ -143,6 +144,8 @@ def usable_actions(agent, cfg, channel=""):
             ok.append(a)
         elif a == "book" and bookings.settings(agent)["enabled"]:
             ok.append(a)
+        elif a == "report_bug" and getattr(agent.atlassian, "jira_ready", False):
+            ok.append(a)
         elif a == "calendar_create" and (getattr(agent.gcal, "configured", False) and (agent.cfg.get("google_calendar") or {}).get("allow_create")):
             ok.append(a)
     return ok
@@ -155,7 +158,7 @@ def _actions(agent, raw, cfg, channel=""):
         if not isinstance(a, dict) or a.get("type") not in allowed:
             continue
         t = " ".join(str(a.get("text") or "").split())[:300]
-        if a["type"] in ("notify", "sms") and (len(t) < 6 or controls.guard_speech(t) == "secret" or industry_rules.violation(agent, t)):
+        if a["type"] in ("notify", "sms", "report_bug") and (len(t) < 6 or controls.guard_speech(t) == "secret" or industry_rules.violation(agent, t)):
             continue
         item = {"type": a["type"], "text": t}
         if a["type"] == "book":

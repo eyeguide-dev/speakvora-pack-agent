@@ -87,6 +87,60 @@ class KitContent(unittest.TestCase):
             self.assertTrue(plain_ok(spec[0]), spec[0])
 
 
+class BundleKits(unittest.TestCase):
+    def test_every_bundle_has_its_own_kit_and_the_profile_map_agrees(self):
+        from speakvora_pack_agent import industry_kits as IK
+        for slug, prof in SL.PROFILE_OF.items():
+            self.assertEqual(IK.SLUG_PROFILE[slug], prof, slug)
+        for slug, prof in IK.SLUG_PROFILE.items():
+            own = IK.SLUG_KITS.get(slug, [])
+            self.assertGreaterEqual(len(own), 3, slug); self.assertIn(slug, IK.WELCOME, slug)
+            ws = recipes.workflows_for(prof, "en", slug)["workflows"]
+            names = [w["name"] for w in ws]; self.assertEqual(len(names), len(set(names)), slug)
+            evs = [w["on"]["event"] for w in ws if "event" in (w.get("on") or {})]; self.assertEqual(len(evs), len(set(evs)), (slug, [e for e in evs if evs.count(e) > 1]))
+            self.assertGreaterEqual(len([w for w in ws if w.get("kit")]) - len([w for w in recipes.workflows_for(prof)["workflows"] if w.get("kit")]), 2, slug)
+
+    def test_bundles_in_different_industries_get_different_workflows(self):
+        a = {w["name"] for w in recipes.workflows_for("food", "en", "restaurants-food")["workflows"]}
+        b = {w["name"] for w in recipes.workflows_for("food", "en", "bars-food-trucks")["workflows"]}
+        c = {w["name"] for w in recipes.workflows_for("retail", "en", "furniture-home-goods")["workflows"]}
+        self.assertIn("large_party_enquiry", a - b); self.assertIn("truck_location_today", b - a); self.assertIn("damaged_on_arrival", c)
+
+    def test_bundle_lines_follow_the_phrase_and_safety_rules(self):
+        from speakvora_pack_agent import industry_kits as IK
+        for slug, prof in IK.SLUG_PROFILE.items():
+            reg = SL.registry(prof)
+            for it in IK.SLUG_KITS.get(slug, []):
+                if not it[4]:
+                    continue
+                ex = reg[it[4]]["example"]
+                self.assertFalse(re.search(r"\d", ex), (slug, it[4])); self.assertGreaterEqual(len(ex.split()), 4, (slug, it[4], ex)); self.assertTrue(ex.endswith((".", "?", "!")), (slug, it[4]))
+                self.assertEqual(kits.violations(prof, ex), [], (slug, it[4], ex))
+            w = IK.WELCOME[slug]; self.assertEqual(kits.violations(prof, w), [], slug); self.assertIn("call_welcome_" + slug.replace("-", "_"), reg)
+            self.assertNotRegex(IK.WELCOME[slug].lower(), r"hipaa|certified|compliant")
+            for ws in recipes.workflows_for(prof, "en", slug)["workflows"]:
+                self.assertFalse(ws.get("sale") and prof not in kits.SALE_PROFILES, slug)
+
+    def test_health_and_crisis_bundles_have_emergency_wording(self):
+        for slug in ("healthcare", "telehealth"):
+            w = next(x for x in recipes.workflows_for("clinic", "en", slug)["workflows"] if x["name"] == "crisis_to_a_person")
+            self.assertTrue(w.get("priority")); self.assertIn("nine eight eight", SL.registry("clinic")["crisis_line"]["example"]); self.assertTrue(any(s["action"] == "notify" for s in w["do"]))
+
+    def test_every_bundle_workflow_text_renders_without_leftovers(self):
+        from speakvora_pack_agent import industry_kits as IK, templating as T
+        for slug, prof in IK.SLUG_PROFILE.items():
+            for w in recipes.workflows_for(prof, "en", slug)["workflows"]:
+                for st in w.get("do", []):
+                    if isinstance(st.get("text"), str):
+                        out = T.render(st["text"], {"business": "Bella", "customer": {"name": "Ann"}, "sms": {"from": "+1", "body": "x"}, "facts": {}}, None)
+                        self.assertNotIn("YOUR-", out)
+
+    def test_the_welcome_is_played_first_when_the_pack_has_it(self):
+        r = rig_for("food"); a = r.agent; a.slug = "restaurants-food"
+        a.pack.slots["call_welcome_restaurants_food"] = a.pack.slots.get("order_ready") or next(iter(a.pack.by_id))
+        xml = a.handle_call({"From": "+16465550101", "CallSid": "c9"}, "start", ""); self.assertTrue(xml); r.close()
+
+
 class KitsRun(unittest.TestCase):
     def test_a_kit_workflow_does_nothing_until_it_is_approved(self):
         r = rig_for("clinic"); a = r.agent

@@ -19,7 +19,9 @@ EVENTS = {
     "ticket.created": "A support ticket is opened", "ticket.in_progress": "A ticket is being worked on", "ticket.updated": "A ticket is updated", "ticket.resolved": "A ticket is resolved", "customer.escalated": "A customer asks for a manager",
     "pipeline.failed": "A build fails", "pipeline.succeeded": "A build passes", "deploy.succeeded": "A deployment succeeds", "deploy.failed": "A deployment fails",
     "incident.triggered": "An incident is triggered", "incident.resolved": "An incident is resolved", "release.published": "A release is published", "pull_request.ready": "A pull request is ready for review", "issue.opened": "A new issue is opened",
-    "security.alert": "A security alert is raised", "bug.reported": "A bug is reported", "bug.resolved": "A bug is fixed in Jira", "facility.lockdown": "A facility lockdown starts"}
+    "security.alert": "A security alert is raised", "bug.reported": "A bug is reported", "bug.resolved": "A bug is fixed in Jira", "app.error": "Your website or app reports an error", "site.down": "Your site goes down", "order.failed": "An order fails", "checkout.abandoned": "A customer leaves an order unfinished", "review.negative": "A bad review comes in", "payment.disputed": "A payment is disputed", "inventory.low": "Stock runs low", "facility.lockdown": "A facility lockdown starts"}
+from . import kits as _kits  # noqa: E402
+ALL_EVENTS = {**EVENTS, **_kits.EVENTS}                                           # plain names for the extra events the industry kits listen for too (not listed as 'events your app can send': each is handled by its own kit workflow)
 TRIGGERS = {"sms_keywords": "A customer messages you", "event": "Something happens in your business", "before_booking": "A booking is coming up", "daily": "Every day at a set time"}
 STEPS = {"reply": "Reply to their text", "sms": "Text the customer", "notify": "Tell my team (Slack or Teams)", "email": "Email someone"}
 BEFORE = {15: "15 minutes", 60: "1 hour", 120: "2 hours", 240: "4 hours", 1440: "1 day", 2880: "2 days"}
@@ -173,7 +175,7 @@ def when_text(spec):
     if k == "sms_keywords":
         return "Someone texts " + " or ".join("“" + k + "”" for k in t["keywords"])
     if k == "event":
-        return EVENTS.get(t["event"], "Your app sends “" + t["event"] + "”")
+        return ALL_EVENTS.get(t["event"], "Your app sends “" + t["event"] + "”")
     if k == "before_booking":
         return BEFORE[t["minutes"]] + " before a booking" + (" (title has “" + t["title_contains"] + "”)" if t.get("title_contains") else "")
     return "Every " + ("day" if len(t["days"]) == 7 else ", ".join(t["days"])) + " at " + t["at"]
@@ -200,7 +202,7 @@ def view(agent):
     for w in getattr(agent, "workflows", []):
         e = (w.get("on") or {}).get("event")
         if e:
-            known[e] = EVENTS.get(e, e.replace(".", " ").replace("_", " ").capitalize())
+            known[e] = ALL_EVENTS.get(e, e.replace(".", " ").replace("_", " ").capitalize())
     for e, l in EVENTS.items():
         known.setdefault(e, l)
     return {"workflows": [{"id": w["id"], "name": w["spec"]["name"], "when": when_text(w["spec"]), "then": then_text(w["spec"]), "enabled": bool(w["spec"].get("enabled", True)), "spec": w["spec"], "updated": w.get("updated", 0)} for w in d["workflows"]],

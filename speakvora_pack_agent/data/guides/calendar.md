@@ -20,8 +20,8 @@ The agent reads your calendar to send appointment reminders. With extra setup it
 ## Keep the link private
 Anyone with the link can read your calendar. If it leaks, reset it in your calendar's settings.
 
-## To change bookings from the agent (Google, advanced)
-This needs your own Google Cloud project (client ID, client secret, refresh token). The steps are long: see docs/google-calendar.md in the agent folder. The agent only moves or cancels bookings it created itself.
+## To change bookings from the agent (Google, about 10 minutes)
+Create a Desktop app OAuth client in your own Google Cloud project (free), then run `python3 tools/connect_google_calendar.py --agent-dir . --email you@gmail.com` in the agent folder. Google's consent page opens; the answer is caught on your own computer and saved in agent-state/secrets.json. The steps are in docs/google-calendar.md. The agent only moves or cancels bookings it created itself.
 
 ## Booking format
 Put the customer's phone in the event description (for example "Phone: 646-555-0120 SMS OK: yes") so reminders know who to text and that they agreed to texts.

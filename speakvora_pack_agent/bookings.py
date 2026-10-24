@@ -137,6 +137,9 @@ def create(agent, name, party, start, area, notes="", phone="", source="call"):
     """Writes the booking. Returns {'ok', 'code', 'say', 'booking'}; with a writable calendar the booking is confirmed only when that calendar accepts it."""
     cfg = settings(agent); name = " ".join(str(name or "").split())[:60] or "Guest"; notes = " ".join(str(notes or "").split())[:200]
     with _LOCK:
+        dup = _same_booking(agent, name, party, start)                  # the caller adds a detail after the booking is confirmed ("on the patio"): say the same confirmation again, never book twice
+        if dup:
+            return {"ok": True, "code": dup["code"], "booking": dup, "say": f"You are booked: a table for {dup['party']} {dup['area']}, {say_time(agent, dup['start'])}, under {dup['name']}. Your confirmation code is {' '.join(dup['code'])}."}
         c = check(agent, start, party, area)
         if not c["ok"]:
             return {"ok": False, "reason": c["reason"], "say": unavailable_say(agent, c, party, start), "alternatives": c["alternatives"]}
@@ -144,7 +147,8 @@ def create(agent, name, party, start, area, notes="", phone="", source="call"):
         cal = None if agent.dry else _writable_calendar(agent)          # practice mode takes the booking in the local book only: no calendar is touched
         if cal is not None:
             try:
-                r = cal.create(f"Table for {party} ({area}): {name}", start, start + minutes * 60, description=(notes + "\nBooked by phone through the agent. Code " + code).strip(), ref=code)
+                desc = "\n".join(x for x in (notes, ("Phone: " + phone) if phone else "", "SMS OK: yes" if (phone and source == "text") else "", "Booked through the agent. Code " + code) if x)      # a guest who texted us may be texted back, so the reminder workflows can find the phone and the consent
+                r = cal.create(f"Reservation: table for {party} ({area}), {name}", start, start + minutes * 60, description=desc, ref=code)
                 ref = str((r or {}).get("id") or code)
             except Exception as e:  # noqa: BLE001 - the calendar did not accept it: never confirm what the calendar refused
                 agent.state.log(workflow="bookings", action="calendar_write", status="refused", dry_run=False, error=str(e)[:140])
@@ -156,6 +160,16 @@ def create(agent, name, party, start, area, notes="", phone="", source="call"):
             con.close()
     b = get(agent, code); spoken = " ".join(code)                                          # "4 8 2 7": said digit by digit
     return {"ok": True, "code": code, "booking": b, "say": f"You are booked: a table for {party} {area}, {say_time(agent, start)}, under {name}. Your confirmation code is {spoken}."}
+
+
+def _same_booking(agent, name, party, start):
+    """A confirmed booking for the same name, party size and start time made in the last 30 minutes (so a repeated request is not a second booking), or None."""
+    con = _db(agent)
+    try:
+        r = con.execute("SELECT code FROM bookings WHERE status='confirmed' AND lower(name)=lower(?) AND party=? AND start=? AND created > ?", (name, int(party), int(start), int(time.time()) - 1800)).fetchone()
+    finally:
+        con.close()
+    return get(agent, r[0]) if r else None
 
 
 def unavailable_say(agent, c, party, start):

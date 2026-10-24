@@ -24,7 +24,7 @@ from .state import State
 from . import web
 
 PHONE_RX = re.compile(r"(\+?\d[\d\-\s().]{8,}\d)")
-QUEUEABLE = ("sms", "call", "slack", "teams", "email", "webhook", "http", "jira_bug", "confluence_log", "calendar_create", "calendar_reschedule", "calendar_cancel", "calendar_delete", "reason")       # actions that wait in the outbox when the network is down
+QUEUEABLE = ("sms", "call", "slack", "teams", "email", "webhook", "http", "jira_bug", "jira_close", "confluence_log", "calendar_create", "calendar_reschedule", "calendar_cancel", "calendar_delete", "reason")       # actions that wait in the outbox when the network is down
 KEEP_WHILE_BLOCKED = ("quiet_hours", "hourly_limit", "recipient_daily_limit")                      # a queued action blocked only by timing waits (until it expires); any other refusal drops it
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
@@ -62,6 +62,7 @@ class Agent:
         if oc and "YOUR-" not in oc:                                              # your own on-call phone is staff, not a customer: it may receive urgent alerts without a consent record
             cfg.setdefault("recipients", {}).setdefault("allow", []).append(oc)
         _lang, slug = slots_mod.pack_slug(str(self.pack.meta.get("pack", "")))
+        self.slug = slug
         self.profile = cfg.get("industry_profile") or slots_mod.profile_for(slug)
         found, _gaps = slots_mod.fill(self.pack, self.profile)                  # fill what the pack already says; the rest is reported by `slots` and can be requested
         for k, v in found.items():
@@ -741,6 +742,56 @@ class Agent:
         self.atlassian.log(key, AT.clean(summary, 200), status, info.get("count", 1), info.get("opened", ""), resolved, note)
         self.safe.sent("confluence", "confluence"); self.record(wf, kind, "sent", ticket=key, to_status=status); return {"status": "sent", "ticket": key}
 
+    def _jira_close(self, wf, a, ctx):
+        """The team says a bug is fixed: adds the fix note to the Jira ticket, closes it, and marks the row resolved (with today's date) on the Confluence known-issues page."""
+        kind = "jira_close"; key = str(a.get("ticket") or ctx.get("ticket") or "").strip().upper()
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]+-\d+", key):
+            self.record(wf, kind, "skipped", reason="no_ticket"); ctx["jira"] = {"key": key, "closed": False}; return {"status": "skipped"}
+        blocked = self._gate(wf, "jira", "jira", ctx)
+        if blocked:
+            return blocked
+        note = AT.clean(str(a.get("note") or ctx.get("note") or "").strip(), 500); who = str(a.get("by") or (ctx.get("command") or {}).get("user") or "the team")
+        if self.dry:
+            ctx["jira"] = {"key": key, "closed": True}; self.record(wf, kind, "dry_run", ticket=key); return {"status": "dry_run"}
+        if a.get("optional") and not self.atlassian.jira_ready:
+            self.record(wf, kind, "skipped", reason="jira_not_connected"); return {"status": "skipped"}
+        self._need(self.atlassian.jira_ready, "Jira", "connect it in the Connect tab (site, email, API token, project)")
+        at = self.atlassian; when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+        at.comment(key, [("p", f"Fixed, reported by {who} on {when}."), ("p", note or "No note was added.")])
+        status = at.close(key) or "Done"
+        bugs = self.state.data.setdefault("jira_bugs", {}); info = next((v for v in bugs.values() if v.get("key") == key), {})
+        if info:
+            with self.state.lock:
+                info["closed"] = time.strftime("%Y-%m-%d"); self.state.save()
+        ctx["jira"] = {"key": key, "url": at.link(key), "closed": True, "status": status}
+        if at.docs_ready and a.get("document", True):
+            try:
+                at.log(key, AT.clean(str(info.get("summary") or key), 200), "Fixed", info.get("count", 1), info.get("opened", ""), time.strftime("%Y-%m-%d"), note)
+            except Exception as e:  # noqa: BLE001
+                self.record(wf, "confluence_log", "failed", ticket=key, error=str(e)[:160])
+        self.safe.sent("jira", "jira"); self.record(wf, kind, "sent", ticket=key, to_status=status); return {"status": "sent", "ticket": key}
+
+    def _jira_sync(self):
+        """Once in a while: a ticket this agent opened was closed in Jira by the team. Mark it fixed on the Confluence page and tell the team once. Never raises."""
+        if self.dry or not self.atlassian.jira_ready:
+            return 0
+        bugs = self.state.data.get("jira_bugs") or {}; open_keys = [v["key"] for v in bugs.values() if v.get("key") and not v.get("closed")]
+        if not open_keys or time.time() - float(self.state.data.get("jira_sync_at", 0)) < 240:
+            return 0
+        self.state.data["jira_sync_at"] = time.time(); n = 0
+        try:
+            for key in self.atlassian.done_among(open_keys):
+                info = next(v for v in bugs.values() if v.get("key") == key)
+                with self.state.lock:
+                    info["closed"] = time.strftime("%Y-%m-%d"); self.state.save()
+                ctx = self.ctx(ticket=key, title=info.get("summary", key), jira={"key": key, "url": self.atlassian.link(key), "closed": True})
+                if self.atlassian.docs_ready:
+                    self.atlassian.log(key, AT.clean(str(info.get("summary") or key), 200), "Fixed", info.get("count", 1), info.get("opened", ""), time.strftime("%Y-%m-%d"), "Closed in Jira by the team.")
+                self.run_actions("jira_sync", [{"action": "notify", "text": f"Bug {key} was closed in Jira: {info.get('summary', key)}. The known-issues page is updated. {self.atlassian.link(key)}"}], ctx); n += 1
+        except Exception as e:  # noqa: BLE001
+            self.state.log(workflow="jira_sync", status="error", error=str(e)[:160])
+        return n
+
     def _do_now(self, wf, kind, a, ctx, out):
         if kind == "reply":
             out["reply"] = a.get("text", ""); self.record(wf, kind, "ok"); return {"status": "ok"}
@@ -805,6 +856,8 @@ class Agent:
             return self._jira_bug(wf, a, ctx)
         if kind == "confluence_log":
             return self._confluence_log(wf, a, ctx)
+        if kind == "jira_close":
+            return self._jira_close(wf, a, ctx)
         if kind == "notify":
             # staff alert to every team chat you connected (Slack and/or Teams): the workflow does not care which one you use
             res = []
@@ -976,6 +1029,10 @@ class Agent:
     def tick(self):
         """Call about once a minute: queued actions, calendar reminders and daily schedules."""
         self.flush_outbox()
+        try:
+            self._jira_sync()                                                    # the team closed a bug in Jira: the Confluence page and the team chat hear about it
+        except Exception:  # noqa: BLE001
+            pass
         from . import sharing
         from . import learned, privacy, tracker
         try:
@@ -1134,6 +1191,9 @@ class Agent:
                     self.record("converse", "notify", "skipped", reason="no Slack or Teams connected"); continue
             elif a["type"] == "sms":
                 acts = [{"action": "sms", "to": who, "text": a["text"], "raw": True}]
+            elif a["type"] == "report_bug":
+                acts = [{"action": "jira_bug", "text": a["text"], "source": ("text message" if channel == "sms" else "phone call"), "optional": True},
+                        {"action": "notify", "text": "Customer reported a problem by " + ("text" if channel == "sms" else "phone") + ": {{jira.key}} {{jira.url}} (reports so far: {{jira.count}}). " + a["text"]}]
             else:
                 try:
                     tz = ZoneInfo(self.cfg.get("timezone") or "UTC"); d = dt.datetime.strptime(a["start"], "%Y-%m-%dT%H:%M").replace(tzinfo=tz)
@@ -1383,6 +1443,27 @@ class Agent:
                 return k
         return ""
 
+    def _dial(self, to):
+        """Connect the caller to a person. When the address is public, Twilio asks /twilio/call/dialdone when the dial ends, so a caller who was connected to a person is never told 'nobody could pick up'."""
+        from xml.sax.saxutils import escape
+        base = str(self.cfg.get("public_base_url", "")).rstrip("/")
+        act = f' action="{escape(base)}/twilio/call/dialdone" method="POST"' if base else ""
+        return f'<Dial timeout="25" answerOnBridge="true"{act}><Number>{escape(to)}</Number></Dial>'
+
+    def _busy_after_dial(self, custom=None):
+        """What is said when nobody picks up: only added here when there is no public address to ask afterwards (with one, dialdone says it)."""
+        if str(self.cfg.get("public_base_url", "")).strip():
+            return ""
+        from xml.sax.saxutils import escape
+        return f"<Say>{escape(custom)}</Say>" if custom else self._vp("call_transfer_busy", "Sorry, nobody could pick up. We will call you back as soon as we can.")
+
+    def handle_dial_done(self, params):
+        """Twilio calls this when the dial to a person ends. Connected and finished: just hang up, quietly. Nobody answered: say so and promise a call back."""
+        st = str(params.get("DialCallStatus", "")).lower()
+        if st in ("completed", "answered"):
+            return "<Response><Hangup/></Response>"
+        return "<Response>" + self._vp("call_transfer_busy", "Sorry, nobody could pick up. We will call you back as soon as we can.") + "<Hangup/></Response>"
+
     def handle_call(self, params, step="start", digits=""):
         """An inbound call from Twilio -> TwiML (see _handle_call). Also writes the conversation record shown in the dashboard's Calls and texts."""
         self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}; self._tl.patient = False; self._tl.loud = False
@@ -1431,6 +1512,9 @@ class Agent:
             except (PackError, AudioError):
                 pass
             pre = [self._line_part(x) for x in self._required("menu")]
+            welcome = "call_welcome_" + str(getattr(self, "slug", "")).replace("-", "_")
+            if welcome in self.pack.slots:                                              # this business type's own greeting, when the pack has it (after any required notice, before the menu)
+                pre.append(self._line_part(welcome))
             return twiml_menu(urls, f"{base}/twilio/call/menu", say, pre=pre, speech_hints=self._speech_hints(menu), enhanced=self._speech_enhanced(), speech_timeout=self._speech_timeout(), no_input_url=f"{base}/twilio/call/menu", hint_say=hint)
         said = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", str(params.get("SpeechResult", "")).lower())).strip()                  # "No, thanks." becomes "no thanks"
         if said or step != "start":
@@ -1519,7 +1603,7 @@ class Agent:
                 return xml + self._vp("call_staff_unavailable", "Sorry, nobody is available to take your call right now. We will call you back as soon as we can.") + "</Response>"
             if to and "YOUR-" not in to and (ext and 2 <= len(to) <= 6 or len(to) >= 8):
                 self.record(wf["name"], "transfer", "sent", to=to)
-                return xml + f'<Dial timeout="25" answerOnBridge="true"><Number>{escape(to)}</Number></Dial>' + (f'<Say>{escape(xfer[0]["say_if_busy"])}</Say>' if xfer[0].get("say_if_busy") else self._vp("call_transfer_busy", "Sorry, nobody could pick up. We will call you back as soon as we can.")) + '<Hangup/></Response>'
+                return xml + self._dial(to) + self._busy_after_dial(xfer[0].get("say_if_busy")) + '<Hangup/></Response>'
             self.record(wf["name"], "transfer", "skipped", reason="no staff phone number set (facts.oncall_phone)")
             xml += self._vp("call_staff_unavailable", "Sorry, nobody is available to take your call right now. We will call you back as soon as we can.")
         if menu.get("again", True):                                               # after an answer, ask whether there is anything else; silence or "no" ends the call politely
@@ -1661,7 +1745,7 @@ class Agent:
             if to:                                                                        # the menu had no transfer: connect the staff phone directly
                 from xml.sax.saxutils import escape
                 self.record("converse", "transfer", "sent", to=to)
-                return f'<Response>{lead}{self._vp("handoff_person", "One moment please, I am connecting you to a team member.")}<Dial timeout="25" answerOnBridge="true"><Number>{escape(to)}</Number></Dial>{self._vp("call_transfer_busy", "Sorry, nobody is available right now. We will call you back as soon as we can.")}<Hangup/></Response>'
+                return f'<Response>{lead}{self._vp("handoff_person", "One moment please, I am connecting you to a team member.")}{self._dial(to)}{self._busy_after_dial()}<Hangup/></Response>'
             return inner.replace("<Response>", "<Response>" + lead, 1)
         xml = r.get("xml") or self._ai_voice(r["say"])
         m["outcome"] = "answered"; self._do_ai_actions(S.norm_phone(params.get("From", "")), r.get("do"), "call")

@@ -81,7 +81,7 @@ class EveryWorkflow(unittest.TestCase):
                         res, texts = [{"action": "?", "status": "exception", "reason": repr(e)[:120]}], []
                     total += 1
                     for x in res:
-                        if x.get("status") not in GOOD and (w["name"], x.get("status")) not in NEEDS_SETUP and not (x.get("action") == "track" and x.get("status") == "skipped" and not tracking) and not (x.get("action") in ("jira_bug", "confluence_log") and x.get("status") == "skipped"):          # Jira and Confluence steps skip quietly until the customer connects their own
+                        if x.get("status") not in GOOD and (w["name"], x.get("status")) not in NEEDS_SETUP and not (x.get("action") == "track" and x.get("status") == "skipped" and not tracking) and not (x.get("action") in ("jira_bug", "jira_close", "confluence_log") and x.get("status") == "skipped"):          # Jira and Confluence steps skip quietly until the customer connects their own
                             bad.append((p, w["name"], x.get("action"), x.get("status"), str(x.get("reason") or x.get("error") or "")[:100]))
                     for t in texts:
                         if "{{" in t or "YOUR-" in t:

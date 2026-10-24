@@ -1207,7 +1207,7 @@ def test_connection(agent, cid):
         return {"ok": False, "message": _explain(e)}
 
 
-def add_incoming(agent, name):
+def add_incoming(agent, name, origin=""):
     slug = "custom-" + _slug(name); env = _env("HOOK", slug, "TOKEN"); store = SS.read(agent.state.dir)
     if not store.get(env):
         SS.set_value(agent.state.dir, env, _rnd.token_hex(20))
@@ -1215,6 +1215,9 @@ def add_incoming(agent, name):
     src = {"name": slug, "path": "/hook/" + slug, "auth": {"type": "bearer", "token": "env:" + env},
            "map": {"event": "payload.event", "id": "payload.id", "customer.name": "payload.customer.name", "customer.phone": "payload.customer.phone", "customer.email": "payload.customer.email",
                    "customer.sms_consent": {"from": "payload.customer.sms_consent", "default": False}, "order.number": "payload.order.number", "appointment.time": "payload.appointment.time", "party": "payload.party", "data": "payload"}}
+    origin = str(origin or "").strip().rstrip("/")
+    if re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:\d+)?", origin):                 # a website whose visitors' browsers may post here directly (an error report from your own page)
+        src["origins"] = [origin]
     raw["sources"] = [x for x in raw.get("sources", []) if x.get("name") != slug] + [src]; _write_raw(agent, raw); _reload(agent)
     return {"id": slug, "url": _public_or_local(agent) + src["path"], "token": SS.read(agent.state.dir)[env]}
 

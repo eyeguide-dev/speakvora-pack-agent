@@ -52,7 +52,7 @@ def main(argv=None):
         import os
         from . import recipes, slots as SL
         pk = Pack(a.pack); _lang, slug = SL.pack_slug(str(pk.meta.get("pack", ""))); prof = SL.profile_for(slug)
-        for name, doc in (("agent.json", {**recipes.agent_config(), "pack": a.pack, "mode": a.mode}), ("workflows.json", recipes.workflows_for(prof, pk.language))):
+        for name, doc in (("agent.json", {**recipes.agent_config(), "pack": a.pack, "mode": a.mode}), ("workflows.json", recipes.workflows_for(prof, pk.language, slug))):
             if os.path.exists(name) and not a.force:
                 print(f"{name} already exists (use --force to replace)"); continue
             json.dump(doc, open(name, "w", encoding="utf-8"), ensure_ascii=False, indent=1); print("wrote", name)

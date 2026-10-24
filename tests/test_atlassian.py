@@ -35,8 +35,13 @@ class Atlas:
             return 200, {"name": "Bugs", "issueTypes": [{"name": "Bug"}, {"name": "Story"}]}
         if p == "/rest/api/3/search/jql":
             jql = b["jql"]; hit = []
-            mk = re.search(r'labels = "([^"]+)"', jql); mkey = re.search(r'key = "([^"]+)"', jql)
+            mk = re.search(r'labels = "([^"]+)"', jql); mkey = re.search(r'key = "([^"]+)"', jql); keys_in = re.search(r'key in \(([^)]*)\)', jql)
+            if keys_in:
+                want = re.findall(r'"([^"]+)"', keys_in.group(1)); done = "statusCategory = Done" in jql
+                return 200, {"issues": [{"key": k, "fields": {"status": {"name": "Done"}}} for k in want if k in self.issues and self.issues[k]["done"] == done]}
             for k, i in self.issues.items():
+                if mkey and mkey.group(1) == k and "statusCategory != Done" not in jql:
+                    hit.append({"key": k, "fields": {"status": {"name": "Done" if i["done"] else "To Do"}}}); continue
                 if i["done"]:
                     continue
                 if (mk and mk.group(1) in i["fields"]["labels"]) or (mkey and mkey.group(1) == k):
@@ -44,6 +49,11 @@ class Atlas:
             return 200, {"issues": hit[: b.get("maxResults", 5)]}
         if p == "/rest/api/3/issue" and m == "POST":
             k = f"BUG-{len(self.issues) + 1}"; self.issues[k] = {"fields": b["fields"], "done": False}; return 201, {"key": k}
+        mt = re.fullmatch(r"/rest/api/3/issue/([A-Z]+-\d+)/transitions", p)
+        if mt and m == "GET":
+            return 200, {"transitions": [{"id": "11", "to": {"statusCategory": {"key": "indeterminate"}}}, {"id": "31", "to": {"statusCategory": {"key": "done"}}}]}
+        if mt and m == "POST":
+            assert b["transition"]["id"] == "31", "closes through the transition that finishes the ticket"; self.issues[mt.group(1)]["done"] = True; return 204, {}
         mm = re.fullmatch(r"/rest/api/3/issue/([A-Z]+-\d+)/comment", p)
         if mm:
             self.comments.setdefault(mm.group(1), []).append(b["body"]); return 201, {"id": "1"}
@@ -140,7 +150,7 @@ class Flow(unittest.TestCase):
         r.atlas.issues["BUG-1"]["done"] = True
         r.event("bug.resolved", ticket="BUG-1", title="Checkout freezes", status="Done")
         v = r.atlas.pages["1"]["body"]["storage"]["value"]
-        self.assertIn("Resolved", v); self.assertIn("Use the web checkout", v); self.assertEqual(v.count("/browse/BUG-1"), 1)
+        self.assertIn("Fixed", v); self.assertIn("Use the web checkout", v); self.assertEqual(v.count("/browse/BUG-1"), 1)
         self.assertEqual(v.count("<tr>"), 2, "one header row and one ticket row"); no_errors(self, r)
         r.event("bug.reported", description="Checkout freezes after I press Pay")
         self.assertEqual(len(r.atlas.issues), 2, "the old ticket was finished, so this is a new one")

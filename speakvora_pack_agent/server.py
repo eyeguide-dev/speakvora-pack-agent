@@ -34,12 +34,31 @@ def make_handler(agent, private=False):
         def log_message(self, *a):
             pass
 
+        def _cors_origin(self):
+            """The website that may post straight from a visitor's browser to this address: only a source that lists it (origins in its settings), and only with its token."""
+            p = self.path.split("?")[0]; o = self.headers.get("Origin", "")
+            if not (o and p.startswith("/hook/")):
+                return ""
+            src = next((x for x in cfg.get("sources", []) if x.get("path") == p), None)
+            return o if src and o in (src.get("origins") or []) else ""
+
         def _send(self, code, body=b"", ctype="application/json"):
             if isinstance(body, (dict, list)):
                 body = json.dumps(body).encode()
             elif isinstance(body, str):
                 body = body.encode()
-            self.send_response(code); self.send_header("content-type", ctype); self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            self.send_response(code); self.send_header("content-type", ctype); self.send_header("content-length", str(len(body)))
+            o = self._cors_origin()
+            if o:
+                self.send_header("access-control-allow-origin", o); self.send_header("vary", "Origin")
+            self.end_headers(); self.wfile.write(body)
+
+        def do_OPTIONS(self):
+            o = self._cors_origin()
+            if not o:
+                return self._send(404, {"error": "not_found"})
+            self.send_response(204); self.send_header("access-control-allow-origin", o); self.send_header("vary", "Origin"); self.send_header("access-control-allow-methods", "POST, OPTIONS")
+            self.send_header("access-control-allow-headers", "authorization, content-type"); self.send_header("access-control-max-age", "600"); self.send_header("content-length", "0"); self.end_headers()
 
         def _body(self):
             n = min(int(self.headers.get("content-length") or 0), 4_500_000 if self.path.split("?")[0] == "/dash/api/knowledge/upload" else 200_000)
@@ -198,7 +217,7 @@ def make_handler(agent, private=False):
                     if not agent.twilio.check_signature(self._public(), params, self.headers.get("X-Twilio-Signature", "")):
                         return self._send(403, {"error": "bad_signature"})
                     return self._send(200, agent.call_wait(p.rsplit("/", 1)[1], params), "text/xml")
-                if p in ("/twilio/sms", "/twilio/call", "/twilio/call/menu", "/twilio/call/menu2", "/twilio/call/menu3", "/twilio/status"):
+                if p in ("/twilio/sms", "/twilio/call", "/twilio/call/menu", "/twilio/call/menu2", "/twilio/call/menu3", "/twilio/call/dialdone", "/twilio/status"):
                     params = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items()}
                     if not agent.twilio.check_signature(self._public(), params, self.headers.get("X-Twilio-Signature", "")):
                         return self._send(403, {"error": "bad_signature"})
@@ -208,6 +227,8 @@ def make_handler(agent, private=False):
                         from .connectors.twilio import twiml_message
                         reply = agent.handle_sms(params)
                         return self._send(200, twiml_message(reply) if reply else "<Response></Response>", "text/xml")
+                    if p == "/twilio/call/dialdone":
+                        return self._send(200, agent.handle_dial_done(params), "text/xml")
                     return self._send(200, agent.handle_call(params, "start" if p == "/twilio/call" else ("menu3" if p.endswith("menu3") else "menu2" if p.endswith("menu2") else "menu"), params.get("Digits", "")), "text/xml")
                 if p == "/android/sms":                                        # a text your Android phone received (signed by the SMS Gateway app)
                     if not agent.android.verify(raw, self.headers.get("X-Timestamp", ""), self.headers.get("X-Signature", "")):

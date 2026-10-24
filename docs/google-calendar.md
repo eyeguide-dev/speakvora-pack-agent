@@ -19,15 +19,22 @@ Use **Secret address in iCal format** (press the eye to show it, the copy icon t
 ![Secret address and Reset button, blurred](img/google-calendar-2-secret-address.jpg)
 
 ## Set up the read-and-change mode (about 10 minutes, free)
-1. In your own Google Cloud project turn on the **Google Calendar API**.
-2. OAuth consent screen: type External, add your own Google account as a test user.
-3. Create an **OAuth client ID** of type Web application with the redirect URI `https://developers.google.com/oauthplayground`.
-4. In the OAuth Playground (gear icon: tick "Use your own OAuth credentials", paste the client ID and secret), authorize the scope `https://www.googleapis.com/auth/calendar.events` with your account, press "Exchange authorization code for tokens" and copy the **refresh token**.
-5. Easiest: dashboard, **Connect**, **Google Calendar**: paste the client ID, client secret and refresh token, pick **Add, move, cancel and delete its own bookings**, optionally a calendar ID, and press Save and test. Or in `agent.json`:
+Tested live on 2026-10-24: a Desktop app client, Google's consent page, and a helper script that catches the answer on your own computer. You never paste a secret into a web page.
+1. Open console.cloud.google.com, make or pick a project, and under **APIs and Services, Library** turn on the **Google Calendar API**.
+2. **Google Auth Platform** (OAuth consent screen): user type **External**, publishing status **Testing**, and under **Audience** add your own Google account as a **test user**.
+3. **Clients, Create client**: Application type **Desktop app**, any name, **Create**. Copy the **Client ID** and **Client secret** now (Google shows the secret only in this box).
+4. In a terminal, in the folder you unzipped (the one with `agent.json`), run:
+```
+python3 tools/connect_google_calendar.py --agent-dir . --email you@gmail.com
+```
+Paste the client ID, then the secret (it is hidden). Your browser opens Google's consent page. Because the app is yours and in Testing, it says **Google hasn't verified this app**: press **Continue**, then **Continue** again (the only permission asked is to create and change calendar events, scope calendar.events). The script catches the answer on 127.0.0.1, swaps it for a refresh token, saves the three values in `agent-state/secrets.json` (mode 600) and switches `agent.json` to read and change mode.
+5. Restart the agent. In the dashboard, **Connect, Google Calendar, Save and test**.
+Use a separate calendar for bookings (create one in Google Calendar, copy its **Calendar ID** from its settings, and pass `--calendar-id`) so your own events stay apart.
+Notes: in Testing mode Google expires the refresh token after 7 days unless you press **Publish app** on the Audience page (you do not need Google's verification for a calendar only you use; publishing to production keeps the token alive, and the warning page stays). If the consent step says the redirect failed, another program is using the port: just run the script again. Remove access any time at myaccount.google.com/permissions.
+Or by hand, in `agent.json`:
 ```json
 "google_calendar": {"mode": "oauth", "client_id": "env:GOOGLE_CLIENT_ID", "client_secret": "env:GOOGLE_CLIENT_SECRET", "refresh_token": "env:GOOGLE_REFRESH_TOKEN", "calendar_id": "primary", "allow_create": true}
 ```
-Use a separate calendar (its Calendar ID is in that calendar's settings) if you want to keep bookings apart from your own events.
 
 ## The four actions
 Your app sends an event that names the booking (`appointment.id`). The recipes for clinics, salons and similar businesses already do this:

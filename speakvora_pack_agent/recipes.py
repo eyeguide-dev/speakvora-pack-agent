@@ -10,18 +10,19 @@ def _sms(to, text):
     return {"action": "sms", "to": "{{customer.phone}}" if to is None else to, "text": text}
 
 
-def workflows_for(profile, lang="en"):
-    return localize(_with_kit(_workflows_for(profile), profile), lang)
+def workflows_for(profile, lang="en", slug=None):
+    """The ready-made workflows for an industry profile; with the bundle's slug (restaurants-food, healthcare...) also that exact business type's own kit."""
+    return localize(_with_kit(_workflows_for(profile), profile, slug), lang)
 
 
-def _with_kit(doc, profile):
+def _with_kit(doc, profile, slug=None):
     """Adds the industry's ready-made kit (kits.py) and gives every workflow a plain title and description. Kit workflows start switched off until the owner opens and approves them."""
     from . import kits
     ws = doc["workflows"]
     ws[:] = [w for w in ws if w["name"] not in ("reservation_reminder_24h", "reservation_reminder_2h")]          # the smart reminder replaces the fixed day-before and two-hours-before pair
     have_names = {w["name"] for w in ws}
     have_events = {(w.get("on") or {}).get("event") for w in ws if (w.get("on") or {}).get("event")}
-    for k in kits.kit_workflows(profile):
+    for k in kits.kit_workflows(profile, slug):
         ev = (k.get("on") or {}).get("event")
         if k["name"] in have_names or (ev and ev in have_events):
             continue
