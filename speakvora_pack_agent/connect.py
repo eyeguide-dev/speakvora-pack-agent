@@ -1122,8 +1122,9 @@ def slack_manifest(agent):
     cmds = sorted({(w.get("on") or {}).get("slack_command") for w in _workflow_file(agent).get("workflows", []) if (w.get("on") or {}).get("slack_command")})
     m = {"display_information": {"name": (agent.cfg.get("business") if _real(agent.cfg.get("business")) else "Voice bundle agent")[:35]},
          "features": {"bot_user": {"display_name": "Voice bundle agent", "always_online": True}},
-         "oauth_config": {"scopes": {"bot": ["chat:write", "files:write", "commands"]}},
-         "settings": {"org_deploy_enabled": False, "socket_mode_enabled": False, "token_rotation_enabled": False}}
+         "oauth_config": {"scopes": {"bot": ["chat:write", "files:write", "commands", "channels:history", "groups:history"]}},
+         "settings": {"org_deploy_enabled": False, "socket_mode_enabled": False, "token_rotation_enabled": False,
+                      "event_subscriptions": {"request_url": (base if _real(base) else "https://YOUR-PUBLIC-ADDRESS") + "/slack/events", "bot_events": ["message.channels", "message.groups"]}}}
     if cmds:
         m["features"]["slash_commands"] = [{"command": c, "url": (base if _real(base) else "https://YOUR-PUBLIC-ADDRESS") + "/slack/command", "description": "Voice bundle agent", "should_escape": False} for c in cmds]
     return m

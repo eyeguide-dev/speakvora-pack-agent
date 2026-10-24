@@ -145,6 +145,26 @@ class Atlassian:
                 return str(t.get("id"))
         return ""
 
+    def transitions(self, key):
+        """Every move this ticket can make right now: [{id, name, to (the status it lands in), cat (new, indeterminate or done)}]."""
+        r = self._call("GET", f"/rest/api/3/issue/{quote(key)}/transitions")[1] or {}
+        out = []
+        for t in r.get("transitions", []):
+            to = t.get("to") or {}
+            out.append({"id": str(t.get("id")), "name": str(t.get("name") or to.get("name") or ""), "to": str(to.get("name") or t.get("name") or ""), "cat": str((to.get("statusCategory") or {}).get("key") or "")})
+        return out
+
+    def status(self, key):
+        """(status name, category key) of one ticket, or ('', '')."""
+        hit = self.search(f'key = "{key}"', 1)
+        st = ((hit[0] if hit else {}).get("fields") or {}).get("status") or {}
+        return str(st.get("name") or ""), str((st.get("statusCategory") or {}).get("key") or "")
+
+    def move(self, key, tid):
+        """Runs one transition (by id from transitions()). Returns the status the ticket is in afterwards."""
+        self._call("POST", f"/rest/api/3/issue/{quote(key)}/transitions", {"transition": {"id": str(tid)}})
+        return self.status(key)[0]
+
     def close(self, key):
         """Moves the ticket to its finished status. Returns the new status name, or '' when it was already finished or cannot be finished from here."""
         if not self.search(f'key = "{key}" AND statusCategory != Done', 1):

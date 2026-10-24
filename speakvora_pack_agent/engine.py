@@ -757,8 +757,9 @@ class Agent:
             self.record(wf, kind, "skipped", reason="jira_not_connected"); return {"status": "skipped"}
         self._need(self.atlassian.jira_ready, "Jira", "connect it in the Connect tab (site, email, API token, project)")
         at = self.atlassian; when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
-        at.comment(key, [("p", f"Fixed, reported by {who} on {when}."), ("p", note or "No note was added.")])
-        status = at.close(key) or "Done"
+        verb = AT.clean(str(a.get("verb") or "Fixed"), 40)
+        at.comment(key, [("p", f"{verb}, reported by {who} on {when}."), ("p", note or "No note was added.")])
+        status = (at.move(key, a["transition"]) if a.get("transition") else at.close(key)) or "Done"
         bugs = self.state.data.setdefault("jira_bugs", {}); info = next((v for v in bugs.values() if v.get("key") == key), {})
         if info:
             with self.state.lock:
@@ -766,10 +767,24 @@ class Agent:
         ctx["jira"] = {"key": key, "url": at.link(key), "closed": True, "status": status}
         if at.docs_ready and a.get("document", True):
             try:
-                at.log(key, AT.clean(str(info.get("summary") or key), 200), "Fixed", info.get("count", 1), info.get("opened", ""), time.strftime("%Y-%m-%d"), note)
+                at.log(key, AT.clean(str(info.get("summary") or key), 200), AT.clean(str(a.get("status_label") or "Fixed"), 30), info.get("count", 1), info.get("opened", ""), time.strftime("%Y-%m-%d"), note)
             except Exception as e:  # noqa: BLE001
                 self.record(wf, "confluence_log", "failed", ticket=key, error=str(e)[:160])
         self.safe.sent("jira", "jira"); self.record(wf, kind, "sent", ticket=key, to_status=status); return {"status": "sent", "ticket": key}
+
+    def _remember_thread(self, ctx, posted):
+        """A bug alert posted to Slack: remember its thread so the team's replies in it reach the ticket (see bugdesk.py)."""
+        key = str((ctx.get("jira") or {}).get("key") or "").upper(); ts = (posted or {}).get("ts") if isinstance(posted, dict) else None; chan = (posted or {}).get("channel") if isinstance(posted, dict) else None
+        if key and ts and chan:
+            with self.state.lock:
+                t = self.state.data.setdefault("bug_threads", {}); t[f"{chan}:{ts}"] = key
+                while len(t) > 300:
+                    t.pop(next(iter(t)))
+                self.state.save()
+
+    def handle_slack_event(self, payload):
+        from . import bugdesk
+        return bugdesk.handle(self, payload)
 
     def _jira_sync(self):
         """Once in a while: a ticket this agent opened was closed in Jira by the team. Mark it fixed on the Confluence page and tell the team once. Never raises."""
@@ -888,7 +903,7 @@ class Agent:
                 self.record(wf, kind, "dry_run", text=a["text"], channel=ch, audio=bool(path)); return {"status": "dry_run"}
             self._need(self.slack.configured, "Slack", "add slack.bot_token (or slack.webhook_url) in agent.json")
             if not a.get("_posted"):                                          # a retry after the text went out must not post it twice
-                self.slack.post(a["text"], ch); a["_posted"] = True
+                self._remember_thread(ctx, self.slack.post(a["text"], ch)); a["_posted"] = True
             if path:
                 self.slack.upload(ch, path, self.pack.text(self.pack.resolve(a["audio"])["id"])[:80])
             self.safe.sent("slack", a.get("channel", "")); self.record(wf, kind, "sent", channel=ch); return {"status": "sent"}

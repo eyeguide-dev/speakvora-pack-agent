@@ -260,6 +260,15 @@ def make_handler(agent, private=False):
                         if agent.state.once("whatsapp:" + hashlib.sha256(raw).hexdigest() + m["from"]):
                             n += bool(agent.handle_unsupported("whatsapp", m["from"]) if m.get("unsupported") else agent.handle_chat("whatsapp", m["from"], m["body"]))
                     return self._send(200, {"replied": n})
+                if p == "/slack/events":
+                    if not agent.slack.verify(raw, self.headers.get("X-Slack-Request-Timestamp", ""), self.headers.get("X-Slack-Signature", "")):
+                        return self._send(401, {"error": "bad_signature"})
+                    payload = json.loads(raw or b"{}")
+                    if payload.get("type") == "url_verification":
+                        return self._send(200, {"challenge": payload.get("challenge", "")})
+                    if not self.headers.get("X-Slack-Retry-Num"):                 # Slack retries a slow answer; the first delivery is enough
+                        threading.Thread(target=agent.handle_slack_event, args=(payload,), daemon=True).start()
+                    return self._send(200, {"ok": True})
                 if p == "/slack/command":
                     if not agent.slack.verify(raw, self.headers.get("X-Slack-Request-Timestamp", ""), self.headers.get("X-Slack-Signature", "")):
                         return self._send(401, {"error": "bad_signature"})

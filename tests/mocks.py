@@ -40,7 +40,7 @@ class Mock:
         if p.endswith("/Calls.json"):
             return 201, {"sid": "CA" + str(len(self.requests))}
         if p.endswith("/chat.postMessage"):
-            return 200, {"ok": True, "ts": "1.1"}
+            return 200, {"ok": True, "ts": "1.1", "channel": "C0FRONT"}
         if p.endswith("/files.getUploadURLExternal"):
             return 200, {"ok": True, "upload_url": self.url + "/slack-upload/1", "file_id": "F123"}
         if p.startswith("/slack-upload"):

@@ -9,6 +9,8 @@ class Atlas:
     """A small Jira Cloud and Confluence Cloud look-alike that remembers what it was given."""
     def __init__(self):
         self.issues, self.comments, self.links, self.pages, self.calls = {}, {}, [], {}, []
+        self.moved = []
+        self.MOVES = [("11", "In Progress", "indeterminate"), ("21", "Blocked", "indeterminate"), ("31", "Done", "done"), ("41", "Won't Do", "done"), ("51", "To Do", "new")]
         me = self
 
         class H(BaseHTTPRequestHandler):
@@ -41,7 +43,7 @@ class Atlas:
                 return 200, {"issues": [{"key": k, "fields": {"status": {"name": "Done"}}} for k in want if k in self.issues and self.issues[k]["done"] == done]}
             for k, i in self.issues.items():
                 if mkey and mkey.group(1) == k and "statusCategory != Done" not in jql:
-                    hit.append({"key": k, "fields": {"status": {"name": "Done" if i["done"] else "To Do"}}}); continue
+                    hit.append({"key": k, "fields": {"status": {"name": i.get("status") or ("Done" if i["done"] else "To Do")}}}); continue
                 if i["done"]:
                     continue
                 if (mk and mk.group(1) in i["fields"]["labels"]) or (mkey and mkey.group(1) == k):
@@ -51,9 +53,10 @@ class Atlas:
             k = f"BUG-{len(self.issues) + 1}"; self.issues[k] = {"fields": b["fields"], "done": False}; return 201, {"key": k}
         mt = re.fullmatch(r"/rest/api/3/issue/([A-Z]+-\d+)/transitions", p)
         if mt and m == "GET":
-            return 200, {"transitions": [{"id": "11", "to": {"statusCategory": {"key": "indeterminate"}}}, {"id": "31", "to": {"statusCategory": {"key": "done"}}}]}
+            return 200, {"transitions": [{"id": i, "name": n, "to": {"name": n, "statusCategory": {"key": c}}} for i, n, c in self.MOVES]}
         if mt and m == "POST":
-            assert b["transition"]["id"] == "31", "closes through the transition that finishes the ticket"; self.issues[mt.group(1)]["done"] = True; return 204, {}
+            row = next((x for x in self.MOVES if x[0] == b["transition"]["id"]), None); assert row, "only a move Jira offered"
+            iss = self.issues[mt.group(1)]; iss["done"] = row[2] == "done"; iss["status"] = row[1]; self.moved.append((mt.group(1), row[1])); return 204, {}
         mm = re.fullmatch(r"/rest/api/3/issue/([A-Z]+-\d+)/comment", p)
         if mm:
             self.comments.setdefault(mm.group(1), []).append(b["body"]); return 201, {"id": "1"}
