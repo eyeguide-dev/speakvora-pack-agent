@@ -1,5 +1,7 @@
 # The bug desk: bugs handled from Slack
 
+**Want screenshots and the setup in order? See [bug-desk-walkthrough.md](bug-desk-walkthrough.md).**
+
 When something breaks, the agent opens the ticket (see `workflows.md`: `app.error`, `bug.reported`, a text, a call or an email). The bug desk lets your team finish the job by just talking in Slack.
 
 ## What happens
