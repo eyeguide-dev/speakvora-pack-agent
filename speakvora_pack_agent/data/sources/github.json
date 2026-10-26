@@ -10,28 +10,41 @@
  },
  "map": {
   "event": {
-   "template": "{{headers.x-github-event}}.{{payload.action}}.{{payload.workflow_run.conclusion}}",
+   "template": "{{headers.x-github-event}}.{{payload.action}}.{{payload.workflow_run.conclusion}}{{payload.deployment_status.state}}{{payload.pull_request.merged}}",
    "values": {
     "workflow_run.completed.failure": "pipeline.failed",
     "workflow_run.completed.success": "pipeline.succeeded",
     "pull_request.review_requested": "pull_request.ready",
     "pull_request.ready_for_review": "pull_request.ready",
+    "pull_request.closed.True": "pull_request.merged",
+    "pull_request.closed.true": "pull_request.merged",
+    "deployment_status.created.success": "deploy.succeeded",
+    "deployment_status.created.failure": "deploy.failed",
+    "deployment_status.created.error": "deploy.failed",
     "release.published": "release.published",
     "issues.opened": "issue.opened",
     "code_scanning_alert.created": "security.alert",
     "dependabot_alert.created": "security.alert",
-    "secret_scanning_alert.created": "security.alert"
+    "secret_scanning_alert.created": "security.alert",
+    "pull_request.review_requested.False": "pull_request.ready",
+    "pull_request.ready_for_review.False": "pull_request.ready"
    }
   },
   "id": "headers.x-github-delivery",
   "repo": "payload.repository.full_name",
-  "branch": "payload.workflow_run.head_branch",
+  "branch": {
+   "template": "{{payload.workflow_run.head_branch}}{{payload.pull_request.base.ref}}{{payload.deployment.ref}}"
+  },
   "author": "payload.sender.login",
   "url": {
-   "template": "{{payload.workflow_run.html_url}}{{payload.pull_request.html_url}}{{payload.issue.html_url}}{{payload.release.html_url}}"
+   "template": "{{payload.workflow_run.html_url}}{{payload.pull_request.html_url}}{{payload.issue.html_url}}{{payload.release.html_url}}{{payload.deployment_status.target_url}}"
   },
   "title": {
-   "template": "{{payload.pull_request.title}}{{payload.issue.title}}{{payload.release.name}}"
+   "template": "{{payload.pull_request.title}}{{payload.issue.title}}{{payload.release.name}}{{payload.deployment.description}}"
+  },
+  "environment": "payload.deployment.environment",
+  "sha": {
+   "template": "{{payload.deployment.sha}}{{payload.pull_request.merge_commit_sha}}{{payload.workflow_run.head_sha}}"
   }
  }
 }

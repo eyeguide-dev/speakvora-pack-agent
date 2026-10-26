@@ -212,7 +212,7 @@ class Agent:
 
     # ---- helpers -------------------------------------------------------------------------------------------------------------------------------
     def ctx(self, **kw):
-        return {"facts": self.cfg.get("facts", {}), "business": self.cfg.get("business", ""), "lang": self.lang, **kw}
+        return {"facts": self.cfg.get("facts", {}), "business": self.cfg.get("business", ""), "lang": self.lang, "change": {"line": ""}, **kw}
 
     def _slack_channel(self, name, direct=False):
         """Workflows name a role ('#front', '#kitchen', '#host'). agent.json "slack": {"channel": "#general", "channels": {"#kitchen": "#orders"}}: a role listed under channels goes there, every other role goes to the one default channel, so a single setting is enough."""
@@ -698,13 +698,18 @@ class Agent:
             key = ""                                                                     # that ticket was finished since: a new report is a new ticket
         key = key or at.find_duplicate(fp, err)
         now = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+        from . import changes
+        chg_line = changes.line(self); ctx["change"] = {"line": chg_line}
         if key:
             count = int(known.get("count", 1)) + 1 if known.get("key") == key else 2
-            at.comment(key, [("p", f"Another report ({count} so far), {now}, through {source}."), ("p", AT.clean(text, 1200) or "Unknown")] + ([("p", f"App version: {ver}")] if ver else []))
+            newer = changes.newer_than(self, known.get("first_t", 0)) if known.get("key") == key and known.get("first_t") else None
+            at.comment(key, [("p", f"Another report ({count} so far), {now}, through {source}."), ("p", AT.clean(text, 1200) or "Unknown")] + ([("p", f"App version: {ver}")] if ver else [])
+                       + ([("p", "A change arrived after the first report (timing only, not a diagnosis): " + changes._what(newer) + ".")] if newer else []))
             dup = True
         else:
             count = 1; dup = False
-            key = at.create_bug(summary, AT.bug_description(text, source, ver, now, 1, {"Error id": err} if err else None), list(dict.fromkeys(at.labels + [fp])))
+            extra = ({"Error id": err} if err else {}); extra.update({"Possibly related change": chg_line} if chg_line else {})
+            key = at.create_bug(summary, AT.bug_description(text, source, ver, now, 1, extra or None), list(dict.fromkeys(at.labels + [fp])))
             story = str(a.get("story") or ctx.get("story") or "").strip()
             if story:
                 try:
@@ -712,9 +717,16 @@ class Agent:
                 except Exception as e:  # noqa: BLE001 - the bug exists; a failed link is reported, not hidden
                     self.record(wf, kind, "link_failed", ticket=key, story=story, error=str(e)[:160])
         with self.state.lock:
-            bugs[fp] = {"key": key, "count": count, "summary": summary, "stems": known.get("stems") if known.get("key") == key and known.get("stems") else stems, "opened": known.get("opened") if known.get("key") == key else time.strftime("%Y-%m-%d")}
+            bugs[fp] = {"first_t": (known.get("first_t") if known.get("key") == key and known.get("first_t") else time.time()), "reporters": (known.get("reporters") or []) if known.get("key") == key else [], "key": key, "count": count, "summary": summary, "stems": known.get("stems") if known.get("key") == key and known.get("stems") else stems, "opened": known.get("opened") if known.get("key") == key else time.strftime("%Y-%m-%d")}
             self.state.save()
         ctx["jira"] = {"key": key, "url": at.link(key), "duplicate": dup, "count": count}
+        rep = self._reporter(ctx)
+        if rep:
+            with self.state.lock:
+                lst = bugs[fp].setdefault("reporters", [])
+                if not any(r.get("to") == rep["to"] and r.get("via") == rep["via"] for r in lst):
+                    lst.append(rep); del lst[:-20]
+                self.state.save()
         if at.docs_ready and a.get("document", True):
             try:
                 at.log(key, summary, "Open", count, bugs[fp]["opened"])
@@ -770,7 +782,9 @@ class Agent:
                 at.log(key, AT.clean(str(info.get("summary") or key), 200), AT.clean(str(a.get("status_label") or "Fixed"), 30), info.get("count", 1), info.get("opened", ""), time.strftime("%Y-%m-%d"), note)
             except Exception as e:  # noqa: BLE001
                 self.record(wf, "confluence_log", "failed", ticket=key, error=str(e)[:160])
-        self.safe.sent("jira", "jira"); self.record(wf, kind, "sent", ticket=key, to_status=status); return {"status": "sent", "ticket": key}
+        told = 0 if a.get("verb") else self._tell_reporters(key, info) if info else 0
+        ctx["reporters_told"] = told
+        self.safe.sent("jira", "jira"); self.record(wf, kind, "sent", ticket=key, to_status=status, told=told); return {"status": "sent", "ticket": key, "told": told}
 
     def _remember_thread(self, ctx, posted):
         """A bug alert posted to Slack: remember its thread so the team's replies in it reach the ticket (see bugdesk.py)."""
@@ -786,6 +800,47 @@ class Agent:
         from . import bugdesk
         return bugdesk.handle(self, payload)
 
+    def _reporter(self, ctx):
+        """Who reported this bug and how we may reach them again: a text sender, an emailer, or a customer an app event named with their consent. None when we cannot (never guesses)."""
+        c = ctx.get("customer") or {}
+        phone = S.norm_phone(c.get("phone") or "") if c.get("phone") else ""
+        if phone and c.get("sms_consent"):
+            return {"via": "sms", "to": phone, "name": str(c.get("name") or "")[:60]}
+        if c.get("email") and "@" in str(c["email"]):
+            return {"via": "email", "to": str(c["email"]).lower()[:120], "name": str(c.get("name") or "")[:60]}
+        return None
+
+    def _tell_reporters(self, key, info):
+        """The bug is fixed: everyone who reported it, by text or email, hears it is fixed and is asked to try again. Once per person, through the normal checks (consent, STOP, quiet hours, limits).
+        Returns how many were told. Switch off with guardrails.bug_tell_customers = false. Never raises."""
+        try:
+            if self.dry or str((self.cfg.get("guardrails") or {}).get("bug_tell_customers", True)).lower() in ("false", "0", "no", "off"):
+                return 0
+            business = self.cfg.get("business", "") or "We"; msg = f"{business}: good news, the problem you reported is fixed. Please try again, and reply here if it still does not work."
+            n = 0
+            for r in (info.get("reporters") or []):
+                if r.get("told"):
+                    continue
+                if r.get("via") == "sms":
+                    acts = [{"action": "sms", "to": r["to"], "text": msg}]; cust = {"phone": r["to"], "sms_consent": True, "name": r.get("name", "")}
+                else:
+                    acts = [{"action": "email", "to": r["to"], "subject": f"{business}: the problem you reported is fixed", "text": msg + "\n\nThank you for telling us."}]; cust = {"email": r["to"], "name": r.get("name", "")}
+                res = self.run_actions("bug_fixed_customers", acts, self.ctx(customer=cust, ticket=key), job_prefix=f"fixed:{key}:{r['to']}")
+                if any(x.get("status") in ("sent", "queued") for x in res):
+                    with self.state.lock:
+                        r["told"] = time.strftime("%Y-%m-%d"); self.state.save()
+                    n += 1
+            if n:
+                with self.state.lock:
+                    info["told"] = int(info.get("told", 0)) + n; self.state.save()
+                try:
+                    self.atlassian.comment(key, [("p", f"{n} customer{'s' if n != 1 else ''} who reported this ({', '.join(sorted({'text' if r.get('via') == 'sms' else 'email' for r in info.get('reporters', []) if r.get('told')}))}) {'were' if n != 1 else 'was'} told it is fixed and asked to try again. No personal details are stored here.")])
+                except Exception:  # noqa: BLE001
+                    pass
+            return n
+        except Exception as e:  # noqa: BLE001 - a failed courtesy text never undoes a closed ticket
+            self.state.log(workflow="bug_fixed_customers", status="error", error=type(e).__name__ + ": " + str(e)[:160]); return 0
+
     def _jira_sync(self):
         """Once in a while: a ticket this agent opened was closed in Jira by the team. Mark it fixed on the Confluence page and tell the team once. Never raises."""
         if self.dry or not self.atlassian.jira_ready:
@@ -799,6 +854,7 @@ class Agent:
                 info = next(v for v in bugs.values() if v.get("key") == key)
                 with self.state.lock:
                     info["closed"] = time.strftime("%Y-%m-%d"); self.state.save()
+                self._tell_reporters(key, info)
                 ctx = self.ctx(ticket=key, title=info.get("summary", key), jira={"key": key, "url": self.atlassian.link(key), "closed": True})
                 if self.atlassian.docs_ready:
                     self.atlassian.log(key, AT.clean(str(info.get("summary") or key), 200), "Fixed", info.get("count", 1), info.get("opened", ""), time.strftime("%Y-%m-%d"), "Closed in Jira by the team.")
@@ -985,6 +1041,8 @@ class Agent:
     def handle_event(self, payload):
         """An event from your app, e.g. {'event':'order.ready','id':'evt-9','customer':{...},'order':{...}}."""
         name, eid = str(payload.get("event", "")), str(payload.get("id") or json.dumps(payload, sort_keys=True)[:200])
+        from . import changes
+        changes.record(self, name, payload)                                   # a deploy, release or merge: remembered, so a later bug can say what changed just before it
         results = []
         for w in self.workflows:
             if (w.get("on") or {}).get("event") != name:

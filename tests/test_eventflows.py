@@ -48,7 +48,7 @@ class EveryEvent(unittest.TestCase):
         r = Rig(); self.addCleanup(r.close); a = r.agent
         v = SIM.view(a); self.assertEqual([e["id"] for e in v["events"] if e["soon"]], ["facility.lockdown"]); self.assertTrue(v["events"][-1]["soon"])
         self.assertTrue(all(e["handled"] for e in v["events"] if not e["soon"]))
-        bv = BD.view(a); self.assertTrue(bv["events"][-1]["soon"]); self.assertEqual(len(bv["events"]), 60)
+        bv = BD.view(a); self.assertTrue(bv["events"][-1]["soon"]); self.assertEqual(len(bv["events"]), 61)
         self.assertEqual(a.handle_event({"event": "facility.lockdown", "id": "l1", "customer": CUST})["matched"], 0)
         soon = [w for w in SU.workflows(a) if w.get("soon")]; self.assertEqual(len(soon), 1); self.assertTrue(SU.workflows(a)[-1]["soon"])
 

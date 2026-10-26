@@ -55,13 +55,14 @@ SPECS = {
     "incident.triggered": ("Alert your team about an incident", "tells your team", "t", "INCIDENT: {{incident.title}} {{url}}"),
     "incident.resolved": ("Tell your team an incident is resolved", "tells your team", "t", "Incident resolved: {{incident.title}} {{url}}"),
     "release.published": ("Tell your team about a release", "tells your team", "t", "Release published: {{repo}} {{release.name}} {{url}}"),
+    "pull_request.merged": ("Tell your team a change was merged", "tells your team", "t", "Merged: {{repo}} {{title}} {{url}}"),
     "pull_request.ready": ("Tell your team a pull request is ready", "tells your team", "t", "Pull request ready for review: {{repo}} {{pull_request.title}} {{url}}"),
     "issue.opened": ("Tell your team about a new issue", "tells your team", "t", "New issue: {{repo}} {{issue.title}} {{url}}"),
     "security.alert": ("Alert your team about a security alert", "tells your team", "t", "SECURITY ALERT: {{repo}} {{alert.title}} {{url}}"),
-    "bug.reported": ("Report a bug to Jira", "creates a Jira bug (or adds to the matching one), updates your Confluence page, and tells your team", "j", "Bug reported: {{description}} {{jira.key}} {{jira.url}} (reports so far: {{jira.count}})"),
+    "bug.reported": ("Report a bug to Jira", "creates a Jira bug (or adds to the matching one), updates your Confluence page, and tells your team", "j", "Bug reported: {{description}} {{jira.key}} {{jira.url}} (reports so far: {{jira.count}}) {{change.line}}"),
     "bug.resolved": ("Close a bug when it is fixed", "adds the fix note to the Jira ticket, closes it, marks it fixed with the date on your Confluence page, and tells your team", "k", "Bug {{ticket}} is fixed and closed: {{title}}"),
     "app.error": ("Report a website or app error to Jira and your team", "when your site or app reports an error: opens a Jira bug (or adds to the matching one), documents it with the date on your Confluence page, and tells your team who hit it and what they clicked", "e",
-                  "Site error: {{customer.name}} got a {{data.error.code}} error ({{data.error.message}}) on {{data.error.page}} when they clicked \"{{data.error.action}}\". Ticket {{jira.key}} {{jira.url}} (reports so far: {{jira.count}})"),
+                  "Site error: {{customer.name}} got a {{data.error.code}} error ({{data.error.message}}) on {{data.error.page}} when they clicked \"{{data.error.action}}\". Ticket {{jira.key}} {{jira.url}} (reports so far: {{jira.count}}) {{change.line}}"),
     "site.down": ("Alert your team when your site is down", "opens a Jira bug and tells your team", "j", "Site down: {{description}} {{jira.key}} {{jira.url}}"),
     "order.failed": ("Alert your team when an order fails", "tells your team", "t", "ORDER FAILED: {{order.number}} {{customer.name}} {{data.error.message}}"),
     "checkout.abandoned": ("Nudge a customer who left an order unfinished", "texts the customer once, with their consent", "c", "{{business}}: you left your order unfinished. Reply to this text and we will help you finish it."),
@@ -74,13 +75,13 @@ SPECS = {
 BUG_TEXT = {"name": "auto_bug_text", "title": "Report a customer's bug to Jira", "what": "turns a text that reports a problem into a Jira bug and thanks the customer without promising a fix", "general": True, "enabled": False, "priority": True,
             "on": {"sms": {"keywords": ["bug", "error", "crashes", "crashed", "freezes", "frozen", "glitch", "not working", "doesn't work", "stuck", "broken"]}},
             "do": [{"action": "jira_bug", "optional": True}, {"action": "reply", "text": "Thank you for telling us. We have logged this and our team will look into it. We cannot promise when it will be fixed, but we will use your report."},
-                   {"action": "notify", "text": "Customer reported a problem: {{jira.key}} {{jira.url}} (reports so far: {{jira.count}})"}]}
+                   {"action": "notify", "text": "Customer reported a problem: {{jira.key}} {{jira.url}} (reports so far: {{jira.count}}) {{change.line}}"}]}
 
 
 BUG_EMAIL = {"name": "auto_bug_email", "title": "Report a customer's emailed bug to Jira", "what": "turns an email that reports a problem into a Jira bug and tells your team", "general": True, "enabled": False, "priority": True,
              "on": {"email": {"keywords": ["bug", "error", "crashes", "crashed", "freezes", "glitch", "not working", "doesn't work", "broken", "can't pay", "payment failed", "page won't load", "403", "500"]}},
              "do": [{"action": "jira_bug", "optional": True, "source": "email", "text": "{{email.subject}}: {{email.body}}"},
-                    {"action": "notify", "text": "Customer emailed a problem: {{jira.key}} {{jira.url}} (reports so far: {{jira.count}})"}]}
+                    {"action": "notify", "text": "Customer emailed a problem: {{jira.key}} {{jira.url}} (reports so far: {{jira.count}}) {{change.line}}"}]}
 BUG_FIXED_CMD = {"name": "slack_fixed", "title": "Close a bug from Slack", "what": "type /fixed KAN-12 and what you did: closes the Jira ticket with your note and marks it fixed, with the date, on your Confluence page", "general": True, "enabled": True,
                  "on": {"slack_command": "/fixed"},
                  "do": [{"action": "jira_close", "ticket": "{{command.arg1}}", "note": "{{command.arg2}} {{command.rest}}"},
@@ -138,7 +139,14 @@ def ensure(agent):
     fixed = [w for w in doc.get("workflows", []) if w.get("name") == BUG_TEXT["name"] and not w.get("priority")]          # agents that already have it get the new flag (their on/off switch is kept)
     for w in fixed:
         w["priority"] = True
-    if not add and not fixed and not old_resolved:
+    stale = 0
+    for w in doc.get("workflows", []):
+        if str(w.get("name", "")).startswith("auto_") or w.get("name") == "slack_fixed":
+            for a in w.get("do", []):
+                t = a.get("text") or ""
+                if a.get("action") == "notify" and "{{jira.count}}" in t and "{{change.line}}" not in t:
+                    a["text"] = t.rstrip() + " {{change.line}}"; stale += 1                     # the bug alert now says what changed just before it (see changes.py)
+    if not add and not fixed and not old_resolved and not stale:
         return 0
     doc.setdefault("workflows", []).extend(add)
     try:

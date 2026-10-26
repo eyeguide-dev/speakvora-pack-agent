@@ -8,23 +8,36 @@
  },
  "map": {
   "event": {
-   "template": "{{headers.x-gitlab-event}}.{{payload.object_attributes.status}}",
+   "template": "{{headers.x-gitlab-event}}.{{payload.object_attributes.status}}{{payload.status}}{{payload.object_attributes.action}}{{payload.action}}",
    "values": {
     "Pipeline Hook.failed": "pipeline.failed",
     "Pipeline Hook.success": "pipeline.succeeded",
-    "Merge Request Hook.opened": "pull_request.ready",
-    "Release Hook.": "release.published",
+    "Merge Request Hook.open": "pull_request.ready",
+    "Merge Request Hook.merge": "pull_request.merged",
+    "Release Hook.create": "release.published",
     "Deployment Hook.failed": "deploy.failed",
-    "Deployment Hook.success": "deploy.succeeded"
+    "Deployment Hook.success": "deploy.succeeded",
+    "Merge Request Hook.opened": "pull_request.ready",
+    "Release Hook.": "release.published"
    }
   },
   "id": "headers.x-gitlab-event-uuid",
   "repo": {
    "from": "payload.project.path_with_namespace"
   },
-  "branch": "payload.object_attributes.ref",
+  "branch": {
+   "template": "{{payload.object_attributes.ref}}{{payload.object_attributes.target_branch}}{{payload.ref}}"
+  },
   "author": "payload.user.username",
-  "url": "payload.object_attributes.url",
-  "title": "payload.object_attributes.title"
+  "url": {
+   "template": "{{payload.object_attributes.url}}{{payload.deployable_url}}{{payload.url}}"
+  },
+  "title": {
+   "template": "{{payload.object_attributes.title}}{{payload.commit_title}}{{payload.name}}"
+  },
+  "environment": "payload.environment",
+  "sha": {
+   "template": "{{payload.short_sha}}{{payload.object_attributes.merge_commit_sha}}{{payload.commit.id}}"
+  }
  }
 }

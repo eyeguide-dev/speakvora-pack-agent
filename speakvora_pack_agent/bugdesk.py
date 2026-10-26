@@ -216,4 +216,5 @@ def _apply(agent, key, item, info, say):
         acts.append({"action": "teams", "text": f"Bug {key} is {'closed without a fix' if wont else 'fixed and closed'}: {info.get('summary', key)}"})
     agent.run_actions("bug_desk", acts, ctx, {"reply": "", "play": []})
     if not agent.dry:
-        say(f"Closed {key} ({item['to']}), added the note, and updated the known-issues page.")
+        told = int(info.get("told", 0)) if info.get("told") else 0
+        say(f"Closed {key} ({item['to']}), added the note, and updated the known-issues page." + (f" Told {told} customer{'s' if told != 1 else ''} who reported it that it is fixed." if told else ""))

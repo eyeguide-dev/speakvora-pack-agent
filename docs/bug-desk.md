@@ -13,6 +13,10 @@ When something breaks, the agent opens the ticket (see `workflows.md`: `app.erro
 
 Setting in `agent.json` (`guardrails.bug_close`): `"ask"` (the default: approval first), `"auto"` (close as soon as the team says it is fixed) or `"off"` (notes only). A pending question expires after a day. In Practice mode nothing is written anywhere. A ticket already closed in Jira is still picked up by the agent within a few minutes, and the Confluence page is updated.
 
+## It knows what changed, and tells the customer when it is fixed
+**What changed before the bug (GitLab and GitHub).** Connect GitLab or GitHub on the Connect tab (it is the same one-address webhook as before: tick Pipeline, Merge request, Release and Deployment events in GitLab; Deployments, Pull requests and Releases in GitHub). The agent remembers each deploy, release and merge (on your computer). When a bug ticket is opened it adds one line to the ticket and to the Slack and Teams alert, for example: *Timing only, not a diagnosis: the newest change before this report was a deploy Fix checkout redirect to production (a1b2c3d) by sam, 35 minutes earlier.* Staging deploys and anything older than 48 hours are ignored (`changes.window_hours`, `changes.environments`, `changes.enabled` in agent.json). If the bug is reported again after a newer deploy, the ticket says so, which shows whether a hotfix helped.
+**The customer hears it.** Everyone who reported the bug by text, by email, or through an app event that names them with consent is texted or emailed once when the ticket is closed as fixed: *"good news, the problem you reported is fixed. Please try again, and reply here if it still does not work."* It goes through the normal checks (consent, STOP, quiet hours, limits). A ticket closed as "won't fix" sends nothing. The Jira ticket and the Slack thread say how many people were told. Turn it off with `guardrails.bug_tell_customers: false`.
+
 ## It can move the ticket to any status, not only Done
 If you connected your own AI (the Reasoning card), it reads each message and decides what the team meant, and Jira does the rest:
 | The team says | The ticket |
