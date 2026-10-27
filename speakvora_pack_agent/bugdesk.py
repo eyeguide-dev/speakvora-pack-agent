@@ -130,6 +130,9 @@ def handle(agent, payload):
         threads = agent.state.data.get("bug_threads") or {}; bugs = agent.state.data.get("jira_bugs") or {}
         known = {v.get("key"): v for v in bugs.values() if v.get("key")}
         key = threads.get(f"{chan}:{thread}") if thread else None
+        regress = (agent.state.data.get("bug_regress") or {}).get(f"{chan}:{thread}") if thread else None      # the alert of a regression: "reopen" (or its approval) there belongs to the OLD ticket
+        if key and regress and regress in known and (re.match(r"^\W*re-?open\b", text, re.I) or (regress in (agent.state.data.get("bug_pending") or {}) and (APPROVE.search(text) or DECLINE.search(text)))):
+            key = regress
         if not key:
             key = next((k for k in KEY.findall(text) if k in known), None)
         if not key or key not in known:
@@ -143,9 +146,16 @@ def handle(agent, payload):
             _apply(agent, key, pend, info, say); return {"ticket": key, "action": pend["intent"] + "_done"}
         if pend and DECLINE.search(text):
             _clear(agent, key); say(f"OK, {key} stays as it is."); return {"ticket": key, "action": "kept"}
+        from . import bugcheck
+        if bugcheck.VERIFY.search(text) and not APPROVE.search(text):                 # "verify", "run the check", "check it again": run the fix check on demand
+            return _verify(agent, key, info, say)
         closed = bool(info.get("closed")); moves = [] if agent.dry else agent.atlassian.transitions(key)
         status = "" if agent.dry else agent.atlassian.status(key)[0]
         d = decide(agent, text, key, closed, moves, status); intent, tr = d["intent"], d["transition"]
+        if regress == key and closed and re.match(r"^\W*re-?open\b", text, re.I):                 # an explicit "reopen" on a regression alert needs no AI
+            intent, tr, d["by"] = "reopen", bugdesk_pick_reopen(moves), "words"
+            if tr is None:
+                intent = "note"
         if mode(agent) == "off" and intent != "note":
             intent = "note"
         _note(agent, key, text, d["note"] if d["by"] == "ai" else "")
@@ -163,6 +173,20 @@ def handle(agent, payload):
         return {"ticket": key, "action": "asked", "intent": intent, "to": tr["to"], "by": d["by"]}
     except Exception as e:  # noqa: BLE001 - a bad event must never break the server
         agent.state.log(workflow="bug_desk", status="error", error=type(e).__name__ + ": " + str(e)[:160]); return {"error": True}
+
+
+def bugdesk_pick_reopen(moves):
+    return _pick(moves, "reopen")
+
+
+def _verify(agent, key, info, say):
+    from . import bugcheck
+    if bugcheck.mode(agent) == "off":
+        say(f"Fix checks are switched off (guardrails.bug_verify), so {key} cannot be verified."); return {"ticket": key, "action": "verify_off"}
+    if not info.get("closed"):
+        say(f"{key} is not marked fixed yet, so there is nothing to verify. Say it is fixed first."); return {"ticket": key, "action": "verify_not_fixed"}
+    res = bugcheck.verify(agent, key, info, say)
+    return {"ticket": key, "action": "verified" if res and res["ok"] else ("verify_failed" if res else "verify_no_check")}
 
 
 def _clear(agent, key):
@@ -196,7 +220,7 @@ def _apply(agent, key, item, info, say):
         at = agent.atlassian; new = at.move(key, item["tid"]) or item.get("to") or ""
         if intent == "reopen":
             with agent.state.lock:
-                info.pop("closed", None); agent.state.save()
+                info.pop("closed", None); info.pop("verified", None); agent.state.save()
         label = {"in_progress": "In progress", "blocked": "Blocked", "reopen": "Open"}[intent]
         if at.docs_ready:
             try:

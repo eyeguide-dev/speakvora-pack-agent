@@ -133,11 +133,41 @@ def start_learning_now(agent, website="", notes=""):
     return True
 
 
+def _empty(v):
+    return not str(v or "").strip() or "YOUR-" in str(v)
+
+
+def sync_facts(agent):
+    """Once the owner has approved what the AI learned, the business details it found fill the matching settings, but only the ones that are still empty (what the owner typed is never overwritten): opening hours, the
+    website it read, and a short 'other things customers ask' line from the services and policies. They appear at once in Connect, Your business and everywhere the agent reads them. Returns the names filled in."""
+    d = load(agent); p = d.get("profile") or {}; f = agent.cfg.get("facts") or {}; fill = {}
+    if p.get("hours") and _empty(f.get("hours")):
+        fill["hours"] = p["hours"][:160]
+    if d.get("website") and _empty(f.get("website")):
+        fill["website"] = d["website"]
+    bits = []
+    if p.get("services"):
+        bits.append("We offer " + ", ".join(p["services"][:6]) + ".")
+    bits += [x.rstrip(".") + "." for x in (p.get("policies") or [])[:2]]
+    if bits and _empty(f.get("info")):
+        fill["info"] = " ".join(bits)[:300]
+    if not fill:
+        return []
+    from . import connect as SU
+    SU.save(agent, "business", fill)
+    agent.state.log(workflow="brain", action="sync_facts", status="done", dry_run=False, filled=sorted(fill))
+    return sorted(fill)
+
+
 def approve(agent):
     d = load(agent)
     if d.get("status") not in ("needs_review", "approved"):
         raise ValueError("There is nothing to approve yet.")
     d.update(status="approved", approved_at=int(agent.now())); save(agent, d)
+    try:
+        d["filled"] = sync_facts(agent)                                           # the settings take what was learned, now that the owner has said yes
+    except Exception as e:  # noqa: BLE001 - approving must never fail because a setting could not be saved
+        agent.state.log(workflow="brain", action="sync_facts", status="error", dry_run=False, error=str(e)[:120]); d["filled"] = []
     return d
 
 

@@ -158,6 +158,7 @@ def create(agent, name, party, start, area, notes="", phone="", source="call"):
             con.execute("INSERT INTO bookings VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (code, name, phone, party, area, start, minutes, notes, "confirmed", ("practice " if agent.dry else "") + source, int(time.time()), ref)); con.commit()
         finally:
             con.close()
+    _log(agent, code, f"booked for {party} {area} at {say_time(agent, start)} under {name}")
     b = get(agent, code); spoken = " ".join(code)                                          # "4 8 2 7": said digit by digit
     return {"ok": True, "code": code, "booking": b, "say": f"You are booked: a table for {party} {area}, {say_time(agent, start)}, under {name}. Your confirmation code is {spoken}."}
 
@@ -221,6 +222,78 @@ def cancel(agent, code):
     finally:
         con.close()
     return True
+
+
+def _log(agent, code, what):
+    """A short history for each booking (booked, changed, cancelled), so a summary or a person can say exactly what happened to it."""
+    con = _db(agent)
+    try:
+        con.execute("CREATE TABLE IF NOT EXISTS booking_log (code TEXT, t INT, what TEXT)"); con.execute("INSERT INTO booking_log VALUES (?,?,?)", (str(code), int(time.time()), str(what)[:300])); con.commit()
+    finally:
+        con.close()
+
+
+def history(agent, code):
+    con = _db(agent)
+    try:
+        con.execute("CREATE TABLE IF NOT EXISTS booking_log (code TEXT, t INT, what TEXT)")
+        return [{"t": r[0], "what": r[1]} for r in con.execute("SELECT t, what FROM booking_log WHERE code=? ORDER BY t, rowid", (str(code),)).fetchall()]
+    finally:
+        con.close()
+
+
+def amend(agent, code, changes, phone=""):
+    """Changes a confirmed booking (the caller changed their mind). changes may hold start ('YYYY-MM-DDTHH:MM'), party, area, notes, name. The new details are checked like a new booking (ignoring this booking's own seats);
+    only when they fit is the booking changed, and a writable calendar must accept the change first. Returns {'ok', 'code', 'booking', 'say', 'changed': {field: [old, new]}}. A booking that is not confirmed, or does not
+    belong to this phone number when both are known, is never changed."""
+    b = get(agent, code)
+    if not b or b["status"] != "confirmed":
+        return {"ok": False, "reason": "not_found", "say": "I could not find that booking to change. I will have the host look into it.", "changed": {}}
+    if phone and b.get("phone") and re.sub(r"\D", "", phone)[-7:] != re.sub(r"\D", "", b["phone"])[-7:]:
+        return {"ok": False, "reason": "not_yours", "say": "I can only change a booking from the phone number it was made with. I will have the host help you.", "changed": {}}
+    start = parse_start(agent, changes.get("start")) if changes.get("start") else b["start"]
+    try:
+        party = int(changes.get("party") or b["party"])
+    except (TypeError, ValueError):
+        party = b["party"]
+    area = str(changes.get("area") or b["area"]).lower(); name = " ".join(str(changes.get("name") or b["name"]).split())[:60]; notes = " ".join(str(changes.get("notes") if changes.get("notes") is not None else b["notes"]).split())[:200]
+    if start is None:
+        return {"ok": False, "reason": "incomplete", "say": "", "changed": {}}
+    delta = {k: [b[k], v] for k, v in (("start", start), ("party", party), ("area", area), ("name", name), ("notes", notes)) if v != b[k]}
+    if not delta:
+        return {"ok": True, "code": b["code"], "booking": b, "say": f"That is already booked: a table for {b['party']} {b['area']}, {say_time(agent, b['start'])}, under {b['name']}. Your confirmation code is {' '.join(b['code'])}.", "changed": {}}
+    with _LOCK:
+        c = check(agent, start, party, area, ignore=b["code"])
+        if not c["ok"]:
+            return {"ok": False, "reason": c["reason"], "say": unavailable_say(agent, c, party, start) + " Your original booking is still " + say_time(agent, b["start"]) + ".", "alternatives": c["alternatives"], "changed": {}, "booking": b}
+        area = c["area"]; cal = None if agent.dry else _writable_calendar(agent)
+        if cal is not None and b.get("cal_ref"):
+            try:
+                cal.cancel(b["code"]); cal.create(f"Reservation: table for {party} ({area}), {name}", start, start + int(b["minutes"]) * 60, description="Changed on the call. Code " + b["code"], ref=b["code"])
+            except Exception as e:  # noqa: BLE001 - the calendar did not accept the change: the booking stays exactly as it was
+                agent.state.log(workflow="bookings", action="calendar_write", status="refused", dry_run=False, error=str(e)[:140])
+                return {"ok": False, "reason": "calendar", "say": "I could not change that in our calendar just now. Your original booking is still there, and I will have the host call you.", "changed": {}, "booking": b}
+        con = _db(agent)
+        try:
+            con.execute("UPDATE bookings SET name=?, party=?, area=?, start=?, notes=? WHERE code=? AND status='confirmed'", (name, party, area, start, notes, b["code"])); con.commit()
+        finally:
+            con.close()
+        _log(agent, b["code"], "changed " + ", ".join(f"{k} {a} to {z}" for k, (a, z) in delta.items()))
+    nb = get(agent, b["code"])
+    return {"ok": True, "code": b["code"], "booking": nb, "say": f"Done, I changed it: a table for {nb['party']} {nb['area']}, {say_time(agent, nb['start'])}, under {nb['name']}. Your confirmation code is still {' '.join(nb['code'])}.", "changed": delta}
+
+
+def cancel_for_caller(agent, code, phone=""):
+    """The caller cancels their own booking on the call. Same ownership rule as amend. Returns {'ok', 'say', 'booking'}."""
+    b = get(agent, code)
+    if not b or b["status"] != "confirmed":
+        return {"ok": False, "reason": "not_found", "say": "I could not find that booking to cancel. I will have the host look into it."}
+    if phone and b.get("phone") and re.sub(r"\D", "", phone)[-7:] != re.sub(r"\D", "", b["phone"])[-7:]:
+        return {"ok": False, "reason": "not_yours", "say": "I can only cancel a booking from the phone number it was made with. I will have the host help you."}
+    if not cancel(agent, b["code"]):
+        return {"ok": False, "reason": "failed", "say": "I could not cancel that just now. I will have the host do it."}
+    _log(agent, b["code"], "cancelled by the caller")
+    return {"ok": True, "booking": get(agent, b["code"]), "say": f"Done, I cancelled your booking for {say_time(agent, b['start'])}. Code {' '.join(b['code'])}."}
 
 
 def attempt(agent, item, phone="", source="call"):

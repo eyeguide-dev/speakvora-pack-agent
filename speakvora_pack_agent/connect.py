@@ -41,8 +41,9 @@ CARDS = {
         ("webhook_url", "Webhook URL (instead of a bot token; text only)", "secret", "slack.webhook_url", "SLACK_WEBHOOK_URL", "Slack app > Incoming Webhooks."),
         ("signing_secret", "Signing secret (for slash commands)", "secret", "slack.signing_secret", "SLACK_SIGNING_SECRET", "Slack app > Basic Information > Signing Secret."),
     ]},
-    "teams": {"title": "Microsoft Teams", "blurb": "Posts to a Teams channel. Text only.", "fields": [
+    "teams": {"title": "Microsoft Teams", "blurb": "Posts to a Teams channel. Text only. Add the outgoing webhook token to let your team answer bug alerts from Teams.", "fields": [
         ("webhook_url", "Workflow / webhook URL", "secret", "teams.webhook_url", "TEAMS_WEBHOOK_URL", "In Teams: channel > Workflows > \"Send webhook alerts to a channel\" (older name: \"Post to a channel when a webhook request is received\"), then copy its URL."),
+        ("outgoing_secret", "Outgoing webhook security token (to answer from Teams)", "secret", "teams.outgoing_secret", "TEAMS_OUTGOING_SECRET", "Optional. Teams > channel > Manage team > Apps > Create an outgoing webhook: after you press Create, Teams shows a security token once. Paste it here so people can reply to bug alerts from Teams."),
     ]},
     "atlassian": {"title": "Jira and Confluence", "blurb": "Reports bugs to your own Jira and keeps a known-issues page in your own Confluence. Needs your own Atlassian account and API token.", "fields": [
         ("site", "Your Atlassian site", "text", "atlassian.site", None, "The address you use for Jira, for example yourcompany.atlassian.net."),
@@ -127,6 +128,7 @@ STEPS = {
     "android_sms": ["Install the free SMS Gateway for Android app on the phone and switch on its Cloud server.", "Paste its username, password and webhook signing key below, then press Save and test."],
     "telegram": ["In Telegram message @BotFather, send /newbot, and copy the token it gives you.", "Paste the token below and press Save and test."],
     "whatsapp": ["Create a Meta developer app with the WhatsApp product and copy the access token, phone number ID and app secret.", "Paste them below, press Save and test, then paste the callback address it shows into Meta."],
+    "teams": ["In Teams open your channel, then Manage team, Apps, Create an outgoing webhook. Name it (this is the name people @mention).", "For the callback URL paste your agent's public address followed by /teams/messages. Teams then shows a security token once: paste it in the token box below and press Save (the alert webhook box stays as it is).", "Press Test answering from Teams, then in the channel write @name KAN-17 fixed: what you did."],
     "sip": ["Create a SIP extension for the agent in your phone system.", "Paste its address, extension and password below, press Save and test, then send calls to that extension."],
 }
 GUIDES = {"android_sms": "android-sms", "telegram": "telegram", "whatsapp": "whatsapp", "sip": "office-phone", "twilio": "twilio", "slack": "slack", "teams": "teams", "atlassian": "atlassian", "calendar": "calendar", "email": "email", "ai": "ai", "account": "account", "address": "permanent-address"}
@@ -645,7 +647,7 @@ def twilio_point(agent, number):
 def test(agent, card, opts=None):
     """Checks a connection and answers in plain words. A test that sends something (a message, an email) says so on its button and only runs when asked (opts)."""
     opts = opts or {}
-    if not connected(agent, card) and card != "business":
+    if not connected(agent, card) and card != "business" and not (card == "teams" and opts.get("inbound")):
         return {"ok": False, "message": "Fill in this section and save it first."}
     try:
         if card == "account":
@@ -740,6 +742,9 @@ def test(agent, card, opts=None):
                 key = at.create_bug("Speakvora test bug (safe to close)", ATL.adf([("p", "Created by the Test button in the Speakvora agent to check this connection. You can close or delete it.")]), at.labels + ["speakvora-test"])
                 msg += f" A test ticket {key} was created: {at.link(key)}"
             return _passed(agent, card, msg)
+        if card == "teams" and opts.get("inbound"):
+            from . import teams_in
+            return teams_in.selftest(agent)
         if card == "teams":
             if not opts.get("post"):
                 return {"ok": True, "message": "Saved. Press \"Send a test message\" to check it: Teams cannot be checked without posting."}

@@ -694,22 +694,45 @@ class Agent:
         if AT.similar(stems, best[1].get("stems", [])) >= 0.6:
             fp = best[0]
         known = bugs.get(fp) or {}; key = known.get("key", "")
+        stale = False
         if key and not at.search(f'key = "{key}" AND statusCategory != Done', 1):
-            key = ""                                                                     # that ticket was finished since: a new report is a new ticket
+            key = ""; stale = True                                                       # that ticket was finished since: a new report is a new ticket (flagged as a regression of it)
         key = key or at.find_duplicate(fp, err)
         now = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
-        from . import changes
-        chg_line = changes.line(self); ctx["change"] = {"line": chg_line}
+        from . import changes, investigate
+        err_ctx = investigate.error_of(ctx)
+        hint = {"text": text, "page": err_ctx.get("page"), "action": err_ctx.get("action"), "url": err_ctx.get("url"), "service": ctx.get("service") or a.get("service"), "version": ver, "sha": err_ctx.get("sha") or ctx.get("sha")}
+        chg_line = changes.line(self, hint=hint); ctx["change"] = {"line": chg_line}
+        old_key, closed_on, old = "", "", None                     # a regression: this report matches a ticket that was closed as fixed
+        if not key and known.get("key") and (known.get("closed") or stale) and str((self.cfg.get("guardrails") or {}).get("bug_regression", "flag")).lower() not in ("off", "false", "0", "no"):
+            old = known; old_key = known["key"]; closed_on = known.get("closed") or time.strftime("%Y-%m-%d")
         if key:
             count = int(known.get("count", 1)) + 1 if known.get("key") == key else 2
-            newer = changes.newer_than(self, known.get("first_t", 0)) if known.get("key") == key and known.get("first_t") else None
+            newer = changes.newer_than(self, known.get("first_t", 0), hint=hint) if known.get("key") == key and known.get("first_t") else None
             at.comment(key, [("p", f"Another report ({count} so far), {now}, through {source}."), ("p", AT.clean(text, 1200) or "Unknown")] + ([("p", f"App version: {ver}")] if ver else [])
                        + ([("p", "A change arrived after the first report (timing only, not a diagnosis): " + changes._what(newer) + ".")] if newer else []))
             dup = True
         else:
             count = 1; dup = False
             extra = ({"Error id": err} if err else {}); extra.update({"Possibly related change": chg_line} if chg_line else {})
-            key = at.create_bug(summary, AT.bug_description(text, source, ver, now, 1, extra or None), list(dict.fromkeys(at.labels + [fp])))
+            desc = AT.bug_description(text, source, ver, now, 1, extra or None)
+            inv = investigate.section(self, ctx, hint, err_ctx)                       # changed files, stack, log lines and word-matched leads; [] unless a code host is set up and answers
+            if inv:
+                desc["content"][-1:-1] = AT.adf(inv)["content"]
+            if old_key:
+                desc["content"].insert(0, AT.adf([("p", f"Regression of {old_key} (closed on {closed_on})")])["content"][0])
+            key = at.create_bug(summary, desc, list(dict.fromkeys(at.labels + [fp])))
+            if old_key:
+                linked = True
+                try:
+                    at.link_issues(key, old_key)
+                except Exception as e:  # noqa: BLE001 - the new ticket exists; the old one gets a comment instead
+                    linked = False; self.record(wf, kind, "link_failed", ticket=key, story=old_key, error=str(e)[:160])
+                try:
+                    at.comment(old_key, [("p", f"The same problem was reported again after it was closed: {key}")] + ([] if linked else [("p", "The two tickets could not be linked automatically.")]))
+                except Exception as e:  # noqa: BLE001
+                    self.record(wf, kind, "comment_failed", ticket=old_key, error=str(e)[:160])
+                ctx["change"] = {"line": (f"REGRESSION: {old_key} was marked fixed on {closed_on} and was reported again. Reply reopen to reopen it instead." + (" " + chg_line if chg_line else ""))}
             story = str(a.get("story") or ctx.get("story") or "").strip()
             if story:
                 try:
@@ -717,9 +740,18 @@ class Agent:
                 except Exception as e:  # noqa: BLE001 - the bug exists; a failed link is reported, not hidden
                     self.record(wf, kind, "link_failed", ticket=key, story=story, error=str(e)[:160])
         with self.state.lock:
-            bugs[fp] = {"first_t": (known.get("first_t") if known.get("key") == key and known.get("first_t") else time.time()), "reporters": (known.get("reporters") or []) if known.get("key") == key else [], "key": key, "count": count, "summary": summary, "stems": known.get("stems") if known.get("key") == key and known.get("stems") else stems, "opened": known.get("opened") if known.get("key") == key else time.strftime("%Y-%m-%d")}
+            if old_key and old is not None:
+                old.setdefault("closed", closed_on); old["regressions"] = int(old.get("regressions", 0)) + 1; old["regressed_by"] = key
+                bugs[f"{fp}@{old_key}"] = old                                    # the closed ticket stays findable (the reopen reply needs it); the new ticket takes the fingerprint
+                self.state.data["bug_regression_count"] = int(self.state.data.get("bug_regression_count", 0)) + 1
+            keep = {k: known[k] for k in ("where", "regression_of", "regressions", "regressed_by") if known.get("key") == key and k in known}
+            bugs[fp] = {**keep, "first_t": (known.get("first_t") if known.get("key") == key and known.get("first_t") else time.time()), "reporters": (known.get("reporters") or []) if known.get("key") == key else [], "key": key, "count": count, "summary": summary, "stems": known.get("stems") if known.get("key") == key and known.get("stems") else stems, "opened": known.get("opened") if known.get("key") == key else time.strftime("%Y-%m-%d")}
+            if not dup:
+                bugs[fp]["where"] = AT.clean(" ".join(str(x) for x in (err_ctx.get("page"), err_ctx.get("action")) if x), 160)
+                if old_key:
+                    bugs[fp]["regression_of"] = old_key
             self.state.save()
-        ctx["jira"] = {"key": key, "url": at.link(key), "duplicate": dup, "count": count}
+        ctx["jira"] = {"key": key, "url": at.link(key), "duplicate": dup, "count": count, **({"regression_of": old_key} if old_key else {})}
         rep = self._reporter(ctx)
         if rep:
             with self.state.lock:
@@ -732,7 +764,7 @@ class Agent:
                 at.log(key, summary, "Open", count, bugs[fp]["opened"])
             except Exception as e:  # noqa: BLE001
                 self.record(wf, "confluence_log", "failed", ticket=key, error=str(e)[:160])
-        self.safe.sent("jira", "jira"); self.record(wf, kind, "sent", ticket=key, duplicate=dup, reports=count); return {"status": "sent", "ticket": key, "duplicate": dup}
+        self.safe.sent("jira", "jira"); self.record(wf, kind, "sent", ticket=key, duplicate=dup, reports=count, **({"regression_of": old_key} if old_key else {})); return {"status": "sent", "ticket": key, "duplicate": dup, **({"regression_of": old_key} if old_key else {})}
 
     def _confluence_log(self, wf, a, ctx):
         """Writes (or updates) one row of the known-issues page in Confluence: ticket, problem, status, reports, dates and the verified workaround."""
@@ -775,13 +807,16 @@ class Agent:
         bugs = self.state.data.setdefault("jira_bugs", {}); info = next((v for v in bugs.values() if v.get("key") == key), {})
         if info:
             with self.state.lock:
-                info["closed"] = time.strftime("%Y-%m-%d"); self.state.save()
+                info["closed"] = time.strftime("%Y-%m-%d"); info["fixed_by"] = AT.clean(who, 80); info["fixed_at"] = when; info.pop("verified", None); self.state.save()
         ctx["jira"] = {"key": key, "url": at.link(key), "closed": True, "status": status}
         if at.docs_ready and a.get("document", True):
             try:
                 at.log(key, AT.clean(str(info.get("summary") or key), 200), AT.clean(str(a.get("status_label") or "Fixed"), 30), info.get("count", 1), info.get("opened", ""), time.strftime("%Y-%m-%d"), note)
             except Exception as e:  # noqa: BLE001
                 self.record(wf, "confluence_log", "failed", ticket=key, error=str(e)[:160])
+        from . import bugcheck
+        if info and not a.get("verb") and bugcheck.mode(self) in ("auto", "auto_reopen"):
+            bugcheck.verify(self, key, info)                                       # the fix check runs right after closing (guardrails.bug_verify); "ask" waits for someone to say verify
         told = 0 if a.get("verb") else self._tell_reporters(key, info) if info else 0
         ctx["reporters_told"] = told
         self.safe.sent("jira", "jira"); self.record(wf, kind, "sent", ticket=key, to_status=status, told=told); return {"status": "sent", "ticket": key, "told": told}
@@ -794,6 +829,14 @@ class Agent:
                 t = self.state.data.setdefault("bug_threads", {}); t[f"{chan}:{ts}"] = key
                 while len(t) > 300:
                     t.pop(next(iter(t)))
+                old = str((ctx.get("jira") or {}).get("regression_of") or "").upper()
+                if old:                                                            # the alert of a regression: a "reopen" reply there is about the OLD ticket (see bugdesk.py)
+                    r = self.state.data.setdefault("bug_regress", {}); r[f"{chan}:{ts}"] = old
+                    while len(r) > 300:
+                        r.pop(next(iter(r)))
+                info = next((v for v in (self.state.data.get("jira_bugs") or {}).values() if v.get("key") == key), None)
+                if info is not None and not info.get("thread"):
+                    info["thread"] = f"{chan}:{ts}"
                 self.state.save()
 
     def handle_slack_event(self, payload):
@@ -816,6 +859,9 @@ class Agent:
         try:
             if self.dry or str((self.cfg.get("guardrails") or {}).get("bug_tell_customers", True)).lower() in ("false", "0", "no", "off"):
                 return 0
+            from . import bugcheck
+            if bugcheck.tell_after_verify(self) and not (info.get("verified") or {}).get("ok"):
+                return 0                                                           # guardrails.bug_tell_after_verify: customers hear "fixed" only after a check passed
             business = self.cfg.get("business", "") or "We"; msg = f"{business}: good news, the problem you reported is fixed. Please try again, and reply here if it still does not work."
             n = 0
             for r in (info.get("reporters") or []):
@@ -853,7 +899,7 @@ class Agent:
             for key in self.atlassian.done_among(open_keys):
                 info = next(v for v in bugs.values() if v.get("key") == key)
                 with self.state.lock:
-                    info["closed"] = time.strftime("%Y-%m-%d"); self.state.save()
+                    info["closed"] = time.strftime("%Y-%m-%d"); info.setdefault("fixed_by", "the team in Jira"); self.state.save()
                 self._tell_reporters(key, info)
                 ctx = self.ctx(ticket=key, title=info.get("summary", key), jira={"key": key, "url": self.atlassian.link(key), "closed": True})
                 if self.atlassian.docs_ready:
@@ -922,7 +968,7 @@ class Agent:
             if self.dry:
                 self.record(wf, kind, "dry_run", text=a["text"]); return {"status": "dry_run"}
             self._need(self.teams.configured, "Microsoft Teams", "add teams.webhook_url in agent.json")
-            self.teams.post(a["text"], a.get("title")); self.safe.sent("teams", "teams"); self.record(wf, kind, "sent"); return {"status": "sent"}
+            self.teams.post(a["text"], a.get("title"), key=(ctx.get("jira") or {}).get("key")); self.safe.sent("teams", "teams"); self.record(wf, kind, "sent"); return {"status": "sent"}
         if kind == "jira_bug":
             return self._jira_bug(wf, a, ctx)
         if kind == "confluence_log":
@@ -1444,6 +1490,7 @@ class Agent:
         d = self._speech_choice(menu, said); opts = menu.get("options") or {}
         digit = d if d and d in opts else "0"
         p2 = {k: v for k, v in params.items() if k not in ("SpeechResult", "Digits")}
+        self._prepare_transfer(params, esc.get("why", ""))
         inner = self._handle_call(p2, "menu", digit)
         i = inner.find("<Dial")
         if i >= 0:
@@ -1516,12 +1563,52 @@ class Agent:
                 return k
         return ""
 
+    def _prepare_transfer(self, params, why=""):
+        """A call is about to be connected to a person: record the transfer, tell the team what the caller needs, and set up the brief spoken to whoever picks up. Never raises (a transfer must always go through)."""
+        try:
+            from . import callstate, converse
+            key = "call:" + (params.get("CallSid") or S.norm_phone(params.get("From", "")))
+            L = callstate.get(self, key, "call", create=False)
+            callstate.set_transfer(self, key, "dialing", why=why)
+            b = callstate.brief(self, key); base = str(self.cfg.get("public_base_url", "")).rstrip("/")
+            if base and L is not None and (b["facts"] or b["bookings"]):
+                wid = converse.new_id(key); self.__dict__.setdefault("_whispers", {})[wid] = [time.time(), key]
+                for k in [k for k, v in self._whispers.items() if time.time() - v[0] > 600]:
+                    self._whispers.pop(k)
+                self._tl.whisper = f"{base}/twilio/call/whisper/{wid}"
+            if L is not None and (b["facts"] or b["bookings"]) and getattr(self, "_do_ai_actions", None):
+                who = S.norm_phone(params.get("From", ""))
+                self._do_ai_actions(who, [{"type": "notify", "text": "Transferring a caller to a person. " + b["text"]}], "call")
+        except Exception as e:  # noqa: BLE001
+            self.state.log(workflow="escalation", action="brief", status="error", dry_run=False, error=type(e).__name__ + ": " + str(e)[:120])
+
+    def handle_whisper(self, wid):
+        """TwiML spoken to the person who picked up the transfer, before the caller is connected."""
+        from xml.sax.saxutils import escape
+        from . import callstate
+        got = self.__dict__.get("_whispers", {}).get(wid)
+        if not got:
+            return "<Response></Response>"
+        b = callstate.brief(self, got[1]); text = ("Incoming transfer. " + b["spoken"])[:700]
+        return f'<Response><Say>{escape(text)}</Say></Response>'
+
+    def handle_partial(self, params):
+        """Twilio posts the first words the caller says as they say them: that is when talking over the assistant starts."""
+        try:
+            from . import callstate
+            key = "call:" + (params.get("CallSid") or S.norm_phone(params.get("From", "")))
+            callstate.voice_onset(self, key)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _dial(self, to):
         """Connect the caller to a person. When the address is public, Twilio asks /twilio/call/dialdone when the dial ends, so a caller who was connected to a person is never told 'nobody could pick up'."""
         from xml.sax.saxutils import escape
         base = str(self.cfg.get("public_base_url", "")).rstrip("/")
         act = f' action="{escape(base)}/twilio/call/dialdone" method="POST"' if base else ""
-        return f'<Dial timeout="25" answerOnBridge="true"{act}><Number>{escape(to)}</Number></Dial>'
+        wh = getattr(getattr(self, "_tl", None), "whisper", "")                                    # the person who answers hears the brief first (details, corrections, booking status), the caller waits on ringing
+        num = f'<Number url="{escape(wh)}" method="POST">{escape(to)}</Number>' if wh else f"<Number>{escape(to)}</Number>"
+        return f'<Dial timeout="25" answerOnBridge="true"{act}>{num}</Dial>'
 
     def _busy_after_dial(self, custom=None):
         """What is said when nobody picks up: only added here when there is no public address to ask afterwards (with one, dialdone says it)."""
@@ -1533,13 +1620,33 @@ class Agent:
     def handle_dial_done(self, params):
         """Twilio calls this when the dial to a person ends. Connected and finished: just hang up, quietly. Nobody answered: say so and promise a call back."""
         st = str(params.get("DialCallStatus", "")).lower()
+        try:
+            from . import callstate
+            key = "call:" + (params.get("CallSid") or S.norm_phone(params.get("From", "")))
+            if st in ("completed", "answered"):
+                callstate.set_transfer(self, key, "connected", dial=st)
+            else:
+                callstate.set_transfer(self, key, "no_answer", dial=st or "unknown"); b = callstate.brief(self, key); who = S.norm_phone(params.get("From", ""))
+                task = callstate.add_task(self, key, "callback", f"Call back {who or 'the caller'}: " + b.get("short", b["text"]), owner="front desk", due_minutes=30)
+                if not task.get("notified"):
+                    task["notified"] = True
+                    self._do_ai_actions(who, [{"type": "notify", "text": f"Nobody answered the transfer. Please call back {who or 'the caller'} within 30 minutes. " + b["text"]}], "call")
+                self.state.log(workflow="escalation", action="transfer", status="no_answer", dry_run=self.dry, task=task["id"])
+        except Exception as e:  # noqa: BLE001
+            self.state.log(workflow="escalation", action="transfer", status="error", dry_run=self.dry, error=type(e).__name__ + ": " + str(e)[:120])
         if st in ("completed", "answered"):
             return "<Response><Hangup/></Response>"
         return "<Response>" + self._vp("call_transfer_busy", "Sorry, nobody could pick up. We will call you back as soon as we can.") + "<Hangup/></Response>"
 
     def handle_call(self, params, step="start", digits=""):
         """An inbound call from Twilio -> TwiML (see _handle_call). Also writes the conversation record shown in the dashboard's Calls and texts."""
-        self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}; self._tl.patient = False; self._tl.loud = False
+        idem = str(params.get("_idem") or "")
+        if idem:                                                                                       # Twilio sends the same token when it retries a webhook that seemed to fail: replay the first answer, do nothing twice
+            hit = self.__dict__.setdefault("_idem_cache", {}).get(idem)
+            if hit and time.time() - hit[0] < 600:
+                self.state.log(workflow="call_ai", action="retry", status="replayed", dry_run=False)
+                return hit[1]
+        self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}; self._tl.patient = False; self._tl.loud = False; self._tl.whisper = ""
         from . import access
         _f = access.flags(self, params); self._tl.patient = _f["patient"]; self._tl.loud = _f["loud"]
         xml = self._handle_call(params, step, digits)
@@ -1557,6 +1664,10 @@ class Agent:
                       intent=CV.INTENTS.get(str(m.get("digits") or "")) if m.get("digits") else None, handoff=bool(m.get("handoff")), private=bool(m.get("private")), withhold=bool(m.get("withhold")))
         except Exception:  # noqa: BLE001
             pass
+        if idem:
+            cache = self.__dict__.setdefault("_idem_cache", {}); cache[idem] = (time.time(), xml)
+            for k in [k for k, v in cache.items() if time.time() - v[0] > 900]:
+                cache.pop(k)
         return xml
 
     def _handle_call(self, params, step="start", digits=""):
@@ -1695,7 +1806,7 @@ class Agent:
     def _gather_open(self, inner, base, timeout=8):
         """An open microphone: the caller may speak at any time (even over the assistant) or press a key."""
         from xml.sax.saxutils import quoteattr
-        return (f'<Gather input="dtmf speech" speechTimeout="{self._speech_timeout()}" speechModel="phone_call"' + (' enhanced="true"' if self._speech_enhanced() else '') + f' bargeIn="true" numDigits="1" action={quoteattr(base + "/twilio/call/menu")} method="POST" timeout="{max(timeout, 12) if getattr(getattr(self, "_tl", None), "patient", False) else timeout}">{inner}</Gather>')
+        return (f'<Gather input="dtmf speech" speechTimeout="{self._speech_timeout()}" speechModel="phone_call"' + (' enhanced="true"' if self._speech_enhanced() else '') + f' bargeIn="true" numDigits="1" action={quoteattr(base + "/twilio/call/menu")} method="POST"' + (f' partialResultCallback={quoteattr(base + "/twilio/call/partial")} partialResultCallbackMethod="POST"' if base else "") + f' timeout="{max(timeout, 12) if getattr(getattr(self, "_tl", None), "patient", False) else timeout}">{inner}</Gather>')
 
     def _ai_voice(self, text, wait_ok=True, keep=False):
         """TwiML for one AI-written sentence in the bundle's own voice when it can be voiced in time, otherwise the phone provider's voice. Costs the owner's Speakvora characters (capped each month)."""
@@ -1769,7 +1880,7 @@ class Agent:
     def call_wait(self, pid, params=None):
         """The second half of a slow AI turn: the answer if it is ready, otherwise another short filler (up to the owner's wait limit), then a person."""
         from . import converse
-        self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}
+        self._tl = getattr(self, "_tl", None) or threading.local(); self._tl.m = {}; self._tl.whisper = ""
         pending = self.__dict__.setdefault("_pending", {}); got = pending.get(pid)
         if not got:
             return self._handle_call(params or {}, "menu", "0")
@@ -1811,6 +1922,7 @@ class Agent:
         if r["action"] == "handoff":                                                       # a person: the menu's own zero option (staff transfer or call-back line)
             m["outcome"] = "handoff"; m["handoff"] = True
             lead = r.get("xml") or ((self._instant_say(r["say"]) if r.get("escalation") else self._ai_voice(r["say"])) if r["say"] else "")
+            self._prepare_transfer(params, r.get("why", ""))
             inner = self._handle_call(params, "menu", "0")
             if "<Dial" in inner:
                 return inner.replace("<Response>", "<Response>" + lead, 1)
@@ -1821,6 +1933,13 @@ class Agent:
                 return f'<Response>{lead}{self._vp("handoff_person", "One moment please, I am connecting you to a team member.")}{self._dial(to)}{self._busy_after_dial()}<Hangup/></Response>'
             return inner.replace("<Response>", "<Response>" + lead, 1)
         xml = r.get("xml") or self._ai_voice(r["say"])
+        try:
+            from . import callstate
+            _key = "call:" + (params.get("CallSid") or S.norm_phone(params.get("From", ""))); _t = callstate.last_turn(self, _key)
+            if _t is not None:
+                callstate.note_said(self, _key, _t, r.get("say", ""), consequential=bool(r.get("consequential")))
+        except Exception:  # noqa: BLE001
+            pass
         m["outcome"] = "answered"; self._do_ai_actions(S.norm_phone(params.get("From", "")), r.get("do"), "call")
         if r["action"] == "end":
             m["outcome"] = "goodbye"; return f"<Response>{xml}{self._vp('call_goodbye', 'Thanks for calling. Goodbye.')}<Hangup/></Response>"

@@ -37,6 +37,21 @@ class PackZip(unittest.TestCase):
         self.assertEqual((req["kind"], req["industry_profile"], req["language"]), ("workflow_line_request", "food", "en")); self.assertIn("order_ready", [s["slot"] for s in req["slots"]])
         self.assertEqual(self.sv("phrases", "thank", "--pack", ".").returncode, 0)
 
+    def test_the_voice_support_modules_ship_in_the_bundle_and_run_from_it(self):
+        """The downloadable bundle (not the repository checkout) has the conversation ledger, the quick start and the converse code, and they work from the unzipped folder."""
+        code = (
+            "import sys, types; sys.path.insert(0, 'agent')\n"
+            "from speakvora_pack_agent import callstate as CS, converse, quickstart, bookings, changes, bugdesk\n"
+            "a = types.SimpleNamespace(state=types.SimpleNamespace(data={}), cfg={'timezone': 'America/New_York'})\n"
+            "t = CS.begin_turn(a, 'call:Z1', 'call', 'a table for four'); CS.update_facts(a, 'call:Z1', t['id'], {'party': 4, 'start': '2026-10-28T19:00'}); CS.update_facts(a, 'call:Z1', t['id'], {'start': '2026-10-29T19:00'})\n"
+            "CS.booking(a, 'call:Z1', '4827', 'confirmed', detail='table for 4')\n"
+            "b = CS.brief(a, 'call:Z1'); s = CS.summary(a, 'call:Z1')\n"
+            "assert 'booked and confirmed' in b['text'] and 'Booked:' in s and b['corrections'], (b, s)\n"
+            "assert quickstart.state_code('New York') == 'NY' and quickstart.phone_e164('518 555 0142') == '+15185550142'\n"
+            "print('bundle ok')\n")
+        r = subprocess.run([sys.executable, "-c", code], cwd=self.d, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("bundle ok", r.stdout)
+
     def test_runs_dry_and_records_but_sends_nothing(self):
         cfg = json.load(open(os.path.join(self.d, "agent.json"))); cfg.update(listen={"host": "127.0.0.1", "port": 18999}, public_base_url="http://127.0.0.1:18999", facts={"hours": "9-5", "address": "x", "review_url": "https://r.test"}, business="Bella", quiet_hours={"start": "00:00", "end": "00:00", "applies_to": []})            # quiet hours would block the text at night; this test checks dry-run behaviour at any hour
         json.dump(cfg, open(os.path.join(self.d, "agent.json"), "w"))

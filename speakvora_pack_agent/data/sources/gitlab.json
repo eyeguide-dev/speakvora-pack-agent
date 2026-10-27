@@ -38,6 +38,9 @@
   "environment": "payload.environment",
   "sha": {
    "template": "{{payload.short_sha}}{{payload.object_attributes.merge_commit_sha}}{{payload.commit.id}}"
+  },
+  "time": {
+   "template": "{{payload.status_changed_at}}{{payload.object_attributes.merged_at}}{{payload.object_attributes.created_at}}"
   }
  }
 }

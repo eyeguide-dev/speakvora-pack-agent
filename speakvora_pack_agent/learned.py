@@ -43,11 +43,15 @@ def _settings(agent):
 
 
 def attach(agent):
-    """Adds the learned lines to the pack so workflows can play them by id (learned:<hash>) or search."""
+    """Adds the learned lines to the pack so workflows can play them by id (learned:<hash>), by search, or by the slot they were asked for."""
     for it in load(agent)["items"]:
-        if os.path.exists(it["file"]) and it["id"] not in agent.pack.by_id:
+        if not os.path.exists(it["file"]):
+            continue
+        if it["id"] not in agent.pack.by_id:
             agent.pack._add({"id": it["id"], "text": it["text"], "file": it["file"], "category": "learned_phrases"})
             agent.pack.slots.setdefault("learned_" + it["id"].split(":")[1][:8], it["id"])
+        if it.get("slot"):
+            agent.pack.slots[it["slot"]] = it["id"]                                              # a line asked for by its slot name (order_preparing, custom_...) plays from now on wherever a workflow uses that slot
 
 
 def observe(agent, text):
@@ -99,7 +103,7 @@ def _voice(agent, text):
     return data, (".mp3" if str((r or {}).get("format")) == "mp3" or url.endswith(".mp3") else ".m4a")
 
 
-def _store(agent, text, source, auto=False):
+def _store(agent, text, source, auto=False, slot=""):
     """Voices one line once, saves it, adds it to the library. Raises ValueError when it does not fit the monthly budget."""
     d = load(agent); k = norm(text)
     if any(norm(i["text"]) == k for i in d["items"]):
@@ -112,12 +116,45 @@ def _store(agent, text, source, auto=False):
     os.makedirs(os.path.join(agent.state.dir, "learned"), exist_ok=True)
     f = os.path.join(agent.state.dir, "learned", cid + ext); open(f, "wb").write(data)
     d = load(agent)
-    d["items"].append({"id": "learned:" + cid, "text": text, "file": f, "added": int(agent.now()), "auto": bool(auto), "source": source})
+    d["items"].append({"id": "learned:" + cid, "text": text, "file": f, "added": int(agent.now()), "auto": bool(auto), "source": source, **({"slot": slot} if slot else {})})
     d["counts"].pop(k, None); (d.get("suggested") or {}).pop(cid, None)
     d.setdefault("spent", {})[month_key(agent)] = int((d.get("spent") or {}).get(month_key(agent), 0)) + len(text)
     save(agent, d); attach(agent)
     agent.state.log(workflow="learned", action="add", status="done", dry_run=False, chars=len(text), auto=bool(auto), source=source)
     return {"id": "learned:" + cid, "text": text}
+
+
+SLOT_OK = re.compile(r"^[a-z][a-z0-9_]{2,40}$")
+
+
+def instant_line(agent, slot, text):
+    """A line the owner asked for (a missing slot, or a line of their own): voiced once now through their Speakvora key, stored, and mapped to the slot, so it plays within seconds and every later play is free and offline.
+    The same monthly budget and wording rules as every other new line apply (guardrails: phrase_chars_per_month; no digits, emails, links or names). Returns {'ready': True, 'id', 'slot', 'chars'} or {'ready': False, 'why'}. Never raises."""
+    try:
+        t = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not SLOT_OK.match(str(slot or "")):
+            return {"ready": False, "why": "bad_slot"}
+        if agent.dry:
+            return {"ready": False, "why": "practice_mode"}                                       # practice mode sends nothing and spends nothing
+        if not (8 <= len(t) <= 220) or BAD.search(t) or R.redact(t, None) != t:
+            return {"ready": False, "why": "wording"}
+        if not sharing._key(agent):
+            return {"ready": False, "why": "no_key"}
+        if slot in agent.pack.slots:
+            return {"ready": False, "why": "already_have_it"}
+        d = load(agent)
+        have = next((i for i in d["items"] if norm(i["text"]) == norm(t)), None)
+        if have:                                                                                   # the same words are already a library line: map the slot to it, no new voicing, no new charge
+            if not have.get("slot"):
+                have["slot"] = slot; save(agent, d); attach(agent)
+            return {"ready": True, "id": have["id"], "slot": slot, "chars": 0, "cached": True}
+        r = _store(agent, t, "requested", False, slot=slot)
+        return {"ready": True, "id": r["id"], "slot": slot, "chars": len(t), "cached": False}
+    except ValueError as e:
+        return {"ready": False, "why": str(e)[:160]}
+    except Exception as e:  # noqa: BLE001 - a line that cannot be voiced now stays a request; nothing breaks
+        agent.state.log(workflow="learned", action="instant", status="error", dry_run=False, error=type(e).__name__ + ": " + str(e)[:120])
+        return {"ready": False, "why": "voicing_failed"}
 
 
 def add(agent, cid, auto=False):

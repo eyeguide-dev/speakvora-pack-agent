@@ -92,6 +92,11 @@ def _job(j):
             "created": j["created"], "updated": j["updated"], "attempts": j.get("attempts", 0), "error": (j.get("error") or "")[:200], "note": (j["history"][-1][2] if j.get("history") else "")}
 
 
+def _set_up_text(agent):
+    from . import setuplog
+    return setuplog.set_up_text(setuplog.timeline(agent))
+
+
 def summary(agent):
     st = agent.state; gaps = _gaps(agent); jobs = st.jobs()
     att = [j for j in jobs if j["status"] in ATTENTION][-30:][::-1]
@@ -100,6 +105,7 @@ def summary(agent):
             "mode": "dry_run" if agent.dry else "live", "paused": agent.safe.killed(), "counts": st.job_counts(), "workflows": len(agent.workflows),
             "attention": [_job(j) for j in att], "recent": [_job(j) for j in jobs[-40:][::-1]],
             "coverage": {"needed": len(SL.needed_by(json.load(open(agent.cfg["workflows"], encoding="utf-8")))) if agent.cfg.get("workflows") else 0, "missing": gaps},
+            "set_up_text": _set_up_text(agent),
             "requests": _requests(agent)[-10:][::-1], "can_send_requests": bool(sharing._key(agent)), "locations": LC.view(agent)}
 
 
@@ -135,14 +141,14 @@ def request_phrases(agent, body):
         if not picked:
             raise ValueError("Choose at least one missing line.")
     r = sharing.submit(agent, picked, picked[0]["example"] if body.get("custom") else "")
-    return {"sent": r["sent"], "message": r["message"], "slots": [p["slot"] for p in picked]}
+    return {"sent": r["sent"], "message": r["message"], "slots": [p["slot"] for p in picked], "ready": r.get("ready", [])}
 
 
 def jobs_for_display(agent):
     return [_job(j) for j in agent.state.jobs(None)][-300:][::-1]
 
 
-VIEW_OK = ("/dash/api/summary", "/dash/api/jobs", "/dash/api/activity", "/dash/api/insights", "/dash/api/library", "/dash/api/learned", "/dash/api/phrases")
+VIEW_OK = ("/dash/api/quickstart", "/dash/api/summary", "/dash/api/setup/timeline", "/dash/api/jobs", "/dash/api/activity", "/dash/api/insights", "/dash/api/library", "/dash/api/learned", "/dash/api/phrases")
 
 
 def handle(agent, method, path, headers, raw):
@@ -205,6 +211,9 @@ def handle(agent, method, path, headers, raw):
             else:
                 agent.reject_proposals(jid, idx, bool(body.get("remember")))
             out = {"job": _job(agent.state.job_get(jid))}
+        elif p == "/dash/api/setup/timeline" and method == "GET":
+            from . import setuplog
+            tl = setuplog.timeline(agent); out = {"timeline": tl, "text": setuplog.set_up_text(tl)}
         elif p == "/dash/api/setup" and method == "GET":
             out = SU.status(agent)
         elif p == "/dash/api/setup/save" and method == "POST":
@@ -256,6 +265,9 @@ def handle(agent, method, path, headers, raw):
             b = json.loads(raw or b"{}"); out = SU.test(agent, str(b.get("card", "")), b.get("opts") or {})
         elif p == "/dash/api/setup/workflow" and method == "POST":
             b = json.loads(raw or b"{}"); out = {"workflows": SU.set_workflow(agent, str(b.get("name", "")), bool(b.get("enabled")))}
+            if b.get("enabled"):
+                from . import setuplog
+                setuplog.record(agent, "workflow_on", workflow=str(b.get("name", ""))[:60])
         elif p == "/dash/api/setup/live" and method == "POST":
             out = SU.go_live(agent, bool(json.loads(raw or b"{}").get("on")))
         elif p == "/dash/api/setup/source" and method == "POST":
@@ -327,6 +339,23 @@ def handle(agent, method, path, headers, raw):
             out = BR.edit(agent, json.loads(raw or b"{}").get("profile"))
         elif p == "/dash/api/brain/forget" and method == "POST":
             out = BR.forget(agent)
+        elif p == "/dash/api/quickstart" and method == "GET":
+            from . import quickstart as QS
+            out = {**QS.prefill(agent), "pending": QS.pending(agent)}
+        elif p == "/dash/api/quickstart" and method == "POST":
+            from . import quickstart as QS
+            out = QS.apply(agent, json.loads(raw or b"{}"))
+        elif p == "/dash/api/quickstart/transcripts" and method == "POST":
+            from . import quickstart as QS
+            b = json.loads(raw or b"{}"); out = {**QS.import_transcripts(agent, b.get("name"), b.get("data")), "items": QS.pending(agent)}
+        elif p == "/dash/api/quickstart/approve" and method == "POST":
+            from . import quickstart as QS
+            b = json.loads(raw or b"{}"); texts = {i["id"]: i["a"] for i in QS.pending(agent)}; out = QS.approve(agent, b.get("ids"), b.get("edits"))
+            import threading; threading.Thread(target=lambda: [agent._ai_voice(str((b.get("edits") or {}).get(i) or texts.get(i, ""))) for i in (b.get("ids") or [])[:10] if texts.get(i)], daemon=True).start()          # voiced now, so a call plays it instantly
+            out["items"] = QS.pending(agent)
+        elif p == "/dash/api/quickstart/dismiss" and method == "POST":
+            from . import quickstart as QS
+            out = QS.dismiss(agent, json.loads(raw or b"{}").get("ids")); out["items"] = QS.pending(agent)
         elif p == "/dash/api/knowledge" and method == "GET":
             out = KN.view(agent)
         elif p == "/dash/api/knowledge/source" and method == "GET":

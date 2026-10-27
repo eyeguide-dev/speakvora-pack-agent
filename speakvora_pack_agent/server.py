@@ -212,6 +212,17 @@ def make_handler(agent, private=False):
                     if ev and src.get("as") == "sms":                              # any provider's inbound text: answered through your sms_provider
                         return self._send(200, {"replied": bool(agent.sms_via_provider(ev.get("from") or (ev.get("customer") or {}).get("phone"), ev.get("body", "")))})
                     return self._send(200, agent.handle_event(ev) if ev else {"ignored": True})
+                if p.startswith("/twilio/call/whisper/") and re.fullmatch(r"[0-9a-f]{10}", p.rsplit("/", 1)[1]):          # spoken only to the person who picks up a transfer, before the caller is connected
+                    params = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items()}
+                    if not agent.twilio.check_signature(self._public(), params, self.headers.get("X-Twilio-Signature", "")):
+                        return self._send(403, {"error": "bad_signature"})
+                    return self._send(200, agent.handle_whisper(p.rsplit("/", 1)[1]), "text/xml")
+                if p == "/twilio/call/partial":                                                                           # Twilio's first partial speech result: the moment the caller started talking
+                    params = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items()}
+                    if not agent.twilio.check_signature(self._public(), params, self.headers.get("X-Twilio-Signature", "")):
+                        return self._send(403, {"error": "bad_signature"})
+                    agent.handle_partial(params)
+                    return self._send(200, "<Response></Response>", "text/xml")
                 if p.startswith("/twilio/call/wait/") and re.fullmatch(r"[0-9a-f]{10}", p.rsplit("/", 1)[1]):
                     params = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items()}
                     if not agent.twilio.check_signature(self._public(), params, self.headers.get("X-Twilio-Signature", "")):
@@ -229,6 +240,7 @@ def make_handler(agent, private=False):
                         return self._send(200, twiml_message(reply) if reply else "<Response></Response>", "text/xml")
                     if p == "/twilio/call/dialdone":
                         return self._send(200, agent.handle_dial_done(params), "text/xml")
+                    params["_idem"] = self.headers.get("I-Twilio-Idempotency-Token", "")                       # present only on a retry of the same webhook: answered from memory, never run twice
                     return self._send(200, agent.handle_call(params, "start" if p == "/twilio/call" else ("menu3" if p.endswith("menu3") else "menu2" if p.endswith("menu2") else "menu"), params.get("Digits", "")), "text/xml")
                 if p == "/android/sms":                                        # a text your Android phone received (signed by the SMS Gateway app)
                     if not agent.android.verify(raw, self.headers.get("X-Timestamp", ""), self.headers.get("X-Signature", "")):
@@ -269,6 +281,14 @@ def make_handler(agent, private=False):
                     if not self.headers.get("X-Slack-Retry-Num"):                 # Slack retries a slow answer; the first delivery is enough
                         threading.Thread(target=agent.handle_slack_event, args=(payload,), daemon=True).start()
                     return self._send(200, {"ok": True})
+                if p == "/teams/messages":                                      # Teams Outgoing Webhook (see teams_in.py): HMAC-signed, wrong tries are locked out like the dashboard token
+                    who = (self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or self.client_address[0])
+                    if _locked(who):
+                        return self._send(429, {"error": "too_many_wrong_attempts"})
+                    code, body = __import__("speakvora_pack_agent.teams_in", fromlist=["x"]).handle(agent, raw, self.headers.get("Authorization", ""))
+                    if code == 401:
+                        _fail(who)
+                    return self._send(code, body)
                 if p == "/slack/command":
                     if not agent.slack.verify(raw, self.headers.get("X-Slack-Request-Timestamp", ""), self.headers.get("X-Slack-Signature", "")):
                         return self._send(401, {"error": "bad_signature"})

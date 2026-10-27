@@ -4,7 +4,7 @@ A turn goes: safety checks on what the person said (emergency, secrets, opt-out 
 On a call, an answer that takes the AI more than a moment is covered by a short recorded filler so the line never goes quiet (see Agent._talk). The AI only answers; it cannot send, change or approve anything."""
 import hashlib, json, re, threading, time
 
-from . import bookings, brain, controls, guardrails as G, industry_rules, knowledge, learned, reasoner as R
+from . import bookings, brain, callstate, controls, guardrails as G, industry_rules, knowledge, learned, reasoner as R
 
 PRIVATE_PROFILES = ("clinic", "pharmacy", "dispensary", "legal", "finance", "education", "lodging", "public", "collections", "corrections")
 SYSTEM = ("You are the front-desk voice of a small business, answering one customer message or one phone turn. Speak like a warm, brief person: one or two short sentences, plain words, no lists, no emoji. "
@@ -12,8 +12,12 @@ SYSTEM = ("You are the front-desk voice of a small business, answering one custo
           "Answer ONLY from the business profile, the approved facts, the approved lines and the order status given below. If the request is about something this business does not cover (other products, personal chat, anything not in the approved information), do NOT guess, joke or ask what they meant: say \"I don't have that information. Let me get someone to help you.\" and choose action \"handoff\". If the message is garbled or you truly cannot tell what was said, say \"Sorry, I didn't catch that. Could you say it again?\" and keep going. Never mention what you cannot do in other ways, never speculate. Never invent prices, hours, times, phone numbers, discounts or promises. Never give medical, legal or financial advice. Never ask for or repeat passwords, codes or card numbers. Never say you are a person. "
           "If an approved line says exactly what you want to say, choose it by its number instead of writing your own. "
           'Reply with ONE JSON object only: {"say": "what to say", "line": "L3 or empty", "action": "continue" | "handoff" | "end"}. '
-          "Use \"end\" only when the person says they are done. Use \"handoff\" for complaints, anything urgent, anything you cannot answer, or when they ask for a person.")
+          "Use \"end\" only when the person says they are done. Use \"handoff\" for complaints, anything urgent, anything you cannot answer, or when they ask for a person. "
+          'Also put the customer\'s CURRENT request in "facts" as {"topic": "", "name": "", "party": 0, "start": "YYYY-MM-DDTHH:MM", "area": "", "notes": ""}, only the fields you know right now. If the customer changes something they said before, put the NEW value in "facts", add "corrected": ["start"] (the field names), and never keep the old value. '
+          "If they change or cancel a booking THIS conversation already made (it is listed under THIS CONVERSATION), use amend_booking or cancel_booking with its code instead of booking again.")
 ACTION_HELP = {"book": "book: book a table or appointment for the customer. Fields: name = the guest's name, party = how many people (a number), start = the local date and time as YYYY-MM-DDTHH:MM, area = where they want to sit (inside or outside), notes = extra needs such as a dog. Use it only when you have all of name, party, start and area. The booking book checks it and confirms or offers other times: never say it is booked yourself. If anything is missing, ask for it (one question at a time) and do not use book yet.",
+               "amend_booking": "amend_booking: change a booking this conversation already made. Fields: code = its confirmation code, and only the fields that change: start = YYYY-MM-DDTHH:MM, party, area, name, notes.",
+               "cancel_booking": "cancel_booking: cancel a booking this conversation already made. Fields: code = its confirmation code.",
                "notify": "notify: tell the team something they must act on (a booking request, a callback, a complaint, a quote). text = a short summary with the customer's name, what they want and when.",
                "sms": "sms: text the customer a short confirmation of what was agreed. text = the message.",
                "report_bug": "report_bug: the customer says something is broken (the website, the app, online ordering or payment, or an error message). text = what happened in the customer's words: what they tried to do and what went wrong. Use it, and tell the customer kindly that the team has been told.",
@@ -144,10 +148,13 @@ def usable_actions(agent, cfg, channel=""):
             ok.append(a)
         elif a == "book" and bookings.settings(agent)["enabled"]:
             ok.append(a)
+
         elif a == "report_bug" and getattr(agent.atlassian, "jira_ready", False):
             ok.append(a)
         elif a == "calendar_create" and (getattr(agent.gcal, "configured", False) and (agent.cfg.get("google_calendar") or {}).get("allow_create")):
             ok.append(a)
+    if "book" in ok:                                                                    # the caller who may book may also change or cancel what they booked on this conversation
+        ok += ["amend_booking", "cancel_booking"]
     return ok
 
 
@@ -164,6 +171,16 @@ def _actions(agent, raw, cfg, channel=""):
         if a["type"] == "book":
             item.update(name=" ".join(str(a.get("name") or "").split())[:60], party=a.get("party"), start=str(a.get("start") or "").strip(), area=str(a.get("area") or "").strip().lower()[:20], notes=" ".join(str(a.get("notes") or "").split())[:200])
             out.append(item); continue
+        if a["type"] in ("amend_booking", "cancel_booking"):
+            code = re.sub(r"\D", "", str(a.get("code") or ""))[:6]
+            if not code:
+                continue
+            item.update(code=code, text="")
+            if a["type"] == "amend_booking":
+                item.update({k: a.get(k) for k in ("start", "party", "area", "name", "notes") if a.get(k) not in (None, "")})
+                if item.get("area"):
+                    item["area"] = str(item["area"]).strip().lower()[:20]
+            out.append(item); continue
         if a["type"] == "calendar_create":
             m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})", str(a.get("start") or "").strip())
             if not m:
@@ -173,22 +190,48 @@ def _actions(agent, raw, cfg, channel=""):
     return out
 
 
+def _ledger_text(agent, key):
+    """What this conversation has established so far, from the ledger: the current request and the bookings made here with their real status. The AI must not contradict it."""
+    L = callstate.get(agent, key, create=False)
+    if not L:
+        return ""
+    lines = []
+    if L["facts"]:
+        lines.append("Current request: " + ", ".join(f"{k}={v}" for k, v in L["facts"].items()))
+    for b in L["bookings"]:
+        lines.append(f"Booking {b['code']} ({b['status']}): {b.get('detail') or ''}")
+    return ("THIS CONVERSATION (facts already established; keep them, update only what the customer changes):\n" + "\n".join(lines) + "\n") if lines else ""
+
+
+def _detail(agent, b):
+    return f"table for {b['party']} {b['area']}, {bookings.say_time(agent, b['start'])}, under {b['name']}"
+
+
+def _handoff_extra(agent, key, track, why):
+    """Everything a person taking over needs, recorded and returned with the hand-off."""
+    if not track:
+        return {}
+    callstate.set_transfer(agent, key, "requested", why=why)
+    return {"brief": callstate.brief(agent, key)}
+
+
 def turn(agent, key, channel, text):
     """One customer turn. Returns {'say', 'line' (library item id or ''), 'action': continue|handoff|end, 'why'}. Never raises: any problem is a hand-off."""
     text = re.sub(r"\s+", " ", str(text or "")).strip()[:600]
-    s = _session(agent, key, channel); cfg = _cfg(agent)
-    out = {"say": "", "line": "", "action": "continue", "why": ""}
+    s = _session(agent, key, channel); cfg = _cfg(agent); track = not key.startswith("try:")
+    tr = callstate.begin_turn(agent, key, channel, text) if track else {"id": "try"}
+    out = {"say": "", "line": "", "action": "continue", "why": "", "turn_id": tr["id"]}
     try:
         from . import escalation
         esc = escalation.check(agent, key, text, "sms" if channel == "sms" else "call")                  # support, customer service, a person, or a frustrated caller: a person now, no AI needed
         if esc:
-            return {**out, "action": "handoff", "why": esc["why"], "say": esc["say"], "escalation": True}
+            return {**out, "action": "handoff", "why": esc["why"], "say": esc["say"], "escalation": True, **_handoff_extra(agent, key, track, esc["why"])}
         if G.wants_human(agent, text):
-            return {**out, "action": "handoff", "why": "asked for a person"}
+            return {**out, "action": "handoff", "why": "asked for a person", **_handoff_extra(agent, key, track, "asked for a person")}
         if s["n"] >= cfg["max_turns"] or (channel == "call" and time.time() - s["t0"] > cfg["max_call_minutes"] * 60):
-            return {**out, "action": "handoff", "why": "turn or time limit"}
+            return {**out, "action": "handoff", "why": "turn or time limit", **_handoff_extra(agent, key, track, "turn or time limit")}
         if not _hourly_ok(agent):
-            return {**out, "action": "handoff", "why": "hourly limit"}
+            return {**out, "action": "handoff", "why": "hourly limit", **_handoff_extra(agent, key, track, "hourly limit")}
         hit = knowledge.qa_match(agent, text)                                   # a question the owner already answered: use their exact words, no AI call
         if hit and not _checked(agent, hit[0], text):
             s["turns"] += [("c", text), ("a", hit[0])]; s["n"] += 1; s["last"] = time.time(); s["misses"] = 0
@@ -199,14 +242,18 @@ def turn(agent, key, channel, text):
                 + ("APPROVED LINES (choose by number when one fits exactly):\n" + "\n".join(f"L{i + 1}: {it['text']}" for i, it in enumerate(lib)) + "\n" if lib else "")
                 + (_booking_rules(agent, cfg, channel) or (TEMPLATES.get(PROFILE_TEMPLATE.get(agent.profile, ""), "") + "\n" if TEMPLATES.get(PROFILE_TEMPLATE.get(agent.profile, ""), "") else ""))
                 + ("ACTIONS you may request in \"do\" (a list of {\"type\": ..., fields}; leave it empty when nothing needs doing):\n" + "\n".join(ACTION_HELP[a] for a in usable_actions(agent, cfg, channel) if a in ACTION_HELP) + "\n" + "Actions run after your reply and may be held for approval: never say you have done one, say what will happen (for example \"the host will confirm your table\").\n" if any(a in ACTION_HELP for a in usable_actions(agent, cfg, channel)) else "")
-                + "\nCONVERSATION SO FAR (the customer's phone numbers, emails and card-like numbers are hidden from you):\n" + R.redact("\n".join(f"{'Customer' if r == 'c' else 'You'}: {t}" for r, t in s["turns"][-8:]) + f"\nCustomer: {text}\n", None))
+                + _ledger_text(agent, key) + "\nCONVERSATION SO FAR (the customer's phone numbers, emails and card-like numbers are hidden from you):\n" + R.redact("\n".join(f"{'Customer' if r == 'c' else 'You'}: {t}" for r, t in s["turns"][-8:]) + f"\nCustomer: {text}\n", None))
         t0 = time.time(); raw, _u = R._chat(agent.cfg["reasoner"], SYSTEM, user, 220); out["ai_ms"] = int((time.time() - t0) * 1000)
         m = re.search(r"\{.*\}", raw or "", re.S); j = json.loads(m.group(0)) if m else {}
         say = " ".join(str(j.get("say") or "").split()); act = j.get("action") if j.get("action") in ("continue", "handoff", "end") else "continue"
         ln = str(j.get("line") or "").strip().upper(); line_id = ""
         if re.fullmatch(r"L\d{1,2}", ln) and 0 < int(ln[1:]) <= len(lib):
             it = lib[int(ln[1:]) - 1]; line_id, say = it["id"], it["text"]
-        todo = _actions(agent, j.get("do"), cfg, channel) if act != "handoff" else []
+        todo = _actions(agent, j.get("do"), cfg, channel)                      # a hand-off no longer drops what the caller already asked for: it runs, and the person who picks up is told the result
+        corrected = []
+        if track and isinstance(j.get("facts"), dict):
+            corrected = callstate.update_facts(agent, key, tr["id"], j.get("facts"))
+            out["corrected"] = corrected
         why = _checked(agent, say, text)
         booked = None
         if not why and any(x["type"] == "book" for x in todo):                  # the AI asked to book: the booking book answers now, so the caller hears the real result on the same call
@@ -217,21 +264,56 @@ def turn(agent, key, channel, text):
                 say, line_id = booked["say"], ""
             if booked["ok"]:
                 b = booked["booking"]; todo.append({"type": "notify", "text": f"New booking {b['code']}: table for {b['party']} {b['area']} at {bookings.say_time(agent, b['start'])}, {b['name']}." + (f" Notes: {b['notes']}." if b["notes"] else "")})
+        consequential = False
+        if not why and booked is not None and track:
+            if booked["ok"]:
+                bk = booked["booking"]; callstate.booking(agent, key, bk["code"], "confirmed", detail=_detail(agent, bk)); callstate.action(agent, key, tr["id"], "book", "confirmed", code=bk["code"]); consequential = True
+            elif booked.get("reason") not in (None, "incomplete"):
+                callstate.booking(agent, key, "req" + str(tr["n"]), "not_booked", detail=f"table for {item.get('party')} {item.get('area') or ''}, {item.get('start')}".replace("  ", " "), reason=booked.get("reason"))
+                callstate.action(agent, key, tr["id"], "book", "failed", reason=booked.get("reason"))
+        for x in [x for x in todo if x["type"] in ("amend_booking", "cancel_booking")]:
+            todo.remove(x)
+            if why:
+                continue
+            mine = {b["code"] for b in (callstate.get(agent, key, create=False) or {"bookings": []})["bookings"] if b["status"] in ("confirmed", "changed")}
+            if track and x["code"] not in mine:                                    # only a booking this conversation made can be changed on it (the phone number rule inside bookings is the second check)
+                say = "I can only change a booking I made on this call. I will have a person help you."; act = "handoff"; line_id = ""; continue
+            if x["type"] == "amend_booking":
+                r = bookings.amend(agent, x["code"], {k: x.get(k) for k in ("start", "party", "area", "name", "notes") if x.get(k) not in (None, "")}, _phone(agent, key))
+                agent.state.log(workflow="bookings", action="amend", status="changed" if r["ok"] else (r.get("reason") or "failed"), dry_run=agent.dry, code=x["code"])
+                if r["ok"] and r.get("changed"):
+                    callstate.booking(agent, key, x["code"], "changed", detail=_detail(agent, r["booking"])); callstate.action(agent, key, tr["id"], "amend", "confirmed", code=x["code"]); consequential = True
+                    todo.append({"type": "notify", "text": f"Booking {x['code']} changed: {_detail(agent, r['booking'])}."})
+                elif not r["ok"]:
+                    callstate.action(agent, key, tr["id"], "amend", "failed", code=x["code"], reason=r.get("reason"))
+                if r.get("say"):
+                    say, line_id = r["say"], ""
+            else:
+                r = bookings.cancel_for_caller(agent, x["code"], _phone(agent, key))
+                agent.state.log(workflow="bookings", action="cancel", status="cancelled" if r["ok"] else (r.get("reason") or "failed"), dry_run=agent.dry, code=x["code"])
+                if r["ok"]:
+                    callstate.booking(agent, key, x["code"], "cancelled", detail=_detail(agent, r["booking"])); callstate.action(agent, key, tr["id"], "cancel", "confirmed", code=x["code"]); consequential = True
+                    todo.append({"type": "notify", "text": f"Booking {x['code']} cancelled by the caller: {_detail(agent, r['booking'])}."})
+                else:
+                    callstate.action(agent, key, tr["id"], "cancel", "failed", code=x["code"], reason=r.get("reason"))
+                if r.get("say"):
+                    say, line_id = r["say"], ""
         if why or act == "handoff":
             agent.state.log(workflow="converse", status="handoff", dry_run=False, why=why or "the AI chose a person", raw=str(raw)[:300], docs=len(srcs), stop=(_u or {}).get("stop"), blocks=(_u or {}).get("blocks"))        # what the AI actually said, for tuning
         if why:
             knowledge.note_gap(agent, text)
-            return {**out, "action": "handoff", "why": why}
+            return {**out, "action": "handoff", "why": why, **_handoff_extra(agent, key, track, why)}
         s["turns"] += [("c", text), ("a", say)]; s["n"] += 1; s["last"] = time.time(); s["misses"] = 0
         if not line_id:
             learned.observe(agent, say)                                       # a line the AI keeps writing becomes a candidate for your library (you approve it)
         if act == "handoff" and not order:
             knowledge.note_gap(agent, text)                                   # a question nothing answers: shown in Library, Knowledge, so the owner can add the answer
-        return {"say": say, "line": line_id, "action": act, "why": "", "sources": srcs, "ai_ms": out["ai_ms"], "prompt_chars": len(user), "do": todo}
+        extra = _handoff_extra(agent, key, track, "the AI chose a person") if act == "handoff" else {}
+        return {"say": say, "line": line_id, "action": act, "why": "", "sources": srcs, "ai_ms": out["ai_ms"], "prompt_chars": len(user), "do": todo, "turn_id": tr["id"], "consequential": consequential, "corrected": corrected, **extra}
     except Exception as e:  # noqa: BLE001 - an AI that is down, slow or confused must never break a call or a text
         agent.state.log(workflow="converse", status="error", dry_run=False, error=type(e).__name__ + ": " + str(e)[:140])
         s["misses"] = s.get("misses", 0) + 1
-        return {**out, "action": "handoff", "why": "AI unavailable"}
+        return {**out, "action": "handoff", "why": "AI unavailable", **_handoff_extra(agent, key, track, "AI unavailable")}
 
 
 def disclosure(agent):

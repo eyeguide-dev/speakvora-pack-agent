@@ -108,3 +108,46 @@ class TellCustomers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def deploy_for(r, repo, title, sha, ago, **kw):
+    changes.record(r.agent, "deploy.succeeded", {"repo": repo, "environment": "production", "sha": sha, "title": title, "author": "sam", **kw}, now=time.time() - ago)
+
+
+class Matching(unittest.TestCase):
+    def test_the_payloads_own_time_is_used_not_the_time_it_arrived(self):
+        r = rig(); self.addCleanup(r.close)
+        t = time.time() - 3 * 3600; iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+        changes.record(r.agent, "deploy.succeeded", {"repo": "g/p", "environment": "production", "sha": "aaaa1111", "title": "Late delivery", "time": iso})          # arrives now, deployed three hours ago
+        e = changes.latest(r.agent); self.assertAlmostEqual(e["t"], t, delta=2); self.assertGreater(e["received"], t + 3000)
+        for ok in ("2026-10-26 17:40:03 UTC", "2026-10-26 17:40:03 +0200", "2026-10-26T17:40:03+02:00"):
+            self.assertIsNotNone(changes.parse_time(ok) or 1)
+        self.assertIsNone(changes.parse_time("not a time")); self.assertIsNone(changes.parse_time(time.time() + 99999)); self.assertIsNone(changes.parse_time(time.time() - 90 * 86400))
+        g = src("gitlab"); h = src("github")
+        d = run(g, {"X-Gitlab-Event": "Deployment Hook"}, {"status": "success", "environment": "production", "short_sha": "a1", "status_changed_at": "2026-10-26 17:40:03 +0200", "project": {"path_with_namespace": "g/p"}})
+        self.assertEqual(d["time"], "2026-10-26 17:40:03 +0200")
+        d = run(h, {"X-GitHub-Event": "deployment_status"}, {"action": "created", "deployment_status": {"state": "success", "created_at": "2026-10-26T15:40:03Z"}, "deployment": {"environment": "production", "sha": "1234567890"}, "repository": {"full_name": "o/r"}})
+        self.assertEqual(d["time"], "2026-10-26T15:40:03Z")
+
+    def test_a_bug_on_checkout_is_not_blamed_on_an_unrelated_service_when_the_pages_are_mapped(self):
+        r = rig(extra={"changes": {"map": {"checkout": "acme/shop", "login": "acme/auth"}}}) if False else rig(); self.addCleanup(r.close)
+        r.agent.cfg["changes"] = {"map": {"checkout": "acme/shop", "login": "acme/auth"}}
+        deploy_for(r, "acme/auth", "Update login form", "bbbb2222", 5 * 60); deploy_for(r, "acme/shop", "New payment form", "cccc3333", 40 * 60)
+        e = changes.latest(r.agent, hint={"text": "Pay and place order failed on the checkout page"}); self.assertEqual(e["repo"], "acme/shop")
+        self.assertEqual(changes.latest(r.agent, hint={"text": "login button does nothing"})["repo"], "acme/auth")
+        self.assertIsNone(changes.latest(r.agent, hint={"text": "the menu page is blank"})); self.assertIn("does not match any page or app mapped", changes.line(r.agent, hint={"text": "the menu page is blank"}))
+
+    def test_several_services_without_a_mapping_name_nothing_instead_of_guessing(self):
+        r = rig(); self.addCleanup(r.close); deploy_for(r, "acme/auth", "Update login form", "bbbb2222", 5 * 60); deploy_for(r, "acme/shop", "New payment form", "cccc3333", 40 * 60)
+        ln = changes.line(r.agent, hint={"text": "checkout error"}); self.assertNotIn("newest change", ln); self.assertIn("Several services deployed recently", ln)
+        r.event("app.error", **ERR); desc = json.dumps(list(r.atlas.issues.values())[0]["fields"]["description"]); self.assertNotIn("Fix checkout redirect", desc)
+
+    def test_a_report_that_names_its_version_or_commit_matches_that_deploy_exactly(self):
+        r = rig(); self.addCleanup(r.close); deploy_for(r, "acme/auth", "Update login form v3.1.0", "bbbb2222", 5 * 60); deploy_for(r, "acme/shop", "New payment form v2.4.1", "cccc3333dd", 40 * 60)
+        e = changes.latest(r.agent, hint={"text": "x", "version": "v2.4.1"}); self.assertEqual(e["repo"], "acme/shop")
+        e = changes.latest(r.agent, hint={"text": "x", "sha": "cccc3333"}); self.assertEqual(e["repo"], "acme/shop")
+        self.assertIn("This report names that version", changes.line(r.agent, hint={"text": "x", "version": "v2.4.1"}))
+
+    def test_one_repository_is_still_named_as_before(self):
+        r = rig(); self.addCleanup(r.close); deploy(r, ago=20 * 60)
+        self.assertIn("20 minutes earlier", changes.line(r.agent, hint={"text": "anything"}))

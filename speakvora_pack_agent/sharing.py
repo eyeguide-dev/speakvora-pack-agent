@@ -65,7 +65,13 @@ def _log(agent, slots, sent, text=""):
 def submit(agent, picked, text=""):
     """Sends the chosen lines to Speakvora. picked: [{'slot','intent','example'}]. Returns {'sent': bool, 'message': str}."""
     path = os.path.join(agent.state.dir, "slot-requests.json"); doc = SL.request_file(agent.pack, agent.profile, picked, path)
-    slots = [p["slot"] for p in picked]
+    slots = [p["slot"] for p in picked]; ready = []
+    if agent.pack.language == "en" or any(str(p["slot"]).startswith("custom_") for p in picked):          # an English line (or the owner's own sentence) can be voiced right now; other languages wait for a native version
+        from . import learned
+        for p in picked[:5]:                                                                              # a few at a time: each costs the owner's characters once
+            r = learned.instant_line(agent, p["slot"], p.get("example") or "")
+            if r.get("ready"):
+                ready.append(p["slot"])
     try:
         h = {"x-api-key": _key(agent)} if _key(agent) else {}
         _st, r = web.request("POST", host() + "/api/v1/packs/slot-requests", {**h, "content-type": "application/json"}, body=doc, timeout=20)
@@ -74,11 +80,12 @@ def submit(agent, picked, text=""):
         with agent.state.lock:
             agent.state.save()
         _log(agent, slots, True, text)
-        return {"sent": True, "message": (r or {}).get("note") or "Sent to Speakvora. The lines arrive in the next version of your bundle."}
+        done = (f"{len(ready)} line{'s' if len(ready) != 1 else ''} ready now and playing already. " if ready else "") + ((r or {}).get("note") or "Sent to Speakvora. The lines arrive in the next version of your bundle.")
+        return {"sent": True, "ready": ready, "message": done}
     except Exception as e:  # noqa: BLE001
         _log(agent, slots, False, text)
         why = "No internet connection right now." if isinstance(e, web.NetworkDown) else "Speakvora could not take it just now."
-        return {"sent": False, "message": why + " It is saved and will be sent again later."}
+        return {"sent": False, "ready": ready, "message": (f"{len(ready)} line{'s' if len(ready) != 1 else ''} ready now. " if ready else "") + why + " It is saved and will be sent again later."}
 
 
 def auto(agent):

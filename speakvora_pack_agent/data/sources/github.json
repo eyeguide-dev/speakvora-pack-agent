@@ -45,6 +45,9 @@
   "environment": "payload.deployment.environment",
   "sha": {
    "template": "{{payload.deployment.sha}}{{payload.pull_request.merge_commit_sha}}{{payload.workflow_run.head_sha}}"
+  },
+  "time": {
+   "template": "{{payload.deployment_status.created_at}}{{payload.release.published_at}}{{payload.pull_request.merged_at}}"
   }
  }
 }

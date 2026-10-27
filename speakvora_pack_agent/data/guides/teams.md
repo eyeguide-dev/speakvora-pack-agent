@@ -57,7 +57,7 @@ If you close the page before copying, open **Workflows** again, find your workfl
 ## Good to know
 - Treat the web address like a password: anyone who has it can post to your channel. If it leaks, open Workflows, delete that workflow and make a new one, then paste the new address into the agent.
 - Menu names change as Microsoft updates Teams. If you cannot find a menu, search the Teams app for "workflows" or "webhook".
-- The agent only posts to Teams. It does not read your Teams messages, and it cannot take commands from Teams (slash commands work from Slack).
+- The agent posts to Teams and, if you add an Outgoing Webhook security token on the Teams card, answers when someone @mentions it about a bug ticket (for example `@name KAN-17 fixed`). It does not read other messages, and slash commands work from Slack only. See docs/teams-two-way.md.
 - Outlook calendar works differently: the agent reads your calendar through a private published link (read only). See the calendar guide.
 
 ## What the agent's Teams screen looks like

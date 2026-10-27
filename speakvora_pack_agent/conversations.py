@@ -87,7 +87,15 @@ def record(agent, key, channel, who, caller, assistant, outcome=None, intent=Non
                     c.execute("insert into turns values (?,?,?,?)", (cid, now, "caller", "[withheld]" if withhold else clean(caller)))
                 for line in assistant or []:
                     c.execute("insert into turns values (?,?,?,?)", (cid, now, "assistant", "[private details withheld]" if private else clean(line)))
-            c.execute("update conv set summary=? where id=?", (_summary(c, cid, channel), cid))
+            summ = _summary(c, cid, channel)
+            try:
+                from . import callstate
+                led = callstate.summary(agent, key)                                  # what really happened to each booking, from the conversation ledger (not from the words spoken)
+                if led:
+                    summ = (summ + " " + led).strip()
+            except Exception:  # noqa: BLE001
+                pass
+            c.execute("update conv set summary=? where id=?", (summ, cid))
         return cid
     except Exception as e:  # noqa: BLE001 - a record problem must never break a call
         agent.state.log(workflow="conversations", status="error", error=str(e)[:160], dry_run=False)
