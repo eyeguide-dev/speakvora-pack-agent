@@ -38,6 +38,10 @@ speakvora-pack-agent run                # DRY RUN: records what it would do, sen
 speakvora-pack-agent run --live         # when the log looks right
 ```
 
+## Guides by industry
+
+Setting this up for a particular trade? Start with the page for yours: restaurants, home services, salons and gyms, retail, hotels, clinics, laundries and auto repair shops. They are all listed at https://speakvora.com/ai-front-desk-by-industry
+
 ## What it connects to
 
 New here? Start with [docs/integrate-in-10-minutes.md](docs/integrate-in-10-minutes.md): `init`, `doctor`, `events` (copy-paste signed examples for Python, Node, PHP, Ruby, Go, curl). Works in all 12 pack languages; `init --mode open` removes per-person and hourly limits (opt-outs, required notices and the kill switch stay on).
